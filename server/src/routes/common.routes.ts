@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { getBannerByKey } from "../controllers/common/banner.common.controller";
+import { getBannerByKey } from "../controllers/common/banner.common.controller.js";
 import {
   getMyCart,
   addToCart,
@@ -9,8 +9,8 @@ import {
   updateCartItemOptions,
   setCartItemSelected,
   setCartSelectAll,
-} from "../controllers/common/cart.controller";
-import { authOptional } from "../middleware/authOptional";
+} from "../controllers/common/cart.controller.js";
+import { authOptional } from "../middleware/authOptional.js";
 
 const router = Router();
 

@@ -1,5 +1,5 @@
 import { Request, Response } from "express";
-import { Banner } from "../../models/Banner.model";
+import { Banner } from "../../models/Banner.model.js";
 
 const normalizeCtaUrl = (url: string) => {
   return (url || "").trim();

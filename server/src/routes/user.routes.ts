@@ -1,17 +1,17 @@
 import { Router } from "express";
-import { sendSignupOtp, verifySignupOtp } from "../controllers/user/auth.otp.controller";
-import { registerUserAfterOtp } from "../controllers/user/auth.controller";
-import { verifyUser } from "../middleware/user.auth.middleware";
-import { meUser, loginUser, logoutUser } from "../controllers/user/auth.session.controller"; 
+import { sendSignupOtp, verifySignupOtp } from "../controllers/user/auth.otp.controller.js";
+import { registerUserAfterOtp } from "../controllers/user/auth.controller.js";
+import { verifyUser } from "../middleware/user.auth.middleware.js";
+import { meUser, loginUser, logoutUser } from "../controllers/user/auth.session.controller.js"; 
 import {
   listAddresses,
   addAddress,
   updateAddress,
   deleteAddress,
   setDefaultAddress,
-} from "../controllers/user/address.controller";
-import { createCodOrder, downloadInvoicePdf, getMyOrders, getOrderById } from "../controllers/user/order.controller";
-import { getCheckoutSummary } from "../controllers/user/checkout.controller";
+} from "../controllers/user/address.controller.js";
+import { createCodOrder, downloadInvoicePdf, getMyOrders, getOrderById } from "../controllers/user/order.controller.js";
+import { getCheckoutSummary } from "../controllers/user/checkout.controller.js";
 
 
 const router = Router();

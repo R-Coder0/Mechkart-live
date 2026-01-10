@@ -18,7 +18,7 @@ import {
   updateProduct,
   deleteProduct,
   getProductBySlug,
-} from "../controllers/admin/product.controller";
+} from "../controllers/admin/product.controller.js";
 import { uploadProductImages, uploadCategoryImage } from "../middleware/upload.middleware.js";
 import { upsertBannerByKey} from "../controllers/admin/banner.admin.controller.js";
 import { adminGetUsers } from "../controllers/user/auth.controller.js";

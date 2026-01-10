@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { Request, Response, NextFunction } from "express";
-import { Category } from "../../models/Category.model";
+import { Category } from "../../models/Category.model.js";
 import { Types } from "mongoose";
 
 const makeSlug = (name: string) =>
