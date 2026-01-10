@@ -17,6 +17,7 @@ type Banner = {
   updatedAt?: string;
 };
 
+
 const resolveImageUrl = (path?: string) => {
   if (!path) return "";
   if (path.startsWith("http")) return path;
@@ -222,7 +223,7 @@ export default function AdminHomeHeroBannerPage() {
           {/* FORM */}
           <form onSubmit={onSubmit} className="border p-4 bg-white space-y-4">
             <div>
-              <label className="text-sm font-medium">Banner Image</label>
+              <label className="text-sm font-medium">Banner Images</label>
               <input
                 type="file"
                 accept="image/*"
