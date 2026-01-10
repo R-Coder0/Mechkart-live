@@ -1,0 +1,1 @@
+export const commonCtrl = (req, res) => {};
