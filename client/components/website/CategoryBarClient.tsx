@@ -120,13 +120,13 @@ export default function CategoryBarClient({ categories }: Props) {
             ref={parentScrollRef}
             className="
               w-full
-              flex items-center
+              flex items-left
               overflow-x-auto scrollbar-hide scroll-smooth
               whitespace-nowrap
               gap-5 sm:gap-8
               text-[13px] sm:text-[14px] md:text-[15px]
               font-semibold text-gray-800
-              md:justify-center
+              md:justify-left
               px-1 md:px-12
             "
           >

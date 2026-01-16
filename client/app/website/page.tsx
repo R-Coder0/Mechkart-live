@@ -6,7 +6,7 @@ import HeroSection from "@/components/website/HeroSection";
 import HomeDecorToysAccessories from "@/components/website/HomeDecorToysAccessories";
 import InfoStrip from "@/components/website/InfoStrip";
 import ProductSliders from "@/components/website/ProductSliders";
-
+export const dynamic = "force-dynamic";
 export default function HomePage() {
   return (
     <main>

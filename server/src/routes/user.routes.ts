@@ -1,17 +1,17 @@
 import { Router } from "express";
-import { sendSignupOtp, verifySignupOtp } from "../controllers/user/auth.otp.controller.js";
-import { registerUserAfterOtp } from "../controllers/user/auth.controller.js";
-import { verifyUser } from "../middleware/user.auth.middleware.js";
-import { meUser, loginUser, logoutUser } from "../controllers/user/auth.session.controller.js"; 
+import { sendSignupOtp, verifySignupOtp } from "../controllers/user/auth.otp.controller";
+import { registerUserAfterOtp } from "../controllers/user/auth.controller";
+import { verifyUser } from "../middleware/user.auth.middleware";
+import { meUser, loginUser, logoutUser } from "../controllers/user/auth.session.controller"; 
 import {
   listAddresses,
   addAddress,
   updateAddress,
   deleteAddress,
   setDefaultAddress,
-} from "../controllers/user/address.controller.js";
-import { createCodOrder, downloadInvoicePdf, getMyOrders, getOrderById } from "../controllers/user/order.controller.js";
-import { getCheckoutSummary } from "../controllers/user/checkout.controller.js";
+} from "../controllers/user/address.controller";
+import { createCodOrder, downloadInvoicePdf, getMyOrders, getOrderById } from "../controllers/user/order.controller";
+import { getCheckoutSummary, offerPreview } from "../controllers/user/checkout.controller";
 
 
 const router = Router();
@@ -34,6 +34,7 @@ router.patch("/addresses/:addressId/default", verifyUser, setDefaultAddress);
 router.delete("/addresses/:addressId", verifyUser, deleteAddress);
 // Check OUt Summary 
 router.get("/checkout/summary", verifyUser, getCheckoutSummary);
+router.post("/checkout/offer-preview", verifyUser, offerPreview);
 // order
 router.post("/orders", verifyUser, createCodOrder);    
 router.get("/orders", verifyUser, getMyOrders);

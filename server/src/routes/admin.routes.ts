@@ -18,11 +18,17 @@ import {
   updateProduct,
   deleteProduct,
   getProductBySlug,
-} from "../controllers/admin/product.controller.js";
+} from "../controllers/admin/product.controller";
 import { uploadProductImages, uploadCategoryImage } from "../middleware/upload.middleware.js";
 import { upsertBannerByKey} from "../controllers/admin/banner.admin.controller.js";
 import { adminGetUsers } from "../controllers/user/auth.controller.js";
 import { adminGetOrders, adminUpdateOrderStatus } from "../controllers/admin/order.controller.js";
+import {
+  createOffer,
+  updateOffer,
+  toggleOffer,
+  listOffers,
+} from "../controllers/admin/offer.admin.controller";
 
 const router = Router();
 
@@ -61,5 +67,11 @@ router.get("/orders", verifyAdmin, adminGetOrders);
 
 // update status
 router.patch("/orders/:orderId/status", verifyAdmin, adminUpdateOrderStatus);
+
+//offers
+router.post("/discount/offers",verifyAdmin, createOffer);
+router.patch("/discount/offers/:id",verifyAdmin, updateOffer);
+router.patch("/discount/offers/:id/toggle",verifyAdmin, toggleOffer);
+router.get("/discount/offers",verifyAdmin, listOffers);
 
 export default router;

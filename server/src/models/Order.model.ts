@@ -8,6 +8,10 @@ export interface IOrderItem {
   productCode: string;
 
   variantId?: Types.ObjectId | null;
+
+  // ✅ NEW: store variant label/text snapshot (for email + stable history)
+  variantText?: string | null;
+
   colorKey?: string | null;
   qty: number;
 
@@ -58,7 +62,21 @@ export interface IOrder extends Document {
     subtotal: number;
     mrpTotal: number;
     savings: number;
+
+    // ✅ NEW
+    discount: number;     // offer discount
+    grandTotal: number;   // subtotal - discount
   };
+appliedOffer?: {
+  offerId: Types.ObjectId;
+  name: string;
+  mode: "AUTO" | "COUPON";
+  couponCode?: string | null;
+  offerType: "FLAT" | "PERCENT";  // ✅
+  value: number;
+  discountAmount: number;
+} | null;
+
 
   contact: IOrderContact;
   address: IOrderAddress;
@@ -81,6 +99,10 @@ const OrderItemSchema = new Schema<IOrderItem>(
     productCode: { type: String, required: true, trim: true },
 
     variantId: { type: Schema.Types.ObjectId, default: null },
+
+    // ✅ NEW
+    variantText: { type: String, default: null, trim: true },
+
     colorKey: { type: String, default: null },
 
     qty: { type: Number, required: true, min: 1 },
@@ -103,7 +125,6 @@ const OrderSchema = new Schema<IOrder>(
       index: true,
     },
 
-    /** ✅ New */
     orderCode: {
       type: String,
       required: true,
@@ -112,7 +133,6 @@ const OrderSchema = new Schema<IOrder>(
       trim: true,
     },
 
-    /** ✅ New (null = parent order) */
     parentOrderId: {
       type: Schema.Types.ObjectId,
       ref: "Order",
@@ -124,12 +144,28 @@ const OrderSchema = new Schema<IOrder>(
       type: [OrderItemSchema],
       required: true,
     },
+  totals: {
+    subtotal: { type: Number, required: true },
+    mrpTotal: { type: Number, required: true },
+    savings: { type: Number, required: true },
 
-    totals: {
-      subtotal: { type: Number, required: true },
-      mrpTotal: { type: Number, required: true },
-      savings: { type: Number, required: true },
-    },
+    // ✅ NEW
+    discount: { type: Number, required: true, default: 0 },
+    grandTotal: { type: Number, required: true, default: 0 },
+  },
+appliedOffer: {
+  type: {
+    offerId: { type: Schema.Types.ObjectId, ref: "Offer" },
+    name: { type: String, trim: true },
+    mode: { type: String, enum: ["AUTO", "COUPON"] },
+    couponCode: { type: String, default: null, trim: true },
+    offerType: { type: String, enum: ["FLAT", "PERCENT"] }, // ✅
+    value: { type: Number },
+    discountAmount: { type: Number, default: 0 },
+  },
+  default: null,
+},
+
 
     contact: {
       name: { type: String, required: true, trim: true },

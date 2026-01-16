@@ -12,7 +12,7 @@ export type Address = {
   addressLine2?: string;
   landmark?: string;
   isDefault?: boolean;
-  addressType?: "HOME" | "WORK" | "OTHER"; // optional if you add it
+  addressType?: "HOME" | "WORK" | "OTHER";
 };
 
 export type UserBasics = {
@@ -26,9 +26,102 @@ export type FetchAddressesResponse = {
   addresses: Address[];
 };
 
+type CheckoutItem = {
+  _id: string;
+  productId: string;
+  productCode: string;
+  variantId: string | null;
+  colorKey: string | null;
+  qty: number;
+
+  title: string;
+
+  // Base pricing
+  mrp: number; // unit mrp
+  salePrice: number; // unit sale price (before offer allocation)
+  lineTotal: number; // salePrice * qty (before offer allocation)
+
+  // Offer allocation (NEW from backend)
+  offerDiscount?: number; // line-level discount allocated
+  finalLineTotal?: number; // lineTotal - offerDiscount
+  effectiveUnitPrice?: number; // finalLineTotal / qty
+
+  product?: any;
+};
+
+type CheckoutTotals = {
+  subtotal: number;
+  mrpTotal: number;
+  savings: number;
+
+  discount: number;
+  grandTotal: number;
+};
+
+export type CheckoutSummaryResponse = {
+  items: CheckoutItem[];
+  totals: CheckoutTotals;
+  appliedOffer?: any | null;
+  couponCode?: string | null;
+};
+
 function unwrap<T = any>(json: any): T {
-  // supports both: {data:{...}} and direct shapes if ever used elsewhere
   return (json?.data ?? json) as T;
+}
+
+async function parseJsonSafe(res: Response) {
+  return res.json().catch(() => ({}));
+}
+
+/**
+ * Ensure numbers exist even if backend missed any field.
+ * This avoids UI "undefined" calculations.
+ */
+function normalizeCheckoutSummary(input: any): CheckoutSummaryResponse {
+  const s = (input || {}) as CheckoutSummaryResponse;
+
+  const items = Array.isArray(s.items) ? s.items : [];
+  const totals = (s.totals || {}) as Partial<CheckoutTotals>;
+
+  const safeItems = items.map((it: any) => {
+    const qty = Number(it?.qty || 0) || 0;
+    const lineTotal = Number(it?.lineTotal || 0) || 0;
+    const offerDiscount = Number(it?.offerDiscount || 0) || 0;
+
+    const finalLineTotal =
+      it?.finalLineTotal !== undefined ? Number(it.finalLineTotal || 0) : Math.max(0, lineTotal - offerDiscount);
+
+    const effectiveUnitPrice =
+      it?.effectiveUnitPrice !== undefined
+        ? Number(it.effectiveUnitPrice || 0)
+        : qty > 0
+        ? finalLineTotal / qty
+        : 0;
+
+    return {
+      ...it,
+      qty,
+      mrp: Number(it?.mrp || 0) || 0,
+      salePrice: Number(it?.salePrice || 0) || 0,
+      lineTotal,
+      offerDiscount,
+      finalLineTotal,
+      effectiveUnitPrice,
+    };
+  });
+
+  return {
+    items: safeItems,
+    totals: {
+      subtotal: Number(totals.subtotal || 0) || 0,
+      mrpTotal: Number(totals.mrpTotal || 0) || 0,
+      savings: Number(totals.savings || 0) || 0,
+      discount: Number(totals.discount || 0) || 0,
+      grandTotal: Number(totals.grandTotal || 0) || 0,
+    },
+    appliedOffer: s.appliedOffer ?? null,
+    couponCode: s.couponCode ?? null,
+  };
 }
 
 export async function fetchAddresses(): Promise<FetchAddressesResponse> {
@@ -36,7 +129,7 @@ export async function fetchAddresses(): Promise<FetchAddressesResponse> {
     credentials: "include",
     cache: "no-store",
   });
-  const json = await res.json().catch(() => ({}));
+  const json = await parseJsonSafe(res);
   if (!res.ok) throw new Error(json?.message || "Addresses fetch failed");
   const data = unwrap<FetchAddressesResponse>(json);
   return {
@@ -52,7 +145,7 @@ export async function addAddress(payload: any): Promise<FetchAddressesResponse> 
     credentials: "include",
     body: JSON.stringify(payload),
   });
-  const json = await res.json().catch(() => ({}));
+  const json = await parseJsonSafe(res);
   if (!res.ok) throw new Error(json?.message || "Add address failed");
   const data = unwrap<FetchAddressesResponse>(json);
   return {
@@ -68,7 +161,7 @@ export async function updateAddress(addressId: string, payload: any): Promise<Fe
     credentials: "include",
     body: JSON.stringify(payload),
   });
-  const json = await res.json().catch(() => ({}));
+  const json = await parseJsonSafe(res);
   if (!res.ok) throw new Error(json?.message || "Update address failed");
   const data = unwrap<FetchAddressesResponse>(json);
   return {
@@ -82,7 +175,7 @@ export async function deleteAddress(addressId: string): Promise<FetchAddressesRe
     method: "DELETE",
     credentials: "include",
   });
-  const json = await res.json().catch(() => ({}));
+  const json = await parseJsonSafe(res);
   if (!res.ok) throw new Error(json?.message || "Delete address failed");
   const data = unwrap<FetchAddressesResponse>(json);
   return {
@@ -96,7 +189,7 @@ export async function setDefaultAddress(addressId: string): Promise<FetchAddress
     method: "PATCH",
     credentials: "include",
   });
-  const json = await res.json().catch(() => ({}));
+  const json = await parseJsonSafe(res);
   if (!res.ok) throw new Error(json?.message || "Set default failed");
   const data = unwrap<FetchAddressesResponse>(json);
   return {
@@ -105,25 +198,38 @@ export async function setDefaultAddress(addressId: string): Promise<FetchAddress
   };
 }
 
-export async function checkoutSummary(): Promise<any> {
-  const res = await fetch(`${API_BASE}/users/checkout/summary`, {
+/**
+ * Checkout summary:
+ * - No couponCode => backend will apply best AUTO offer (if any)
+ * - couponCode provided => backend validates COUPON mode offer and returns discount/totals
+ *
+ * NOTE: We keep GET + querystring to match your controller.
+ */
+export async function checkoutSummary(couponCode?: string): Promise<CheckoutSummaryResponse> {
+  const code = String(couponCode || "").trim();
+  const qs = code ? `?couponCode=${encodeURIComponent(code.toUpperCase())}` : "";
+
+  const res = await fetch(`${API_BASE}/users/checkout/summary${qs}`, {
+    method: "GET",
     credentials: "include",
     cache: "no-store",
   });
-  const json = await res.json().catch(() => ({}));
+
+  const json = await parseJsonSafe(res);
   if (!res.ok) throw new Error(json?.message || "Checkout summary failed");
-  return unwrap(json);
+
+  const data = unwrap(json);
+  return normalizeCheckoutSummary(data);
 }
 
 export async function createCodOrder(payload: any): Promise<any> {
-  // ✅ FIX: route is /users/orders (no /cod)
   const res = await fetch(`${API_BASE}/users/orders`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
     body: JSON.stringify(payload),
   });
-  const json = await res.json().catch(() => ({}));
+  const json = await parseJsonSafe(res);
   if (!res.ok) throw new Error(json?.message || "Order failed");
   return unwrap(json);
 }

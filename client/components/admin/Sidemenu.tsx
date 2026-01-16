@@ -17,6 +17,7 @@ export default function Sidemenu() {
     { label: "Category", icon: Layers, href: "/admin/categories" },
     { label: "Banner", icon: Layers, href: "/admin/banner" },
     { label: "Order", icon: Layers, href: "/admin/order" },
+    { label: "Offer", icon: Layers, href: "/admin/offer" },
 
     
   ];
@@ -34,7 +35,7 @@ export default function Sidemenu() {
         <div className="flex h-16 items-center justify-between border-b px-4">
           {!collapsed ? (
             <h1 className="text-[17px] font-semibold tracking-tight">
-              mechkart
+              Country Home
             </h1>
           ) : (
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-600 text-xs font-bold text-white">

@@ -7,33 +7,33 @@ import Link from "next/link";
 export default function Footer() {
   return (
     <footer className="w-full bg-[#212121] text-gray-300 text-[14px]">
-      <div className="max-w-[1700px] mx-auto grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-6 px-6 py-10 border-b border-gray-700">
+      <div className="max-w-[1700px] mx-auto grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-6 px-6 py-10 border-b border-gray-700">
         {/* About */}
         <div>
           <h3 className="text-gray-400 text-[13px] font-semibold uppercase mb-3 tracking-wide">
             About
           </h3>
           <ul className="space-y-2">
-            <li><a href="#" className="hover:underline font-medium text-white">Contact Us</a></li>
-            <li><a href="#" className="hover:underline font-medium text-white">About Us</a></li>
-            <li><a href="#" className="hover:underline font-medium text-white">Careers</a></li>
-            <li><a href="#" className="hover:underline font-medium text-white">mechkart Stories</a></li>
-            <li><a href="#" className="hover:underline font-medium text-white">Press</a></li>
-            <li><a href="#" className="hover:underline font-medium text-white">Corporate Information</a></li>
+            <li><Link href="/website/contact" className="hover:underline font-medium text-white">Contact Us</Link></li>
+            <li><Link href="#" className="hover:underline font-medium text-white">About Us</Link></li>
+            <li><Link href="#" className="hover:underline font-medium text-white">Careers</Link></li>
+            {/* <li><Link href="#" className="hover:underline font-medium text-white">Country Home Stories</Link></li>
+            <li><Link href="#" className="hover:underline font-medium text-white">Press</Link></li>
+            <li><Link href="#" className="hover:underline font-medium text-white">Corporate Information</Link></li> */}
           </ul>
         </div>
 
         {/* Group Companies */}
-        <div>
+        {/* <div>
           <h3 className="text-gray-400 text-[13px] font-semibold uppercase mb-3 tracking-wide">
             Group Companies
           </h3>
           <ul className="space-y-2">
-            <li><a href="#" className="hover:underline font-medium text-white">AutoKart</a></li>
-            <li><a href="#" className="hover:underline font-medium text-white">StyleKart</a></li>
-            <li><a href="#" className="hover:underline font-medium text-white">TechTrip</a></li>
+            <li><Link href="#" className="hover:underline font-medium text-white">AutoKart</Link></li>
+            <li><Link href="#" className="hover:underline font-medium text-white">StyleKart</Link></li>
+            <li><Link href="#" className="hover:underline font-medium text-white">TechTrip</Link></li>
           </ul>
-        </div>
+        </div> */}
 
         {/* Help */}
         <div>
@@ -41,10 +41,10 @@ export default function Footer() {
             Help
           </h3>
           <ul className="space-y-2">
-            <li><a href="#" className="hover:underline font-medium text-white">Payments</a></li>
-            <li><a href="#" className="hover:underline font-medium text-white">Shipping</a></li>
-            <li><a href="#" className="hover:underline font-medium text-white">Cancellation & Returns</a></li>
-            <li><a href="#" className="hover:underline font-medium text-white">FAQ</a></li>
+            <li><Link href="/website/help/payments" className="hover:underline font-medium text-white">Payments</Link></li>
+            <li><Link href="/website/help/shipping" className="hover:underline font-medium text-white">Shipping</Link></li>
+            <li><Link href="/website/help/cancellation & return" className="hover:underline font-medium text-white">Cancellation & Returns</Link></li>
+            <li><Link href="/website/help/Faqs" className="hover:underline font-medium text-white">FAQ</Link></li>
           </ul>
         </div>
 
@@ -54,40 +54,37 @@ export default function Footer() {
             Consumer Policy
           </h3>
           <ul className="space-y-2">
-            <li><a href="#" className="hover:underline font-medium text-white">Cancellation & Returns</a></li>
-            <li><a href="#" className="hover:underline font-medium text-white">Terms Of Use</a></li>
-            <li><a href="#" className="hover:underline font-medium text-white">Security</a></li>
-            <li><a href="#" className="hover:underline font-medium text-white">Privacy</a></li>
-            <li><a href="#" className="hover:underline font-medium text-white">Sitemap</a></li>
-            <li><a href="#" className="hover:underline font-medium text-white">Grievance Redressal</a></li>
-            <li><a href="#" className="hover:underline font-medium text-white">EPR Compliance</a></li>
+            {/* <li><Link href="#" className="hover:underline font-medium text-white">Cancellation & Returns</Link></li> */}
+            <li><Link href="website/consumer-policies/t&c" className="hover:underline font-medium text-white">Terms Of Use</Link></li>
+            <li><Link href="website/consumer-policies/security" className="hover:underline font-medium text-white">Security</Link></li>
+            <li><Link href="website/consumer-policies/privacy" className="hover:underline font-medium text-white">Privacy</Link></li>
+                        <li><Link href="/website/consumer-policie/return&refund" className="hover:underline font-medium text-white">Returns & Refund</Link></li>
+            <li><Link href="#" className="hover:underline font-medium text-white">Sitemap</Link></li>
           </ul>
         </div>
 
         {/* Mail Us */}
         <div className="lg:pl-6 border-l border-gray-700 hidden lg:block">
-          <h3 className="text-gray-400 text-[13px] font-semibold uppercase mb-3 tracking-wide">
+          <h3 className="text-gray-400 text-[13px] font-semibold uppercase mb-2 tracking-wide">
             Mail Us
           </h3>
-          <Link href="mailto:support@mechkart.com"> support@countryhome.co.in</Link>
+          <Link href="mailto:contact@countryhome.co.in"> contact@countryhome.co.in</Link>
+          <h3 className="text-gray-400 text-[13px] font-semibold uppercase mt-3 mb-2 tracking-wide">
+            Contact Us
+          </h3>
+          <Link href="tel:+919879511957"> +91 98795 11957</Link>
 
           <div className="mt-4">
-            <h4 className="text-gray-400 text-[13px] font-semibold mb-2">Warehouse:</h4>
-          <p className="text-gray-300 leading-relaxed text-[13px]">
-            mechkart Private Limited,
-            <br />
-            Near Kishore Talkies
-            <br />Behind India Post
-            <br />Pin - 450331 Burhanpur (m.p)
-          </p>
+            {/* <h4 className="text-gray-400 text-[13px] font-semibold mb-2">Warehouse:</h4> */}
+            
           </div>
           <div className="mt-4">
             <h4 className="text-gray-400 text-[13px] font-semibold mb-2">Social:</h4>
             <div className="flex items-center space-x-4 text-gray-300">
-              <a href="#" aria-label="Facebook" className="hover:text-white"><Facebook size={18} /></a>
-              <a href="#" aria-label="X" className="hover:text-white"><Twitter size={18} /></a>
-              <a href="#" aria-label="YouTube" className="hover:text-white"><Youtube size={18} /></a>
-              <a href="#" aria-label="Instagram" className="hover:text-white"><Instagram size={18} /></a>
+              <Link href="#" aria-label="Facebook" className="hover:text-white"><Facebook size={18} /></Link>
+              <Link href="#" aria-label="X" className="hover:text-white"><Twitter size={18} /></Link>
+              <Link href="#" aria-label="YouTube" className="hover:text-white"><Youtube size={18} /></Link>
+              <Link href="#" aria-label="Instagram" className="hover:text-white"><Instagram size={18} /></Link>
             </div>
           </div>
 
@@ -99,7 +96,7 @@ export default function Footer() {
             Registered Office Address
           </h3>
           <p className="text-gray-300 leading-relaxed text-[13px]">
-            mechkart Private Limited,
+            Country Home Private Limited,
             <br /> Pankaj Palace Shop No.7
             <br />  Near City Palace Mall Burhanpur
             <br /> Madhya Pradesh, 450331, India
@@ -107,19 +104,19 @@ export default function Footer() {
             CIN: U51109KA2024PTC099999
             <br />
             Telephone:{" "}
-            <a
+            <Link
               href="#"
               className="text-[#0077B6] hover:underline"
             >
               080-45120000
-            </a>{" "}
+            </Link>{" "}
             /{" "}
-            <a
+            <Link
               href="#"
               className="text-[#0077B6] hover:underline"
             >
               080-67418000
-            </a>
+            </Link>
           </p>
         </div>
       </div>
@@ -127,24 +124,13 @@ export default function Footer() {
       {/* Bottom Bar */}
       <div className="border-t border-gray-700 px-6 py-3 flex flex-col md:flex-row items-center justify-between text-[13px] text-gray-400 gap-3">
         <div className="flex flex-wrap items-center justify-center gap-6">
-          <div className="flex items-center gap-2">
-            <Link href="#" className="text-yellow-400">Become a Seller</Link> 
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-yellow-400"></span> Advertise
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-yellow-400"></span> Gift Cards
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-yellow-400"></span> Help Center
-          </div>
-        </div>
-
-        <div className="text-center md:text-right">
           <p className="text-gray-400">
             © 2025 <span className="text-white font-medium">countryhome.co.in</span>
           </p>
+        </div>
+
+        <div className="text-center md:text-right">
+
           <div className="flex items-center justify-center md:justify-end gap-2 mt-2">
             <img src="/payment.svg" alt="payments" className="h-5" />
           </div>

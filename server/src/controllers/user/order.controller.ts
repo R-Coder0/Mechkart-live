@@ -6,6 +6,14 @@ import { Product } from "../../models/Product.model";
 import { User } from "../../models/User.model";
 import PDFDocument from "pdfkit";
 import { Order } from "../../models/Order.model";
+import { validateAndComputeOffer, recordOfferRedemption } from "../../services/offer.apply.service";
+
+
+// ✅ NEW: Email service imports (create this file: src/services/email.service.ts)
+import {
+  sendOrderPlacedCustomerEmail,
+  sendOrderPlacedOwnerEmail,
+} from "../../services/email.service";
 
 const getUserId = (req: Request) => (req as any).user?._id;
 const toStr = (v: any) => String(v ?? "").trim();
@@ -47,6 +55,12 @@ async function generateOrderCodeForDay(date: Date) {
  * - saves productCode snapshot
  * - removes only selected cart lines
  * - sets selected address default
+ * - ✅ sends email to Customer + Owner (website owner)
+ */
+/**
+ * ✅ CREATE COD ORDER
+ * ✅ FIX: order item snapshot me variantText save kar rahe hain
+ * so email me variantId ki jagah variantText show hoga
  */
 export const createCodOrder = async (req: Request, res: Response) => {
   try {
@@ -96,7 +110,9 @@ export const createCodOrder = async (req: Request, res: Response) => {
       _id: { $in: productIds },
       isActive: true,
     })
-      .select("title productId variants isActive mrp salePrice baseStock stock quantity")
+      .select(
+        "title productId variants colors galleryImages featureImage isActive mrp salePrice baseStock stock quantity"
+      )
       .lean();
 
     const productMap = new Map(products.map((p: any) => [String(p._id), p]));
@@ -129,7 +145,14 @@ export const createCodOrder = async (req: Request, res: Response) => {
       }
     }
 
-    // 5) Build order items snapshot
+    // ✅ helper to compute variant text like your UI
+    const computeVariantText = (p: any, variantId: any) => {
+      const v = (p?.variants || []).find((x: any) => String(x._id) === String(variantId));
+      if (!v) return "";
+      return toStr(v.label) || toStr(v.comboText) || toStr(v.size) || toStr(v.weight) || "";
+    };
+
+    // 5) Build order items snapshot (✅ includes variantText)
     const orderItems = selectedItems.map((it: any) => {
       const p: any = productMap.get(String(it.productId));
 
@@ -142,23 +165,30 @@ export const createCodOrder = async (req: Request, res: Response) => {
       let mrp = 0;
       let salePrice = 0;
       let finalVariantId: any = null;
+      let variantText = "";
 
       if (hasVariants) {
         const v = (p.variants || []).find((x: any) => String(x._id) === String(it.variantId));
         if (!v) throw new Error("Selected variant no longer exists");
+
         mrp = Number(v.mrp ?? it.mrp ?? 0);
         salePrice = Number(v.salePrice ?? it.salePrice ?? mrp);
         finalVariantId = new Types.ObjectId(it.variantId);
+
+        // ✅ snapshot variantText for email + UI (future safe)
+        variantText = computeVariantText(p, it.variantId);
       } else {
         mrp = Number(p?.mrp ?? it.mrp ?? 0);
         salePrice = Number(p?.salePrice ?? it.salePrice ?? mrp);
         finalVariantId = null;
+        variantText = "";
       }
 
       return {
         productId: new Types.ObjectId(it.productId),
         productCode,
         variantId: finalVariantId,
+        variantText: variantText || null, // ✅ NEW FIELD
         colorKey: it.colorKey ?? null,
         qty: Number(it.qty || 1),
         title: toStr(it.title) || toStr(p?.title) || "Product",
@@ -167,43 +197,98 @@ export const createCodOrder = async (req: Request, res: Response) => {
         salePrice,
       };
     });
+const subtotal = orderItems.reduce((sum, it: any) => sum + Number(it.salePrice) * Number(it.qty), 0);
+const mrpTotal = orderItems.reduce((sum, it: any) => sum + Number(it.mrp) * Number(it.qty), 0);
+const savings = Math.max(0, mrpTotal - subtotal);
 
-    const subtotal = orderItems.reduce((sum, it: any) => sum + Number(it.salePrice) * Number(it.qty), 0);
-    const mrpTotal = orderItems.reduce((sum, it: any) => sum + Number(it.mrp) * Number(it.qty), 0);
-    const savings = Math.max(0, mrpTotal - subtotal);
+// ✅ Offer apply from checkout
+const couponCode = toStr(req.body?.couponCode); // optional
 
+const lines = orderItems.map((it: any) => ({
+  productId: it.productId,
+  qty: it.qty,
+  salePrice: it.salePrice,
+}));
+
+const offerResult = await validateAndComputeOffer({
+  userId: new Types.ObjectId(userId),
+  couponCode: couponCode || undefined,
+  lines,
+});
+
+if (!offerResult.ok) {
+  return res.status(400).json({ message: offerResult.reason });
+}
+
+const discount = Math.min(Number(offerResult.discount || 0), subtotal);
+const grandTotal = Math.max(0, subtotal - discount);
     // ✅ Order code
     const now = new Date();
     const orderCode = await generateOrderCodeForDay(now);
 
     // 6) Create order
-    const order = await Order.create({
-      userId: new Types.ObjectId(userId),
-      orderCode, // ✅ add this in Order model (field)
-      items: orderItems,
-      totals: { subtotal, mrpTotal, savings },
+const order = await Order.create({
+  
+  userId: new Types.ObjectId(userId),
+  orderCode,
+  items: orderItems,
 
-      contact: {
-        name: contactName,
-        phone: contactPhone,
-        email: contactEmail || undefined,
-      },
+totals: { subtotal, mrpTotal, savings, discount, grandTotal },
 
-      address: {
-        fullName: addr.fullName,
-        phone: addr.phone,
-        pincode: addr.pincode,
-        state: addr.state,
-        city: addr.city,
-        addressLine1: addr.addressLine1,
-        addressLine2: addr.addressLine2,
-        landmark: addr.landmark,
-      },
+appliedOffer: offerResult.appliedOffer
+  ? {
+      offerId: offerResult.appliedOffer._id,
+      name: offerResult.appliedOffer.name,
+      mode: offerResult.appliedOffer.mode,
+      couponCode: offerResult.appliedOffer.couponCode || null,
+      type: offerResult.appliedOffer.type,
+      value: offerResult.appliedOffer.value,
+      discountAmount: discount,
+    }
+  : null,
 
-      paymentMethod: "COD",
-      paymentStatus: "PENDING",
-      status: "PLACED",
-    });
+
+  contact: {
+    name: contactName,
+    phone: contactPhone,
+    email: contactEmail || undefined,
+  },
+
+  address: {
+    fullName: addr.fullName,
+    phone: addr.phone,
+    pincode: addr.pincode,
+    state: addr.state,
+    city: addr.city,
+    addressLine1: addr.addressLine1,
+    addressLine2: addr.addressLine2,
+    landmark: addr.landmark,
+  },
+
+  paymentMethod: "COD",
+  paymentStatus: "PENDING",
+  status: "PLACED",
+});
+
+// ✅ ✅ ✅ PUT THIS RIGHT HERE (after order create)
+if (offerResult.ok && offerResult.appliedOffer && discount > 0) {
+  await recordOfferRedemption({
+    offerId: offerResult.appliedOffer._id,
+    userId: new Types.ObjectId(userId),
+      orderId: new Types.ObjectId(String(order._id)),
+    couponCode: couponCode || null,
+    discountAmount: discount,
+  });
+}
+
+    // ✅ 6.1) Send Emails (Customer + Owner) — fail-safe
+    try {
+      // order is mongoose doc; lean not needed. pass as any
+      await sendOrderPlacedCustomerEmail(order as any);
+      await sendOrderPlacedOwnerEmail(order as any);
+    } catch (e: any) {
+      console.error("Order placed email failed:", e?.message || e);
+    }
 
     // 7) Make selected address default
     for (const a of user.addresses as any) a.isDefault = false;
@@ -234,7 +319,8 @@ export const createCodOrder = async (req: Request, res: Response) => {
 };
 
 /**
- * ✅ GET ORDER BY ID
+ * ✅ GET ORDER BY ID (DETAIL)
+ * Route: GET /users/orders/:orderId
  */
 export const getOrderById = async (req: Request, res: Response) => {
   try {
@@ -259,7 +345,6 @@ export const getOrderById = async (req: Request, res: Response) => {
   }
 };
 
-
 /**
  * ✅ GET MY ORDERS (LIST)
  * Route: GET /users/orders?q=
@@ -273,7 +358,7 @@ export const getMyOrders = async (req: Request, res: Response) => {
 
     const query: any = { userId: new Types.ObjectId(userId) };
 
-    // optional search (orderCode / phone / name / product title)
+    // optional search (orderCode / phone / name / product title / productCode)
     if (q) {
       query.$or = [
         { orderCode: { $regex: q, $options: "i" } },
@@ -303,12 +388,15 @@ export const getMyOrders = async (req: Request, res: Response) => {
     });
   }
 };
+
 /**
  * ✅ DOWNLOAD INVOICE PDF
  * - fixed left/right alignment
  * - GST = 0
  * - Nature of transaction = paymentMethod
  * - QR + Barcode optional
+ *
+ * Route: GET /users/orders/:orderId/invoice
  */
 export const downloadInvoicePdf = async (req: Request, res: Response) => {
   try {
@@ -323,7 +411,7 @@ export const downloadInvoicePdf = async (req: Request, res: Response) => {
 
     // ---------- Provider ----------
     const PROVIDER = {
-      legalName: "mechkart PRIVATE LIMITED",
+      legalName: "COUNTRY HOME PRIVATE LIMITED",
       addressLine1: "Your Office Address Line 1",
       addressLine2: "Your Office Address Line 2",
       city: "Your City",

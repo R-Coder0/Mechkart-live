@@ -4,8 +4,15 @@
 "use client";
 
 import Link from "next/link";
-import { Search, ShoppingCart, X, ChevronDown, User as UserIcon } from "lucide-react";
+import {
+  Search,
+  ShoppingCart,
+  X,
+  ChevronDown,
+  User as UserIcon,
+} from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   meUser,
   loginUser,
@@ -35,7 +42,17 @@ async function fetchCartCount(): Promise<number> {
 
 type SignupStep = "sendOtp" | "verifyOtp" | "register";
 
+/** ---------- Search Types ---------- */
+type SuggestItem = { label: string; value: string; type: "PRODUCT" | "CATEGORY" | "SUBCATEGORY" | "CODE" };
+type SuggestResponse = { items: SuggestItem[] };
+
+function norm(v: any) {
+  return String(v ?? "").trim();
+}
+
 export function WebsiteHeader() {
+  const router = useRouter();
+
   const [showAuth, setShowAuth] = useState(false);
   const [mode, setMode] = useState<"login" | "signup">("login");
 
@@ -67,6 +84,14 @@ export function WebsiteHeader() {
   const [signupPassword, setSignupPassword] = useState("");
   const [signupConfirm, setSignupConfirm] = useState("");
 
+  /** ---------------- SEARCH STATE ---------------- */
+  const [q, setQ] = useState("");
+  const [suggestOpen, setSuggestOpen] = useState(false);
+  const [suggestLoading, setSuggestLoading] = useState(false);
+  const [suggestItems, setSuggestItems] = useState<SuggestItem[]>([]);
+  const suggestBoxRef = useRef<HTMLDivElement | null>(null);
+  const suggestAbortRef = useRef<AbortController | null>(null);
+
   // initial load: cart + user
   useEffect(() => {
     (async () => {
@@ -87,11 +112,21 @@ export function WebsiteHeader() {
     return () => window.removeEventListener("cart:updated", handler);
   }, []);
 
-  // close dropdown on outside click
+  // close dropdown on outside click (profile menu)
   useEffect(() => {
     const onDoc = (e: any) => {
       if (!menuRef.current) return;
       if (!menuRef.current.contains(e.target)) setOpenMenu(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, []);
+
+  // close search suggestion on outside click
+  useEffect(() => {
+    const onDoc = (e: any) => {
+      if (!suggestBoxRef.current) return;
+      if (!suggestBoxRef.current.contains(e.target)) setSuggestOpen(false);
     };
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
@@ -138,7 +173,6 @@ export function WebsiteHeader() {
       setUser(me);
       setShowAuth(false);
       setLoginPassword("");
-      // cart could merge server side after login, so refresh cart count
       window.dispatchEvent(new Event("cart:updated"));
     } catch (e: any) {
       setAuthError(e?.message || "Login failed");
@@ -153,9 +187,7 @@ export function WebsiteHeader() {
       await logoutUser();
       setUser(null);
       setOpenMenu(false);
-      // cart remains guest cookie cart; refresh count anyway
       window.dispatchEvent(new Event("cart:updated"));
-      // optional: redirect
       window.location.href = "/website";
     } catch (e: any) {
       // silent
@@ -222,9 +254,7 @@ export function WebsiteHeader() {
   };
 
   const ProfileButton = () => {
-    if (userLoading) {
-      return <div className="text-[15px] text-gray-500">...</div>;
-    }
+    if (userLoading) return <div className="text-[15px] text-gray-500">...</div>;
 
     if (!user) {
       return (
@@ -247,7 +277,7 @@ export function WebsiteHeader() {
         </button>
 
         {openMenu && (
-          <div className="absolute left-0 mt-2 w-52  border bg-white shadow-lg overflow-hidden">
+          <div className="absolute left-0 mt-2 w-52 border bg-white shadow-lg overflow-hidden">
             <Link
               href="/website/user/dashboard"
               className="block px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50"
@@ -269,6 +299,76 @@ export function WebsiteHeader() {
       </div>
     );
   };
+
+  /** ---------------- SEARCH FUNCTIONS ---------------- */
+  const goSearch = (query: string) => {
+    const value = norm(query);
+    if (!value) return;
+    setSuggestOpen(false);
+    router.push(`/website/search?q=${encodeURIComponent(value)}`);
+  };
+
+  const fetchSuggest = async (query: string) => {
+    const value = norm(query);
+    if (!value) {
+      setSuggestItems([]);
+      setSuggestOpen(false);
+      return;
+    }
+
+    // cancel previous request
+    if (suggestAbortRef.current) suggestAbortRef.current.abort();
+    const controller = new AbortController();
+    suggestAbortRef.current = controller;
+
+    setSuggestLoading(true);
+    try {
+      const res = await fetch(`${API_BASE}/common/products/suggest?q=${encodeURIComponent(value)}`, {
+        method: "GET",
+        credentials: "include",
+        cache: "no-store",
+        signal: controller.signal,
+      });
+
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.message || "Suggest failed");
+
+      const data = (json?.data ?? json) as SuggestResponse;
+      const list = Array.isArray(data?.items) ? data.items : [];
+
+      // fallback (if backend returns different shape)
+      const normalized: SuggestItem[] = list
+        .map((x: any) => ({
+          label: String(x?.label || x?.name || x?.title || ""),
+          value: String(x?.value || x?.slug || x?._id || x?.code || x?.label || ""),
+          type: (x?.type as any) || "PRODUCT",
+        }))
+        .filter((x) => x.label);
+
+      setSuggestItems(normalized.slice(0, 12));
+      setSuggestOpen(true);
+    } catch (e: any) {
+      if (e?.name === "AbortError") return;
+      // if suggest fails, do not break header
+      setSuggestItems([]);
+      setSuggestOpen(false);
+    } finally {
+      setSuggestLoading(false);
+    }
+  };
+
+  // debounce suggest
+  useEffect(() => {
+    const value = norm(q);
+    if (!value) {
+      setSuggestItems([]);
+      setSuggestOpen(false);
+      return;
+    }
+    const t = setTimeout(() => fetchSuggest(value), 250);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [q]);
 
   return (
     <>
@@ -306,15 +406,79 @@ export function WebsiteHeader() {
 
             {/* CENTER: SEARCH */}
             <div className="flex md:flex-1 md:justify-center">
-              <div className="w-full md:max-w-[640px]">
-                <div className="h-11 sm:h-12 flex items-center rounded-full border border-gray-300 bg-gray-50 px-4 shadow-sm focus-within:border-[#82008F] focus-within:ring-2 focus-within:ring-[#82008F]/20">
-                  <Search className="h-5 w-5 text-gray-500 shrink-0" />
-                  <input
-                    type="text"
-                    placeholder="Try Saree, Kurti or Search by Product Code"
-                    className="ml-3 w-full bg-transparent text-[14px] sm:text-[15px] text-gray-800 placeholder:text-gray-400 focus:outline-none"
-                  />
-                </div>
+              <div className="w-full md:max-w-[640px] relative" ref={suggestBoxRef}>
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    goSearch(q);
+                  }}
+                >
+                  <div className="h-11 sm:h-12 flex items-center rounded-full border border-gray-300 bg-gray-50 px-4 shadow-sm focus-within:border-[#82008F] focus-within:ring-2 focus-within:ring-[#82008F]/20">
+                    <button
+                      type="button"
+                      onClick={() => goSearch(q)}
+                      className="shrink-0"
+                      aria-label="Search"
+                    >
+                      <Search className="h-5 w-5 text-gray-500 shrink-0" />
+                    </button>
+
+                    <input
+                      type="text"
+                      value={q}
+                      onChange={(e) => setQ(e.target.value)}
+                      onFocus={() => {
+                        if (suggestItems.length) setSuggestOpen(true);
+                      }}
+                      placeholder="Try Saree, Kurti or Search by Product Code"
+                      className="ml-3 w-full bg-transparent text-[14px] sm:text-[15px] text-gray-800 placeholder:text-gray-400 focus:outline-none"
+                    />
+
+                    {q ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setQ("");
+                          setSuggestOpen(false);
+                          setSuggestItems([]);
+                        }}
+                        className="ml-2 text-gray-400 hover:text-gray-700"
+                        aria-label="Clear"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    ) : null}
+                  </div>
+                </form>
+
+                {/* Suggest dropdown */}
+                {suggestOpen && (suggestLoading || suggestItems.length > 0) ? (
+                  <div className="absolute left-0 right-0 mt-2 rounded-2xl border bg-white shadow-lg overflow-hidden z-50">
+                    {suggestLoading ? (
+                      <div className="px-4 py-3 text-sm text-gray-500">Searching...</div>
+                    ) : null}
+
+                    {!suggestLoading && suggestItems.map((s, idx) => (
+                      <button
+                        key={`${s.type}-${s.value}-${idx}`}
+                        type="button"
+                        onClick={() => {
+                          // Simple behavior: everything goes to search page by label
+                          // (Category/Subcategory bhi search query ki tarah work karega)
+                          goSearch(s.label || q);
+                        }}
+                        className="w-full text-left px-4 py-3 text-sm hover:bg-gray-50 flex items-center justify-between"
+                      >
+                        <span className="text-gray-800">{s.label}</span>
+                        <span className="text-[11px] font-semibold text-gray-500">{s.type}</span>
+                      </button>
+                    ))}
+
+                    {!suggestLoading && suggestItems.length === 0 ? (
+                      <div className="px-4 py-3 text-sm text-gray-500">No suggestions</div>
+                    ) : null}
+                  </div>
+                ) : null}
               </div>
             </div>
 
