@@ -22,7 +22,7 @@ function getCookieOptions(req: Request) {
     httpOnly: true,
     secure: isProd,
     sameSite: (isProd ? "none" : "lax") as "none" | "lax",
-    // domain: isProd ? ".countryhome.co.in" : undefined,
+    // domain: isProd ? ".Mechkart.co.in" : undefined,
     path: "/",
     maxAge: COOKIE_MAX_AGE_MS,
   };

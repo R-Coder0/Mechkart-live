@@ -3,7 +3,7 @@ import { Schema, model, Document } from "mongoose";
 export interface IBanner extends Document {
   key: string;              // e.g. "home-hero"
   image: string;            // stored as "/uploads/xxx.webp"
-  ctaUrl: string;           // e.g. "/website/products" OR full URL
+  ctaUrl: string;           // e.g. "/products" OR full URL
   isActive: boolean;
 }
 

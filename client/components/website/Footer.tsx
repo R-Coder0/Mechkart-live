@@ -14,7 +14,7 @@ export default function Footer() {
             About
           </h3>
           <ul className="space-y-2">
-            <li><Link href="/website/contact" className="hover:underline font-medium text-white">Contact Us</Link></li>
+            <li><Link href="/contact" className="hover:underline font-medium text-white">Contact Us</Link></li>
             <li><Link href="#" className="hover:underline font-medium text-white">About Us</Link></li>
             <li><Link href="#" className="hover:underline font-medium text-white">Careers</Link></li>
             {/* <li><Link href="#" className="hover:underline font-medium text-white">Country Home Stories</Link></li>
@@ -41,10 +41,10 @@ export default function Footer() {
             Help
           </h3>
           <ul className="space-y-2">
-            <li><Link href="/website/help/payments" className="hover:underline font-medium text-white">Payments</Link></li>
-            <li><Link href="/website/help/shipping" className="hover:underline font-medium text-white">Shipping</Link></li>
-            <li><Link href="/website/help/cancellation & return" className="hover:underline font-medium text-white">Cancellation & Returns</Link></li>
-            <li><Link href="/website/help/Faqs" className="hover:underline font-medium text-white">FAQ</Link></li>
+            <li><Link href="/help/payments" className="hover:underline font-medium text-white">Payments</Link></li>
+            <li><Link href="/help/shipping" className="hover:underline font-medium text-white">Shipping</Link></li>
+            <li><Link href="/help/cancellation-return" className="hover:underline font-medium text-white">Cancellation & Returns</Link></li>
+            <li><Link href="/help/Faqs" className="hover:underline font-medium text-white">FAQ</Link></li>
           </ul>
         </div>
 
@@ -55,10 +55,10 @@ export default function Footer() {
           </h3>
           <ul className="space-y-2">
             {/* <li><Link href="#" className="hover:underline font-medium text-white">Cancellation & Returns</Link></li> */}
-            <li><Link href="website/consumer-policies/t&c" className="hover:underline font-medium text-white">Terms Of Use</Link></li>
-            <li><Link href="website/consumer-policies/security" className="hover:underline font-medium text-white">Security</Link></li>
-            <li><Link href="website/consumer-policies/privacy" className="hover:underline font-medium text-white">Privacy</Link></li>
-                        <li><Link href="/website/consumer-policie/return&refund" className="hover:underline font-medium text-white">Returns & Refund</Link></li>
+            <li><Link href="/consumer-policies/t&c" className="hover:underline font-medium text-white">Terms Of Use</Link></li>
+            <li><Link href="/consumer-policies/security" className="hover:underline font-medium text-white">Security</Link></li>
+            <li><Link href="/consumer-policies/privacy" className="hover:underline font-medium text-white">Privacy</Link></li>
+            <li><Link href="/consumer-policies/return&refund" className="hover:underline font-medium text-white">Returns & Refund</Link></li>
             <li><Link href="#" className="hover:underline font-medium text-white">Sitemap</Link></li>
           </ul>
         </div>
@@ -68,7 +68,7 @@ export default function Footer() {
           <h3 className="text-gray-400 text-[13px] font-semibold uppercase mb-2 tracking-wide">
             Mail Us
           </h3>
-          <Link href="mailto:contact@countryhome.co.in"> contact@countryhome.co.in</Link>
+          <Link href="mailto:contact@Mechkart.co.in"> contact@Mechkart.co.in</Link>
           <h3 className="text-gray-400 text-[13px] font-semibold uppercase mt-3 mb-2 tracking-wide">
             Contact Us
           </h3>
@@ -125,7 +125,7 @@ export default function Footer() {
       <div className="border-t border-gray-700 px-6 py-3 flex flex-col md:flex-row items-center justify-between text-[13px] text-gray-400 gap-3">
         <div className="flex flex-wrap items-center justify-center gap-6">
           <p className="text-gray-400">
-            © 2025 <span className="text-white font-medium">countryhome.co.in</span>
+            © 2025 <span className="text-white font-medium">Mechkart.co.in</span>
           </p>
         </div>
 

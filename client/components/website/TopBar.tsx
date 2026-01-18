@@ -9,11 +9,11 @@ export default function TopContactBar() {
         <div className="flex items-center justify-between gap-3 text-[12px] sm:text-[13px]">
           {/* Email */}
           <Link
-            href="mailto:contact@countryhome.co.in"
+            href="mailto:contact@Mechkart.co.in"
             className="truncate hover:text-white"
-            title="contact@countryhome.co.in"
+            title="contact@Mechkart.co.in"
           >
-            contact@countryhome.co.in
+            contact@Mechkart.co.in
           </Link>
 
           {/* Phone */}

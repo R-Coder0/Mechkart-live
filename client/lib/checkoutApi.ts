@@ -36,15 +36,13 @@ type CheckoutItem = {
 
   title: string;
 
-  // Base pricing
-  mrp: number; // unit mrp
-  salePrice: number; // unit sale price (before offer allocation)
-  lineTotal: number; // salePrice * qty (before offer allocation)
+  mrp: number;
+  salePrice: number;
+  lineTotal: number;
 
-  // Offer allocation (NEW from backend)
-  offerDiscount?: number; // line-level discount allocated
-  finalLineTotal?: number; // lineTotal - offerDiscount
-  effectiveUnitPrice?: number; // finalLineTotal / qty
+  offerDiscount?: number;
+  finalLineTotal?: number;
+  effectiveUnitPrice?: number;
 
   product?: any;
 };
@@ -53,7 +51,6 @@ type CheckoutTotals = {
   subtotal: number;
   mrpTotal: number;
   savings: number;
-
   discount: number;
   grandTotal: number;
 };
@@ -73,10 +70,6 @@ async function parseJsonSafe(res: Response) {
   return res.json().catch(() => ({}));
 }
 
-/**
- * Ensure numbers exist even if backend missed any field.
- * This avoids UI "undefined" calculations.
- */
 function normalizeCheckoutSummary(input: any): CheckoutSummaryResponse {
   const s = (input || {}) as CheckoutSummaryResponse;
 
@@ -89,7 +82,9 @@ function normalizeCheckoutSummary(input: any): CheckoutSummaryResponse {
     const offerDiscount = Number(it?.offerDiscount || 0) || 0;
 
     const finalLineTotal =
-      it?.finalLineTotal !== undefined ? Number(it.finalLineTotal || 0) : Math.max(0, lineTotal - offerDiscount);
+      it?.finalLineTotal !== undefined
+        ? Number(it.finalLineTotal || 0)
+        : Math.max(0, lineTotal - offerDiscount);
 
     const effectiveUnitPrice =
       it?.effectiveUnitPrice !== undefined
@@ -198,13 +193,6 @@ export async function setDefaultAddress(addressId: string): Promise<FetchAddress
   };
 }
 
-/**
- * Checkout summary:
- * - No couponCode => backend will apply best AUTO offer (if any)
- * - couponCode provided => backend validates COUPON mode offer and returns discount/totals
- *
- * NOTE: We keep GET + querystring to match your controller.
- */
 export async function checkoutSummary(couponCode?: string): Promise<CheckoutSummaryResponse> {
   const code = String(couponCode || "").trim();
   const qs = code ? `?couponCode=${encodeURIComponent(code.toUpperCase())}` : "";
@@ -222,14 +210,46 @@ export async function checkoutSummary(couponCode?: string): Promise<CheckoutSumm
   return normalizeCheckoutSummary(data);
 }
 
+/** ✅ COD ORDER (route updated) */
 export async function createCodOrder(payload: any): Promise<any> {
-  const res = await fetch(`${API_BASE}/users/orders`, {
+  const res = await fetch(`${API_BASE}/users/orders/cod`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     credentials: "include",
     body: JSON.stringify(payload),
   });
   const json = await parseJsonSafe(res);
-  if (!res.ok) throw new Error(json?.message || "Order failed");
+  if (!res.ok) throw new Error(json?.message || "COD order failed");
+  return unwrap(json);
+}
+
+/** ✅ Razorpay: create order (DB + razorpay_order_id) */
+export async function createRazorpayOrder(payload: any): Promise<any> {
+  const res = await fetch(`${API_BASE}/users/orders/razorpay/create`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify(payload),
+  });
+  const json = await parseJsonSafe(res);
+  if (!res.ok) throw new Error(json?.message || "Razorpay order create failed");
+  return unwrap(json);
+}
+
+/** ✅ Razorpay: verify payment signature */
+export async function verifyRazorpayPayment(payload: {
+  orderId: string; // our mongo orderId
+  razorpay_order_id: string;
+  razorpay_payment_id: string;
+  razorpay_signature: string;
+}): Promise<any> {
+  const res = await fetch(`${API_BASE}/users/orders/razorpay/verify`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify(payload),
+  });
+  const json = await parseJsonSafe(res);
+  if (!res.ok) throw new Error(json?.message || "Razorpay verify failed");
   return unwrap(json);
 }

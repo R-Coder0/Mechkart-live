@@ -3,13 +3,33 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { adminFetchOrders, adminUpdateOrderStatus } from "@/lib/adminOrdersApi";
+import {
+  adminFetchOrders,
+  adminUpdateOrderStatus,
+  adminConfirmCod,
+} from "@/lib/adminOrdersApi";
 
 function money(n: number) {
   return `₹${Math.round(Number(n || 0))}`;
 }
 
+function moneyPaise(paise: any) {
+  const p = Number(paise || 0);
+  if (!Number.isFinite(p) || p <= 0) return "—";
+  return money(p / 100);
+}
+
+function fmtDateTime(v?: any) {
+  if (!v) return "—";
+  try {
+    return new Date(v).toLocaleString("en-IN");
+  } catch {
+    return "—";
+  }
+}
+
 const STATUS_OPTIONS = ["PLACED", "CONFIRMED", "SHIPPED", "DELIVERED", "CANCELLED"] as const;
+const PAYMENT_STATUS_OPTIONS = ["PENDING", "PAID", "FAILED"] as const;
 
 export default function AdminOrdersPage() {
   const [loading, setLoading] = useState(true);
@@ -19,6 +39,7 @@ export default function AdminOrdersPage() {
   const [q, setQ] = useState("");
   const [status, setStatus] = useState<string>("");
   const [paymentMethod, setPaymentMethod] = useState<string>("");
+  const [paymentStatus, setPaymentStatus] = useState<string>("");
 
   const [page, setPage] = useState(1);
   const limit = 20;
@@ -34,16 +55,26 @@ export default function AdminOrdersPage() {
   const items = data?.items || [];
   const totalPages = Number(data?.totalPages || 1);
 
-function getVariantText(product?: any, variantId?: string) {
-  const v = (product?.variants || []).find((x: any) => String(x._id) === String(variantId));
-  if (!v) return "Variant";
-  return v.label || v.comboText || v.size || v.weight || "Variant";
-}
+  function getVariantText(product?: any, variantId?: string) {
+    const v = (product?.variants || []).find((x: any) => String(x._id) === String(variantId));
+    if (!v) return "Variant";
+    return v.label || v.comboText || v.size || v.weight || "Variant";
+  }
+
   const load = async (nextPage = 1) => {
     try {
       setLoading(true);
       setError(null);
-      const resp = await adminFetchOrders({ q, status, paymentMethod, page: nextPage, limit });
+
+      const resp = await adminFetchOrders({
+        q,
+        status,
+        paymentMethod: paymentMethod as "COD" | "ONLINE" | undefined,
+        paymentStatus: paymentStatus as "PENDING" | "PAID" | "FAILED" | undefined,
+        page: nextPage,
+        limit,
+      });
+
       setData(resp);
       setPage(resp.page || nextPage);
     } catch (e: any) {
@@ -60,27 +91,61 @@ function getVariantText(product?: any, variantId?: string) {
 
   const onApplyFilters = async () => load(1);
 
+  const patchLocalOrder = (orderId: string, patch: any) => {
+    setData((prev: any) => ({
+      ...prev,
+      items: (prev.items || []).map((o: any) =>
+        String(o._id) === String(orderId) ? { ...o, ...patch } : o
+      ),
+    }));
+  };
+
+  const replaceLocalOrder = (orderId: string, next: any) => {
+    setData((prev: any) => ({
+      ...prev,
+      items: (prev.items || []).map((o: any) =>
+        String(o._id) === String(orderId) ? next : o
+      ),
+    }));
+  };
+
   const onChangeStatus = async (orderId: string, nextStatus: string) => {
     try {
       setBusyId(orderId);
       setError(null);
 
       // optimistic UI
-      setData((prev: any) => ({
-        ...prev,
-        items: (prev.items || []).map((o: any) => (String(o._id) === String(orderId) ? { ...o, status: nextStatus } : o)),
-      }));
+      patchLocalOrder(orderId, { status: nextStatus });
 
-      const updated = await adminUpdateOrderStatus(orderId, nextStatus);
+      const updated = await adminUpdateOrderStatus(
+        orderId,
+        nextStatus as any
+      );
 
-      // reconcile with server response (optional)
-      setData((prev: any) => ({
-        ...prev,
-        items: (prev.items || []).map((o: any) => (String(o._id) === String(orderId) ? updated : o)),
-      }));
+      replaceLocalOrder(orderId, updated);
     } catch (e: any) {
       setError(e?.message || "Status update failed");
-      // reload to revert optimistic changes
+      await load(page);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const onConfirmCod = async (orderId: string) => {
+    try {
+      setBusyId(orderId);
+      setError(null);
+
+      // optimistic UI (status + cod timestamp)
+      patchLocalOrder(orderId, {
+        status: "CONFIRMED",
+        cod: { confirmedAt: new Date().toISOString() },
+      });
+
+      const updated = await adminConfirmCod(orderId);
+      replaceLocalOrder(orderId, updated);
+    } catch (e: any) {
+      setError(e?.message || "Confirm COD failed");
       await load(page);
     } finally {
       setBusyId(null);
@@ -101,7 +166,10 @@ function getVariantText(product?: any, variantId?: string) {
         </div>
 
         <div className="flex gap-2">
-          <Link href="/admin" className="rounded-xl border px-4 py-2 text-sm font-semibold hover:bg-gray-50">
+          <Link
+            href="/admin"
+            className="rounded-xl border px-4 py-2 text-sm font-semibold hover:bg-gray-50"
+          >
             Admin Home
           </Link>
         </div>
@@ -109,11 +177,11 @@ function getVariantText(product?: any, variantId?: string) {
 
       {/* Filters */}
       <div className="mt-6 rounded-3xl border bg-white p-4">
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-5">
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="Search order code / name / phone"
+            placeholder="Search order code / name / phone / RZP id"
             className="h-11 rounded-2xl border px-4 text-sm outline-none focus:border-gray-400"
           />
 
@@ -138,6 +206,19 @@ function getVariantText(product?: any, variantId?: string) {
             <option value="">All Payments</option>
             <option value="COD">COD</option>
             <option value="ONLINE">ONLINE</option>
+          </select>
+
+          <select
+            value={paymentStatus}
+            onChange={(e) => setPaymentStatus(e.target.value)}
+            className="h-11 rounded-2xl border px-4 text-sm outline-none focus:border-gray-400 bg-white"
+          >
+            <option value="">All Pay Status</option>
+            {PAYMENT_STATUS_OPTIONS.map((s) => (
+              <option key={s} value={s}>
+                {s}
+              </option>
+            ))}
           </select>
 
           <button
@@ -170,14 +251,14 @@ function getVariantText(product?: any, variantId?: string) {
           </div>
         ) : items.length ? (
           <div className="overflow-x-auto">
-            <table className="min-w-[980px] w-full text-sm">
+            <table className="min-w-[1200px] w-full text-sm">
               <thead className="bg-white">
                 <tr className="border-b text-left text-xs font-bold text-gray-600">
                   <th className="px-5 py-3">Order</th>
                   <th className="px-5 py-3">Customer</th>
                   <th className="px-5 py-3">Items</th>
-                  <th className="px-5 py-3">Total</th>
-                  <th className="px-5 py-3">Payment</th>
+                  <th className="px-5 py-3">Payable</th>
+                  <th className="px-5 py-3">Payment Details</th>
                   <th className="px-5 py-3">Status</th>
                   <th className="px-5 py-3">Created</th>
                 </tr>
@@ -185,81 +266,188 @@ function getVariantText(product?: any, variantId?: string) {
 
               <tbody>
                 {items.map((o: any) => {
-                  
+                  const orderId = String(o._id);
                   const orderCode = o?.orderCode || "—";
                   const customerName = o?.contact?.name || "—";
                   const phone = o?.contact?.phone || "—";
-                  const count = (o?.items || []).length;
-                  const vText = getVariantText(orderCode, o.variantId);
-                  const total = o?.totals?.subtotal ?? o?.totalAmount ?? 0;
-                  const pay = `${o?.paymentMethod || "COD"} (${o?.paymentStatus || "PENDING"})`;
                   const created = o?.createdAt ? new Date(o.createdAt).toLocaleString("en-IN") : "—";
 
+                  const payable =
+                    o?.totals?.grandTotal ??
+                    o?.totals?.subtotal ??
+                    o?.totalAmount ??
+                    0;
+
+                  const pm = String(o?.paymentMethod || "COD").toUpperCase();
+                  const ps = String(o?.paymentStatus || "PENDING").toUpperCase();
+                  const st = String(o?.status || "PLACED").toUpperCase();
+
+                  const pg = o?.pg || {};
+                  const rzpOrderId = pg?.orderId || "";
+                  const rzpPaymentId = pg?.paymentId || "";
+                  const rzpAmountPaise = pg?.amount;
+                  const rzpCurrency = pg?.currency || "INR";
+                  const verifiedAt = pg?.verifiedAt || null;
+
+                  const cod = o?.cod || null;
+                  const codConfirmedAt = cod?.confirmedAt || null;
+                  // UI locks
+                  const lockedDelivered = st === "DELIVERED";
+                  const lockedCancelled = st === "CANCELLED";
+                  const isBusy = busyId === orderId;
+
+                  const isCodPlaced = pm === "COD" && st === "PLACED";
+                 const codIsConfirmed =
+  pm === "COD" && (Boolean(codConfirmedAt) || ["CONFIRMED", "SHIPPED", "DELIVERED"].includes(st));
+
+                  // If COD not confirmed yet: do not allow shipping/delivered from dropdown
+                  const blockShipUntilConfirm = pm === "COD" && st === "PLACED";
+
                   return (
-                    <tr key={String(o._id)} className="border-b last:border-b-0">
+                    <tr key={orderId} className="border-b last:border-b-0">
                       <td className="px-5 py-3">
                         <div className="font-semibold text-gray-900">{orderCode}</div>
-                        <div className="text-[11px] text-gray-500">Internal: {String(o._id).slice(-8)}</div>
+                        <div className="text-[11px] text-gray-500">
+                          Internal: {orderId.slice(-8)}
+                        </div>
                       </td>
 
                       <td className="px-5 py-3">
                         <div className="font-semibold text-gray-900">{customerName}</div>
                         <div className="text-[11px] text-gray-500">{phone}</div>
                       </td>
-<td className="px-5 py-3">
-  <div className="space-y-2">
-    {(o.items || []).slice(0, 2).map((it: any, idx: number) => {
-      // ✅ populated product object
-      const product = it?.productId;
-      const vText = getVariantText(product, it?.variantId);
-
-      return (
-        <div key={idx} className="text-[12px] text-gray-800">
-          <div className="font-semibold">{it.title}</div>
-
-          <div className="mt-0.5 text-[11px] font-semibold text-gray-500">
-            Code: {it.productCode || "—"}
-          </div>
-
-          <div className="mt-1 text-xs text-gray-500">
-            Variant: {vText}
-            {it.colorKey ? ` • Color: ${it.colorKey}` : ""}
-            {" • "}Qty: {it.qty}
-          </div>
-        </div>
-      );
-    })}
-
-    {(o.items || []).length > 2 ? (
-      <div className="text-[11px] text-gray-500">+{o.items.length - 2} more item(s)</div>
-    ) : null}
-  </div>
-</td>
-
-
 
                       <td className="px-5 py-3">
-                        <div className="font-semibold text-gray-900">{money(total)}</div>
+                        <div className="space-y-2">
+                          {(o.items || []).slice(0, 2).map((it: any, idx: number) => {
+                            const product = it?.productId; // populated
+                            const vText = getVariantText(product, it?.variantId);
+
+                            return (
+                              <div key={idx} className="text-[12px] text-gray-800">
+                                <div className="font-semibold">{it.title}</div>
+
+                                <div className="mt-0.5 text-[11px] font-semibold text-gray-500">
+                                  Code: {it.productCode || "—"}
+                                </div>
+
+                                <div className="mt-1 text-xs text-gray-500">
+                                  Variant: {vText}
+                                  {it.colorKey ? ` • Color: ${it.colorKey}` : ""}
+                                  {" • "}Qty: {it.qty}
+                                </div>
+                              </div>
+                            );
+                          })}
+
+                          {(o.items || []).length > 2 ? (
+                            <div className="text-[11px] text-gray-500">
+                              +{o.items.length - 2} more item(s)
+                            </div>
+                          ) : null}
+                        </div>
                       </td>
 
                       <td className="px-5 py-3">
-                        <div className="text-gray-900">{pay}</div>
+                        <div className="font-semibold text-gray-900">{money(payable)}</div>
+                        {o?.totals?.discount ? (
+                          <div className="text-[11px] text-emerald-700 font-semibold">
+                            Discount: -{money(o.totals.discount)}
+                          </div>
+                        ) : null}
                       </td>
 
+                      {/* Payment Details */}
+                      <td className="px-5 py-3">
+                        <div className="text-gray-900 font-semibold">
+                          {pm}{" "}
+                          <span className="text-gray-500 font-normal">({ps})</span>
+                        </div>
+
+                        {pm === "ONLINE" ? (
+                          <div className="mt-1 space-y-1 text-[11px] text-gray-600">
+                            <div>
+                              <span className="font-semibold text-gray-700">RZP Order:</span>{" "}
+                              <span className="font-mono">{rzpOrderId || "—"}</span>
+                            </div>
+                            <div>
+                              <span className="font-semibold text-gray-700">RZP Payment:</span>{" "}
+                              <span className="font-mono">{rzpPaymentId || "—"}</span>
+                            </div>
+                            <div>
+                              <span className="font-semibold text-gray-700">Amount:</span>{" "}
+                              {rzpAmountPaise
+                                ? `${moneyPaise(rzpAmountPaise)} ${rzpCurrency}`
+                                : "—"}
+                            </div>
+                            <div>
+                              <span className="font-semibold text-gray-700">Verified:</span>{" "}
+                              {verifiedAt ? fmtDateTime(verifiedAt) : "—"}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="mt-1 space-y-1 text-[11px] text-gray-600">
+                            <div>
+                              <span className="font-semibold text-gray-700">COD:</span>{" "}
+           {codIsConfirmed ? (
+  <>
+    Confirmed{codConfirmedAt ? ` (${fmtDateTime(codConfirmedAt)})` : ""}
+  </>
+) : (
+  "Not confirmed"
+)}
+
+                            </div>
+
+                            {isCodPlaced ? (
+                              <button
+                                type="button"
+                                disabled={isBusy}
+                                onClick={() => onConfirmCod(orderId)}
+                                className="mt-2 inline-flex h-9 items-center justify-center rounded-xl bg-emerald-600 px-3 text-[12px] font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+                              >
+                                {isBusy ? "Confirming…" : "Confirm COD"}
+                              </button>
+                            ) : null}
+                          </div>
+                        )}
+                      </td>
+
+                      {/* Status */}
                       <td className="px-5 py-3">
                         <select
-                          value={String(o?.status || "PLACED")}
-                          disabled={busyId === String(o._id)}
-                          onChange={(e) => onChangeStatus(String(o._id), e.target.value)}
+                          value={st}
+                          disabled={isBusy || lockedDelivered || lockedCancelled}
+                          onChange={(e) => onChangeStatus(orderId, e.target.value)}
                           className="h-10 rounded-xl border px-3 text-sm outline-none focus:border-gray-400 bg-white disabled:opacity-60"
                         >
-                          {STATUS_OPTIONS.map((s) => (
-                            <option key={s} value={s}>
-                              {s}
-                            </option>
-                          ))}
+                          {STATUS_OPTIONS.map((s) => {
+                            // UI rule: COD placed cannot pick CONFIRMED via dropdown (must use button)
+                            const disableConfirmed =
+                              pm === "COD" && st === "PLACED" && s === "CONFIRMED";
+
+                            // UI rule: COD placed cannot ship/deliver
+                            const disableShipDeliver =
+                              blockShipUntilConfirm && (s === "SHIPPED" || s === "DELIVERED");
+
+                            // UI rule: delivered/cancelled lock handled above
+                            const disabled = disableConfirmed || disableShipDeliver;
+
+                            return (
+                              <option key={s} value={s} disabled={disabled}>
+                                {s}
+                              </option>
+                            );
+                          })}
                         </select>
-                        {busyId === String(o._id) ? (
+
+                        {pm === "COD" && st === "PLACED" ? (
+                          <div className="mt-1 text-[11px] text-gray-500">
+                            Use “Confirm COD” before shipping.
+                          </div>
+                        ) : null}
+
+                        {isBusy ? (
                           <div className="mt-1 text-[11px] text-gray-500">Updating…</div>
                         ) : null}
                       </td>

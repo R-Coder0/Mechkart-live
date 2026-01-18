@@ -1,8 +1,8 @@
-import mongoose, { Schema, Model, Document } from "mongoose";
+import mongoose, { Schema, Document } from "mongoose";
 
 export interface IOrderCounter extends Document {
-  key: string;     // e.g. "ORDER-YYYYMMDD"
-  seq: number;     // incrementing number
+  key: string;   // e.g. CH-20260118
+  seq: number;   // 1,2,3...
 }
 
 const OrderCounterSchema = new Schema<IOrderCounter>(
@@ -13,5 +13,4 @@ const OrderCounterSchema = new Schema<IOrderCounter>(
   { timestamps: true }
 );
 
-export const OrderCounter: Model<IOrderCounter> =
-  mongoose.models.OrderCounter || mongoose.model<IOrderCounter>("OrderCounter", OrderCounterSchema);
+export const OrderCounter = mongoose.model<IOrderCounter>("OrderCounter", OrderCounterSchema);

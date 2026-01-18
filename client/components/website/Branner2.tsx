@@ -54,7 +54,7 @@ export default function HeroSectionBanner2() {
 
   // ✅ fallback (so home page never looks empty)
   const bgSrc = banner?.image ? resolveImageUrl(banner.image) : "/hero.webp";
-  const href = banner?.ctaUrl?.trim() ? banner.ctaUrl.trim() : "/website/products";
+  const href = banner?.ctaUrl?.trim() ? banner.ctaUrl.trim() : "/products";
 
   return (
     <section className="relative w-full overflow-hidden Z-0">

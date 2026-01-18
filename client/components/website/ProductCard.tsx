@@ -143,7 +143,7 @@ export default function ProductCard({ product }: { product: ProductCardProduct }
 
   return (
     <div className="group">
-      <Link href={`/website/product/${product.slug}`} className="block">
+      <Link href={`/product/${product.slug}`} className="block">
         <div className="relative overflow-hidden transition hover:shadow-xl p-4 border border-gray-200">
           {/* Image */}
           <div className="relative aspect-square bg-gray-50">

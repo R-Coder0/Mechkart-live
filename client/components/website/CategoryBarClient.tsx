@@ -132,7 +132,7 @@ export default function CategoryBarClient({ categories }: Props) {
           >
             {/* ✅ ALL (now first for both mobile+desktop) */}
             <Link
-              href="/website/products"
+              href="/products"
               className="inline-flex items-center gap-1 text-gray-800 hover:text-[#82008F] transition-colors"
               onClick={closeDropdown}
             >
@@ -148,7 +148,7 @@ export default function CategoryBarClient({ categories }: Props) {
                 return (
                   <Link
                     key={parent._id}
-                    href={`/website/category/${parent.slug}`}
+                    href={`/category/${parent.slug}`}
                     className="inline-flex items-center gap-1 text-gray-800 hover:text-[#82008F] transition-colors"
                     onClick={closeDropdown}
                   >
@@ -197,7 +197,7 @@ export default function CategoryBarClient({ categories }: Props) {
             {activeChildren.map((sub) => (
               <Link
                 key={sub._id}
-                href={`/website/category/${activeParentSlug}/${sub.slug}`}
+                href={`/category/${activeParentSlug}/${sub.slug}`}
                 className="block px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 hover:text-gray-900"
                 onClick={closeDropdown}
               >

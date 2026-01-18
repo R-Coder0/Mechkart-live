@@ -74,7 +74,7 @@ export default function AdminHomeHeroBannerPage() {
         const b = data?.banner || null;
 
         setBanner(b);
-        setCtaUrl(b?.ctaUrl || "/website/products");
+        setCtaUrl(b?.ctaUrl || "/products");
         setIsActive(b?.isActive ?? true);
         setPreview(b?.image ? resolveImageUrl(b.image) : "");
         setImageFile(null);
@@ -245,7 +245,7 @@ export default function AdminHomeHeroBannerPage() {
                 value={ctaUrl}
                 onChange={(e) => setCtaUrl(e.target.value)}
                 className="w-full border px-3 py-2 text-sm"
-                placeholder="/website/products"
+                placeholder="/products"
               />
             </div>
 

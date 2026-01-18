@@ -58,7 +58,7 @@ export default function HeroSection() {
   const bgSrc = banner?.image ? resolveImageUrl(banner.image) : "/hero.webp";
   const ctaHref = banner?.ctaUrl?.trim()
     ? banner.ctaUrl.trim()
-    : "/website/products";
+    : "/products";
 
   return (
     <section className="relative w-full overflow-hidden Z-0">

@@ -9,7 +9,7 @@ const SMTP_USER = process.env.SMTP_USER || "";
 const SMTP_PASS = process.env.SMTP_PASS || "";
 
 // Sender shown in inbox
-const SMTP_FROM = process.env.SMTP_FROM || SMTP_USER || "no-reply@countryhome.in";
+const SMTP_FROM = process.env.SMTP_FROM || SMTP_USER || "no-reply@Mechkart.in";
 
 // Owner/Store email (admin/owner notification)
 const OWNER_EMAIL = process.env.OWNER_EMAIL || "";

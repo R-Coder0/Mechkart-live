@@ -9,7 +9,7 @@ export interface IOrderItem {
 
   variantId?: Types.ObjectId | null;
 
-  // ✅ NEW: store variant label/text snapshot (for email + stable history)
+  // ✅ store variant label/text snapshot (for email + stable history)
   variantText?: string | null;
 
   colorKey?: string | null;
@@ -63,20 +63,24 @@ export interface IOrder extends Document {
     mrpTotal: number;
     savings: number;
 
-    // ✅ NEW
-    discount: number;     // offer discount
-    grandTotal: number;   // subtotal - discount
-  };
-appliedOffer?: {
-  offerId: Types.ObjectId;
-  name: string;
-  mode: "AUTO" | "COUPON";
-  couponCode?: string | null;
-  offerType: "FLAT" | "PERCENT";  // ✅
-  value: number;
-  discountAmount: number;
-} | null;
+    // ✅ offer discount
+    discount: number;
 
+    // ✅ subtotal - discount
+    grandTotal: number;
+  };
+
+  appliedOffer?:
+    | {
+        offerId: Types.ObjectId;
+        name: string;
+        mode: "AUTO" | "COUPON";
+        couponCode?: string | null;
+        offerType: "FLAT" | "PERCENT";
+        value: number;
+        discountAmount: number;
+      }
+    | null;
 
   contact: IOrderContact;
   address: IOrderAddress;
@@ -84,6 +88,26 @@ appliedOffer?: {
   paymentMethod: "COD" | "ONLINE";
   paymentStatus: "PENDING" | "PAID" | "FAILED";
   status: "PLACED" | "CONFIRMED" | "SHIPPED" | "DELIVERED" | "CANCELLED";
+
+  // ✅ Razorpay snapshot
+  pg?:
+    | {
+        provider: "RAZORPAY";
+        orderId?: string | null; // razorpay_order_id
+        paymentId?: string | null; // razorpay_payment_id
+        signature?: string | null; // razorpay_signature
+        amount?: number | null; // in paise
+        currency?: string | null; // INR
+        verifiedAt?: Date | null;
+        raw?: any; // optional store callback payload
+      }
+    | null;
+
+  // ✅ COD confirmation snapshot (admin approves COD)
+  cod?: {
+    confirmedAt?: Date | null;
+    confirmedBy?: Types.ObjectId | null; // admin id
+  } | null;
 
   createdAt: Date;
   updatedAt: Date;
@@ -100,7 +124,6 @@ const OrderItemSchema = new Schema<IOrderItem>(
 
     variantId: { type: Schema.Types.ObjectId, default: null },
 
-    // ✅ NEW
     variantText: { type: String, default: null, trim: true },
 
     colorKey: { type: String, default: null },
@@ -144,28 +167,28 @@ const OrderSchema = new Schema<IOrder>(
       type: [OrderItemSchema],
       required: true,
     },
-  totals: {
-    subtotal: { type: Number, required: true },
-    mrpTotal: { type: Number, required: true },
-    savings: { type: Number, required: true },
 
-    // ✅ NEW
-    discount: { type: Number, required: true, default: 0 },
-    grandTotal: { type: Number, required: true, default: 0 },
-  },
-appliedOffer: {
-  type: {
-    offerId: { type: Schema.Types.ObjectId, ref: "Offer" },
-    name: { type: String, trim: true },
-    mode: { type: String, enum: ["AUTO", "COUPON"] },
-    couponCode: { type: String, default: null, trim: true },
-    offerType: { type: String, enum: ["FLAT", "PERCENT"] }, // ✅
-    value: { type: Number },
-    discountAmount: { type: Number, default: 0 },
-  },
-  default: null,
-},
+    totals: {
+      subtotal: { type: Number, required: true },
+      mrpTotal: { type: Number, required: true },
+      savings: { type: Number, required: true },
 
+      discount: { type: Number, required: true, default: 0 },
+      grandTotal: { type: Number, required: true, default: 0 },
+    },
+
+    appliedOffer: {
+      type: {
+        offerId: { type: Schema.Types.ObjectId, ref: "Offer" },
+        name: { type: String, trim: true },
+        mode: { type: String, enum: ["AUTO", "COUPON"] },
+        couponCode: { type: String, default: null, trim: true },
+        offerType: { type: String, enum: ["FLAT", "PERCENT"] },
+        value: { type: Number },
+        discountAmount: { type: Number, default: 0 },
+      },
+      default: null,
+    },
 
     contact: {
       name: { type: String, required: true, trim: true },
@@ -200,6 +223,30 @@ appliedOffer: {
       type: String,
       enum: ["PLACED", "CONFIRMED", "SHIPPED", "DELIVERED", "CANCELLED"],
       default: "PLACED",
+    },
+
+    // ✅ Razorpay snapshot
+    pg: {
+      type: {
+        provider: { type: String, enum: ["RAZORPAY"], default: "RAZORPAY" },
+        orderId: { type: String, default: null, trim: true },
+        paymentId: { type: String, default: null, trim: true },
+        signature: { type: String, default: null, trim: true },
+        amount: { type: Number, default: null }, // paise
+        currency: { type: String, default: "INR", trim: true },
+        verifiedAt: { type: Date, default: null },
+        raw: { type: Schema.Types.Mixed, default: null },
+      },
+      default: null,
+    },
+
+    // ✅ COD confirmation snapshot
+    cod: {
+      type: {
+        confirmedAt: { type: Date, default: null },
+        confirmedBy: { type: Schema.Types.ObjectId, ref: "Admin", default: null },
+      },
+      default: null,
     },
   },
   { timestamps: true }

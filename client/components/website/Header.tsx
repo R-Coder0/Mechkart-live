@@ -134,7 +134,7 @@ export function WebsiteHeader() {
 
   const CartIconWithBadge = useMemo(() => {
     return (
-      <Link href="/website/cart" className="relative hover:text-[#82008F]">
+      <Link href="/cart" className="relative hover:text-[#82008F]">
         <ShoppingCart className="h-[22px] w-[22px]" />
         {cartCount > 0 && (
           <span className="absolute -top-2 -right-2 min-w-[18px] h-[18px] px-1 rounded-full bg-[#82008F] text-white text-[11px] font-semibold flex items-center justify-center leading-none">
@@ -188,7 +188,7 @@ export function WebsiteHeader() {
       setUser(null);
       setOpenMenu(false);
       window.dispatchEvent(new Event("cart:updated"));
-      window.location.href = "/website";
+      window.location.href = "/";
     } catch (e: any) {
       // silent
     } finally {
@@ -279,7 +279,7 @@ export function WebsiteHeader() {
         {openMenu && (
           <div className="absolute left-0 mt-2 w-52 border bg-white shadow-lg overflow-hidden">
             <Link
-              href="/website/user/dashboard"
+              href="/user/dashboard"
               className="block px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50"
               onClick={() => setOpenMenu(false)}
             >
@@ -305,7 +305,7 @@ export function WebsiteHeader() {
     const value = norm(query);
     if (!value) return;
     setSuggestOpen(false);
-    router.push(`/website/search?q=${encodeURIComponent(value)}`);
+    router.push(`/search?q=${encodeURIComponent(value)}`);
   };
 
   const fetchSuggest = async (query: string) => {
@@ -367,7 +367,7 @@ export function WebsiteHeader() {
     }
     const t = setTimeout(() => fetchSuggest(value), 250);
     return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [q]);
 
   return (
@@ -377,7 +377,7 @@ export function WebsiteHeader() {
           <div className="flex flex-col md:flex-row md:items-center md:justify-between py-3 sm:py-4 gap-3">
             {/* LEFT: LOGO */}
             <div className="flex items-center justify-between md:justify-start">
-              <Link href="/website" className="select-none">
+              <Link href="/" className="select-none">
                 <img src="/MECHKART.png" alt="Mechkart" className="w-40 h-16" />
               </Link>
 
@@ -388,12 +388,12 @@ export function WebsiteHeader() {
                     Login
                   </button>
                 ) : (
-                  <Link href="/website/account" className="hover:text-[#82008F]">
+                  <Link href="/account" className="hover:text-[#82008F]">
                     {user.name}
                   </Link>
                 )}
 
-                <Link href="/website/cart" className="relative hover:text-[#82008F]">
+                <Link href="/cart" className="relative hover:text-[#82008F]">
                   <ShoppingCart className="h-5 w-5" />
                   {cartCount > 0 && (
                     <span className="absolute -top-2 -right-2 min-w-4 h-4 px-1 rounded-full bg-[#82008F] text-white text-[10px] font-semibold flex items-center justify-center leading-none">

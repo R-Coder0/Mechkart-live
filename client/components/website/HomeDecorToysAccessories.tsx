@@ -217,7 +217,7 @@ export default function HomeDecorToysAccessories() {
           return {
             name: sub.name,
             img: sub.image ? resolveImageUrl(sub.image) : "/tshirt.webp",
-            href: `/website/category/${parent.slug}/${sub.slug}`,
+            href: `/category/${parent.slug}/${sub.slug}`,
             offer: offerText,
             offerType: avg > 0 ? "discount" : "new",
           };
@@ -243,7 +243,7 @@ export default function HomeDecorToysAccessories() {
                   {board.title}
                 </h3>
                 <Link
-                  href={`/website/category/${board.parentSlug}`}
+                  href={`/category/${board.parentSlug}`}
                   className="inline-flex items-center gap-1 text-[#0077B6] hover:underline text-sm"
                 >
                   See more <ChevronRight size={18} />

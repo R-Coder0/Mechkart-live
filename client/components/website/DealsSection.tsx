@@ -201,7 +201,7 @@ export default function DealsSection() {
         name: sub.name,
         img: sub.image ? resolveImageUrl(sub.image) : "/tshirt.webp",
         offer: avg > 0 ? `Min. ${avg}% Off` : "New Range",
-        href: `/website/category/${winterParent.slug}/${sub.slug}`,
+        href: `/category/${winterParent.slug}/${sub.slug}`,
         offerType: avg > 0 ? "discount" : "new",
       };
     });
@@ -238,8 +238,8 @@ export default function DealsSection() {
         offer: avg > 0 ? `Min. ${avg}% Off` : "New Range",
         offerType: avg > 0 ? "discount" : "new",
         href: parentSlug
-          ? `/website/category/${parentSlug}/${sub.slug}`
-          : `/website/category/${sub.slug}`,
+          ? `/category/${parentSlug}/${sub.slug}`
+          : `/category/${sub.slug}`,
       };
     });
   }, [childrenMap, categories, subAvgDiscountMap]);
@@ -323,7 +323,7 @@ export default function DealsSection() {
             </h2>
             <p className="text-[#d3e7ff] mb-8 text-[15px]">with Latest &amp; Trendy Choices</p>
             <Link
-              href="/website/products"
+              href="/products"
               className="bg-[#00B4D8] hover:bg-[#009ec4] text-white px-7 py-3 rounded-lg font-medium transition"
             >
               Shop Now
