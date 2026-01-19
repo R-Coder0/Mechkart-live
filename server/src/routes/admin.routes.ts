@@ -36,6 +36,7 @@ import {
   toggleOffer,
   listOffers,
 } from "../controllers/admin/offer.admin.controller";
+import { adminCreateShiprocketShipment } from "../controllers/admin/shipment.controller.js";
 
 const router = Router();
 
@@ -84,5 +85,7 @@ router.post("/discount/offers", verifyAdmin, createOffer);
 router.patch("/discount/offers/:id", verifyAdmin, updateOffer);
 router.patch("/discount/offers/:id/toggle", verifyAdmin, toggleOffer);
 router.get("/discount/offers", verifyAdmin, listOffers);
+
+router.post("/orders/:orderId/shiprocket/create-shipment", verifyAdmin, adminCreateShiprocketShipment);
 
 export default router;
