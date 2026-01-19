@@ -147,15 +147,31 @@ export default function CartPage() {
     }
   };
 
-  // ✅ Proceed
-  const onProceed = () => {
-    if (!selectedItems.length) {
-      setError("Please select at least 1 item to checkout.");
+const onProceed = async () => {
+  if (!selectedItems.length) {
+    setError("Please select at least 1 item to checkout.");
+    return;
+  }
+
+  setError(null);
+
+  try {
+    // ✅ same auth check that header uses
+    const me = await (await import("@/lib/userApi")).meUser();
+
+    if (!me) {
+      // ✅ open header login popup (NO new form)
+      window.dispatchEvent(new Event("auth:open-login"));
       return;
     }
-    // You already have GET /api/user/checkout/summary (server will re-validate selected)
+
     window.location.href = "/checkout";
-  };
+  } catch (e) {
+    // if API fails / unauthorized -> open login popup
+    window.dispatchEvent(new Event("auth:open-login"));
+  }
+};
+
 
   if (loading) {
     return (

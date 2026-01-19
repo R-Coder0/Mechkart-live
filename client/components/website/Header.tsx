@@ -121,6 +121,17 @@ export function WebsiteHeader() {
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
   }, []);
+// ✅ Open login popup from anywhere (Cart/Checkout etc.)
+useEffect(() => {
+  const openAuth = () => {
+    setAuthError("");
+    setMode("login");
+    setShowAuth(true);
+  };
+
+  window.addEventListener("auth:open-login", openAuth);
+  return () => window.removeEventListener("auth:open-login", openAuth);
+}, []);
 
   // close search suggestion on outside click
   useEffect(() => {
