@@ -10,15 +10,41 @@ export type RazorpaySnapshot = {
   orderId?: string | null;
   paymentId?: string | null;
   signature?: string | null;
-  amount?: number | null;     // in paise
-  currency?: string | null;   // INR
+  amount?: number | null; // in paise
+  currency?: string | null; // INR
   verifiedAt?: string | null;
   raw?: any;
 };
 
 export type CodSnapshot = {
   confirmedAt?: string | null;
-  confirmedBy?: string | null; // admin id
+  confirmedBy?: string | null;
+};
+
+export type ShiprocketSnapshot = {
+  orderId?: string | null;
+  shipmentId?: number | null;
+  awb?: string | null;
+  courierName?: string | null;
+  courierCompanyId?: number | null;
+  labelUrl?: string | null;
+  manifestUrl?: string | null;
+  invoiceUrl?: string | null;
+  pickupScheduledAt?: string | null;
+  tracking?: any;
+  raw?: any;
+};
+
+export type OrderShipment = {
+  _id?: string;
+  provider: "SHIPROCKET";
+  vendorId?: string | null;
+  items?: any[];
+  pickup?: any;
+  shiprocket?: ShiprocketSnapshot | null;
+  status?: "CREATED" | "AWB_ASSIGNED" | "PICKUP_SCHEDULED" | "IN_TRANSIT" | "DELIVERED" | "CANCELLED";
+  createdAt?: string;
+  updatedAt?: string;
 };
 
 export type AdminOrder = {
@@ -26,7 +52,6 @@ export type AdminOrder = {
   orderCode: string;
 
   userId?: string;
-
   items: any[];
 
   totals?: {
@@ -49,14 +74,12 @@ export type AdminOrder = {
 
   paymentMethod: "COD" | "ONLINE";
   paymentStatus: "PENDING" | "PAID" | "FAILED";
-
   status: "PLACED" | "CONFIRMED" | "SHIPPED" | "DELIVERED" | "CANCELLED";
 
-  // ✅ Razorpay snapshot
   pg?: RazorpaySnapshot | null;
-
-  // ✅ COD confirmation snapshot
   cod?: CodSnapshot | null;
+
+  shipments?: OrderShipment[];
 
   createdAt: string;
   updatedAt: string;
@@ -91,15 +114,6 @@ function authHeaders(extra?: Record<string, string>) {
  * API CALLS
  * ========================= */
 
-/**
- * GET ADMIN ORDERS
- * Supports:
- * - search (q)
- * - status
- * - paymentMethod
- * - paymentStatus
- * - pagination
- */
 export async function adminFetchOrders(params?: {
   q?: string;
   status?: string;
@@ -126,18 +140,11 @@ export async function adminFetchOrders(params?: {
   });
 
   const json = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error(json?.message || "Failed to fetch admin orders");
-  }
+  if (!res.ok) throw new Error(json?.message || "Failed to fetch admin orders");
 
   return json?.data || json;
 }
 
-/**
- * UPDATE ORDER STATUS
- * (PLACED → SHIPPED → DELIVERED etc.)
- * NOTE: COD CONFIRM is blocked in backend via status endpoint (as we added guard).
- */
 export async function adminUpdateOrderStatus(
   orderId: string,
   status: "PLACED" | "CONFIRMED" | "SHIPPED" | "DELIVERED" | "CANCELLED"
@@ -150,17 +157,11 @@ export async function adminUpdateOrderStatus(
   });
 
   const json = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error(json?.message || "Status update failed");
-  }
+  if (!res.ok) throw new Error(json?.message || "Status update failed");
 
   return json?.data || json;
 }
 
-/**
- * ✅ CONFIRM COD ORDER (Admin approval)
- * Route: PATCH /admin/orders/:orderId/confirm-cod
- */
 export async function adminConfirmCod(orderId: string): Promise<AdminOrder> {
   const res = await fetch(`${API_BASE}/admin/orders/${orderId}/confirm-cod`, {
     method: "PATCH",
@@ -169,9 +170,24 @@ export async function adminConfirmCod(orderId: string): Promise<AdminOrder> {
   });
 
   const json = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error(json?.message || "Confirm COD failed");
-  }
+  if (!res.ok) throw new Error(json?.message || "Confirm COD failed");
+
+  return json?.data || json;
+}
+
+/**
+ * ✅ Create Shiprocket shipment
+ * Route: POST /admin/orders/:orderId/shiprocket/create-shipment
+ */
+export async function adminCreateShiprocketShipment(orderId: string): Promise<AdminOrder> {
+  const res = await fetch(`${API_BASE}/admin/orders/${orderId}/shiprocket/create-shipment`, {
+    method: "POST",
+    credentials: "include",
+    headers: authHeaders(),
+  });
+
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(json?.message || "Create shipment failed");
 
   return json?.data || json;
 }

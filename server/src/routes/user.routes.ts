@@ -22,6 +22,7 @@ import {
 } from "../controllers/user/order.controller";
 
 import { getCheckoutSummary, offerPreview } from "../controllers/user/checkout.controller";
+import { getOrderTracking } from "../controllers/user/tracking.controller";
 
 const router = Router();
 
@@ -61,5 +62,7 @@ router.post("/orders/razorpay/verify", verifyUser, verifyRazorpayPayment);
 router.get("/orders", verifyUser, getMyOrders);
 router.get("/orders/:orderId", verifyUser, getOrderById);
 router.get("/orders/:orderId/invoice", verifyUser, downloadInvoicePdf);
+
+router.get("/orders/:orderId/tracking", verifyUser, getOrderTracking);
 
 export default router;

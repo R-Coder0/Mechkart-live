@@ -35,6 +35,15 @@ function fmtDateLong(d?: any) {
   }
 }
 
+function fmtDateTime(d?: any) {
+  if (!d) return "—";
+  try {
+    return new Date(d).toLocaleString("en-IN");
+  } catch {
+    return "—";
+  }
+}
+
 function addDays(date: Date, days: number) {
   const d = new Date(date);
   d.setDate(d.getDate() + days);
@@ -73,6 +82,16 @@ function resolveItemImage(product?: any, variantId?: string, colorKey?: string |
 
 type Order = any;
 
+type TrackingResponse = {
+  orderId: string;
+  orderCode: string;
+  status: string;
+  paymentMethod: string;
+  paymentStatus: string;
+  shipments: any[];
+  createdAt?: string;
+};
+
 export default function WebsiteUserOrderDetailsPage() {
   const params = useParams();
   const router = useRouter();
@@ -81,6 +100,11 @@ export default function WebsiteUserOrderDetailsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [order, setOrder] = useState<Order | null>(null);
+
+  // ✅ Tracking states
+  const [trackingLoading, setTrackingLoading] = useState(false);
+  const [trackingError, setTrackingError] = useState<string | null>(null);
+  const [tracking, setTracking] = useState<TrackingResponse | null>(null);
 
   const load = async () => {
     try {
@@ -103,10 +127,42 @@ export default function WebsiteUserOrderDetailsPage() {
     }
   };
 
+  const loadTracking = async () => {
+    try {
+      setTrackingLoading(true);
+      setTrackingError(null);
+
+      const res = await fetch(`${API_BASE}/users/orders/${orderId}/tracking`, {
+        credentials: "include",
+        cache: "no-store",
+      });
+
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.message || "Failed to load tracking");
+
+      setTracking(json?.data ?? json);
+    } catch (e: any) {
+      setTrackingError(e?.message || "Failed to load tracking");
+    } finally {
+      setTrackingLoading(false);
+    }
+  };
+
   useEffect(() => {
     if (orderId) load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orderId]);
+
+  // ✅ auto-load tracking once order is available
+  useEffect(() => {
+    if (!orderId) return;
+    const st = String(order?.status || "").toUpperCase();
+    const hasShipment = Array.isArray(order?.shipments) && order!.shipments.length > 0;
+    if (hasShipment || ["SHIPPED", "DELIVERED"].includes(st)) {
+      loadTracking();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orderId, order?.status, order?.shipments?.length]);
 
   const items = useMemo(() => (Array.isArray(order?.items) ? order.items : []), [order?.items]);
 
@@ -115,7 +171,6 @@ export default function WebsiteUserOrderDetailsPage() {
 
   const totals = order?.totals || {};
 
-  // ✅ Payable should be grandTotal when available
   const payable = useMemo(() => {
     return toNum(totals?.grandTotal, NaN) || toNum(totals?.subtotal, NaN) || toNum(order?.totalAmount, 0);
   }, [totals?.grandTotal, totals?.subtotal, order?.totalAmount]);
@@ -128,7 +183,6 @@ export default function WebsiteUserOrderDetailsPage() {
     return Math.max(0, mrpTotal ? mrpTotal - payable : 0);
   }, [totals?.savings, mrpTotal, payable]);
 
-  // For header preview (first item + more)
   const firstItem = useMemo(() => items[0] || null, [items]);
   const firstProduct = firstItem?.productId || null;
 
@@ -154,7 +208,6 @@ export default function WebsiteUserOrderDetailsPage() {
     return resolveImageUrl(imgPath);
   }, [firstItem, firstProduct]);
 
-  // ✅ Normalize each item for UI list
   const computedItems = useMemo(() => {
     return items.map((it: any) => {
       const product = it?.productId || null;
@@ -165,7 +218,6 @@ export default function WebsiteUserOrderDetailsPage() {
 
       const qty = Math.max(1, toNum(it?.qty, 1));
 
-      // Try multiple field names for per-item totals
       const lineTotal =
         toNum(it?.finalLineTotal, NaN) ||
         toNum(it?.lineTotal, NaN) ||
@@ -203,6 +255,45 @@ export default function WebsiteUserOrderDetailsPage() {
     if (isDelivered) return `Delivered on ${fmtDateLong(updatedAt)}`;
     return `Delivery expected by ${fmtDateLong(expectedDelivery)}`;
   }, [isCancelled, isDelivered, updatedAt, expectedDelivery]);
+
+  // ✅ tracking derived
+  const shipments = useMemo(() => {
+    const t = tracking?.shipments;
+    if (Array.isArray(t) && t.length) return t;
+    const o = order?.shipments;
+    if (Array.isArray(o) && o.length) return o;
+    return [];
+  }, [tracking?.shipments, order?.shipments]);
+
+  const firstShipment = useMemo(() => shipments[0] || null, [shipments]);
+  const awb = useMemo(() => String(firstShipment?.shiprocket?.awb || ""), [firstShipment]);
+  const shipmentId = useMemo(() => firstShipment?.shiprocket?.shipmentId ?? null, [firstShipment]);
+  const srOrderId = useMemo(() => String(firstShipment?.shiprocket?.orderId || ""), [firstShipment]);
+
+  const trackingStatusText = useMemo(() => {
+    const tr = firstShipment?.shiprocket?.tracking;
+    if (!tr) return "—";
+    const s1 = tr?.tracking_data?.shipment_status;
+    const s2 = tr?.tracking_data?.shipment_track?.[0]?.current_status;
+    const s3 = tr?.current_status || tr?.status;
+    return String(s1 || s2 || s3 || "—");
+  }, [firstShipment]);
+
+  const trackingEta = useMemo(() => {
+    const tr = firstShipment?.shiprocket?.tracking;
+    const eta = tr?.tracking_data?.etd || tr?.tracking_data?.shipment_track?.[0]?.edd;
+    return eta ? String(eta) : "";
+  }, [firstShipment]);
+
+  const trackingEvents = useMemo(() => {
+    const tr = firstShipment?.shiprocket?.tracking;
+    const arr =
+      tr?.tracking_data?.shipment_track_activities ||
+      tr?.tracking_data?.shipment_track ||
+      tr?.activities ||
+      [];
+    return Array.isArray(arr) ? arr : [];
+  }, [firstShipment]);
 
   if (loading) {
     return (
@@ -291,7 +382,77 @@ export default function WebsiteUserOrderDetailsPage() {
             </div>
           </div>
 
-          {/* ✅ All items (NEW) */}
+          {/* ✅ Tracking card */}
+          <div className=" border bg-white p-5">
+            <div className="flex items-center justify-between gap-3">
+              <div className="font-semibold text-gray-900">Tracking</div>
+
+              <button
+                type="button"
+                onClick={loadTracking}
+                disabled={trackingLoading}
+                className="border px-3 py-2 text-xs font-semibold hover:bg-gray-50 disabled:opacity-60"
+              >
+                {trackingLoading ? "Refreshing…" : "Refresh"}
+              </button>
+            </div>
+
+            {trackingError ? (
+              <div className="mt-3 border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{trackingError}</div>
+            ) : null}
+
+            {!shipments.length ? (
+              <div className="mt-3 text-sm text-gray-600">Shipment not created yet.</div>
+            ) : (
+              <div className="mt-4 space-y-3">
+                <div className="border p-4">
+                  <div className="text-sm text-gray-800">
+                    <span className="font-semibold">AWB:</span> <span className="font-mono">{awb || "—"}</span>
+                  </div>
+                  <div className="mt-1 text-sm text-gray-800">
+                    <span className="font-semibold">Shipment ID:</span> <span className="font-mono">{shipmentId ?? "—"}</span>
+                  </div>
+                  <div className="mt-1 text-sm text-gray-800">
+                    <span className="font-semibold">Shiprocket Order:</span> <span className="font-mono">{srOrderId || "—"}</span>
+                  </div>
+
+                  <div className="mt-3 text-sm text-gray-800">
+                    <span className="font-semibold">Latest Status:</span> {trackingStatusText}
+                    {trackingEta ? <span className="text-gray-500"> • ETA: {trackingEta}</span> : null}
+                  </div>
+                </div>
+
+                {trackingEvents.length ? (
+                  <div className="border p-4">
+                    <div className="text-sm font-semibold text-gray-900">Updates</div>
+                    <div className="mt-3 space-y-3">
+                      {trackingEvents.slice(0, 8).map((ev: any, idx: number) => {
+                        const date = ev?.date || ev?.activity_date || ev?.updated_at || ev?.timestamp;
+                        const statusText = ev?.status || ev?.activity || ev?.current_status || ev?.status_description || "Update";
+                        const loc = ev?.location || ev?.city || ev?.pickup_location || "";
+                        return (
+                          <div key={idx} className="flex items-start justify-between gap-4 border-b pb-3 last:border-b-0 last:pb-0">
+                            <div className="min-w-0">
+                              <div className="text-sm font-semibold text-gray-900">{String(statusText)}</div>
+                              {loc ? <div className="text-xs text-gray-600 mt-0.5">{String(loc)}</div> : null}
+                            </div>
+                            <div className="text-xs text-gray-500 shrink-0">{date ? fmtDateTime(date) : "—"}</div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                    {trackingEvents.length > 8 ? (
+                      <div className="mt-3 text-xs text-gray-500">Showing latest 8 updates.</div>
+                    ) : null}
+                  </div>
+                ) : (
+                  <div className="text-sm text-gray-600">Tracking updates not available yet.</div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Items */}
           <div className=" border bg-white p-5">
             <div className="font-semibold text-gray-900">Items</div>
 
@@ -400,7 +561,6 @@ export default function WebsiteUserOrderDetailsPage() {
         </div>
       </div>
 
-      {/* bottom order id strip */}
       <div className="text-xs text-gray-500">
         Order No. : {order?.orderCode || String(order?._id).slice(-8)}
       </div>

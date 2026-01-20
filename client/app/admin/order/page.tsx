@@ -7,6 +7,7 @@ import {
   adminFetchOrders,
   adminUpdateOrderStatus,
   adminConfirmCod,
+  adminCreateShiprocketShipment,
 } from "@/lib/adminOrdersApi";
 
 function money(n: number) {
@@ -114,14 +115,9 @@ export default function AdminOrdersPage() {
       setBusyId(orderId);
       setError(null);
 
-      // optimistic UI
       patchLocalOrder(orderId, { status: nextStatus });
 
-      const updated = await adminUpdateOrderStatus(
-        orderId,
-        nextStatus as any
-      );
-
+      const updated = await adminUpdateOrderStatus(orderId, nextStatus as any);
       replaceLocalOrder(orderId, updated);
     } catch (e: any) {
       setError(e?.message || "Status update failed");
@@ -136,7 +132,6 @@ export default function AdminOrdersPage() {
       setBusyId(orderId);
       setError(null);
 
-      // optimistic UI (status + cod timestamp)
       patchLocalOrder(orderId, {
         status: "CONFIRMED",
         cod: { confirmedAt: new Date().toISOString() },
@@ -152,10 +147,43 @@ export default function AdminOrdersPage() {
     }
   };
 
+  const onCreateShipment = async (orderId: string) => {
+    try {
+      setBusyId(orderId);
+      setError(null);
+
+      // optimistic: move to SHIPPED
+      patchLocalOrder(orderId, { status: "SHIPPED" });
+
+      const updated = await adminCreateShiprocketShipment(orderId);
+      replaceLocalOrder(orderId, updated);
+    } catch (e: any) {
+      setError(e?.message || "Create shipment failed");
+      await load(page);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   const summaryText = useMemo(() => {
     const total = Number(data?.total || 0);
     return `${total} order(s)`;
   }, [data?.total]);
+
+  const hasShiprocketShipment = (o: any) =>
+    Array.isArray(o?.shipments) && o.shipments.some((s: any) => s?.provider === "SHIPROCKET");
+
+  const latestShiprocketShipment = (o: any) => {
+    const list = Array.isArray(o?.shipments) ? o.shipments.filter((s: any) => s?.provider === "SHIPROCKET") : [];
+    if (!list.length) return null;
+    // latest by createdAt if exists, else last
+    const sorted = [...list].sort((a: any, b: any) => {
+      const ta = a?.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const tb = b?.createdAt ? new Date(b.createdAt).getTime() : 0;
+      return tb - ta;
+    });
+    return sorted[0] || list[list.length - 1];
+  };
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-10">
@@ -166,10 +194,7 @@ export default function AdminOrdersPage() {
         </div>
 
         <div className="flex gap-2">
-          <Link
-            href="/admin"
-            className="rounded-xl border px-4 py-2 text-sm font-semibold hover:bg-gray-50"
-          >
+          <Link href="/admin" className="rounded-xl border px-4 py-2 text-sm font-semibold hover:bg-gray-50">
             Admin Home
           </Link>
         </div>
@@ -239,9 +264,7 @@ export default function AdminOrdersPage() {
 
       {/* Table */}
       <div className="mt-6 rounded-3xl border bg-white overflow-hidden">
-        <div className="border-b bg-gray-50 px-5 py-3 text-sm font-semibold text-gray-900">
-          Orders
-        </div>
+        <div className="border-b bg-gray-50 px-5 py-3 text-sm font-semibold text-gray-900">Orders</div>
 
         {loading ? (
           <div className="p-5 space-y-3">
@@ -251,7 +274,7 @@ export default function AdminOrdersPage() {
           </div>
         ) : items.length ? (
           <div className="overflow-x-auto">
-            <table className="min-w-[1200px] w-full text-sm">
+            <table className="min-w-[1350px] w-full text-sm">
               <thead className="bg-white">
                 <tr className="border-b text-left text-xs font-bold text-gray-600">
                   <th className="px-5 py-3">Order</th>
@@ -259,6 +282,7 @@ export default function AdminOrdersPage() {
                   <th className="px-5 py-3">Items</th>
                   <th className="px-5 py-3">Payable</th>
                   <th className="px-5 py-3">Payment Details</th>
+                  <th className="px-5 py-3">Shipment</th>
                   <th className="px-5 py-3">Status</th>
                   <th className="px-5 py-3">Created</th>
                 </tr>
@@ -272,11 +296,7 @@ export default function AdminOrdersPage() {
                   const phone = o?.contact?.phone || "—";
                   const created = o?.createdAt ? new Date(o.createdAt).toLocaleString("en-IN") : "—";
 
-                  const payable =
-                    o?.totals?.grandTotal ??
-                    o?.totals?.subtotal ??
-                    o?.totalAmount ??
-                    0;
+                  const payable = o?.totals?.grandTotal ?? o?.totals?.subtotal ?? o?.totalAmount ?? 0;
 
                   const pm = String(o?.paymentMethod || "COD").toUpperCase();
                   const ps = String(o?.paymentStatus || "PENDING").toUpperCase();
@@ -291,25 +311,38 @@ export default function AdminOrdersPage() {
 
                   const cod = o?.cod || null;
                   const codConfirmedAt = cod?.confirmedAt || null;
-                  // UI locks
+
+                  // ✅ COD confirmed should remain true even after shipped/delivered
+                  const codIsConfirmed =
+                    pm === "COD" && (Boolean(codConfirmedAt) || ["CONFIRMED", "SHIPPED", "DELIVERED"].includes(st));
+
+                  const isBusy = busyId === orderId;
                   const lockedDelivered = st === "DELIVERED";
                   const lockedCancelled = st === "CANCELLED";
-                  const isBusy = busyId === orderId;
 
                   const isCodPlaced = pm === "COD" && st === "PLACED";
-                 const codIsConfirmed =
-  pm === "COD" && (Boolean(codConfirmedAt) || ["CONFIRMED", "SHIPPED", "DELIVERED"].includes(st));
+                  const blockShipUntilConfirm = pm === "COD" && !codIsConfirmed;
 
-                  // If COD not confirmed yet: do not allow shipping/delivered from dropdown
-                  const blockShipUntilConfirm = pm === "COD" && st === "PLACED";
+                  // shipment info
+                  const sr = latestShiprocketShipment(o);
+                  const srAwb = sr?.shiprocket?.awb || "";
+                  const srShipmentId = sr?.shiprocket?.shipmentId ?? null;
+                  const srOrderId = sr?.shiprocket?.orderId || "";
+
+                  const shipmentExists = hasShiprocketShipment(o);
+
+                  // Create shipment allowed when CONFIRMED and not already shipped created (single shipment)
+                  const canCreateShipment =
+                    st === "CONFIRMED" &&
+                    !shipmentExists &&
+                    !(pm === "COD" && !codIsConfirmed) &&
+                    !(pm === "ONLINE" && ps !== "PAID");
 
                   return (
                     <tr key={orderId} className="border-b last:border-b-0">
                       <td className="px-5 py-3">
                         <div className="font-semibold text-gray-900">{orderCode}</div>
-                        <div className="text-[11px] text-gray-500">
-                          Internal: {orderId.slice(-8)}
-                        </div>
+                        <div className="text-[11px] text-gray-500">Internal: {orderId.slice(-8)}</div>
                       </td>
 
                       <td className="px-5 py-3">
@@ -322,15 +355,12 @@ export default function AdminOrdersPage() {
                           {(o.items || []).slice(0, 2).map((it: any, idx: number) => {
                             const product = it?.productId; // populated
                             const vText = getVariantText(product, it?.variantId);
-
                             return (
                               <div key={idx} className="text-[12px] text-gray-800">
                                 <div className="font-semibold">{it.title}</div>
-
                                 <div className="mt-0.5 text-[11px] font-semibold text-gray-500">
                                   Code: {it.productCode || "—"}
                                 </div>
-
                                 <div className="mt-1 text-xs text-gray-500">
                                   Variant: {vText}
                                   {it.colorKey ? ` • Color: ${it.colorKey}` : ""}
@@ -339,11 +369,8 @@ export default function AdminOrdersPage() {
                               </div>
                             );
                           })}
-
                           {(o.items || []).length > 2 ? (
-                            <div className="text-[11px] text-gray-500">
-                              +{o.items.length - 2} more item(s)
-                            </div>
+                            <div className="text-[11px] text-gray-500">+{o.items.length - 2} more item(s)</div>
                           ) : null}
                         </div>
                       </td>
@@ -360,8 +387,7 @@ export default function AdminOrdersPage() {
                       {/* Payment Details */}
                       <td className="px-5 py-3">
                         <div className="text-gray-900 font-semibold">
-                          {pm}{" "}
-                          <span className="text-gray-500 font-normal">({ps})</span>
+                          {pm} <span className="text-gray-500 font-normal">({ps})</span>
                         </div>
 
                         {pm === "ONLINE" ? (
@@ -376,9 +402,7 @@ export default function AdminOrdersPage() {
                             </div>
                             <div>
                               <span className="font-semibold text-gray-700">Amount:</span>{" "}
-                              {rzpAmountPaise
-                                ? `${moneyPaise(rzpAmountPaise)} ${rzpCurrency}`
-                                : "—"}
+                              {rzpAmountPaise ? `${moneyPaise(rzpAmountPaise)} ${rzpCurrency}` : "—"}
                             </div>
                             <div>
                               <span className="font-semibold text-gray-700">Verified:</span>{" "}
@@ -389,14 +413,13 @@ export default function AdminOrdersPage() {
                           <div className="mt-1 space-y-1 text-[11px] text-gray-600">
                             <div>
                               <span className="font-semibold text-gray-700">COD:</span>{" "}
-           {codIsConfirmed ? (
-  <>
-    Confirmed{codConfirmedAt ? ` (${fmtDateTime(codConfirmedAt)})` : ""}
-  </>
-) : (
-  "Not confirmed"
-)}
-
+                              {codIsConfirmed ? (
+                                <>
+                                  Confirmed{codConfirmedAt ? ` (${fmtDateTime(codConfirmedAt)})` : ""}
+                                </>
+                              ) : (
+                                "Not confirmed"
+                              )}
                             </div>
 
                             {isCodPlaced ? (
@@ -413,6 +436,52 @@ export default function AdminOrdersPage() {
                         )}
                       </td>
 
+                      {/* Shipment */}
+                      <td className="px-5 py-3">
+                        {shipmentExists ? (
+                          <div className="space-y-1 text-[11px] text-gray-700">
+                            <div>
+                              <span className="font-semibold">Provider:</span> SHIPROCKET
+                            </div>
+                            <div>
+                              <span className="font-semibold">Shipment ID:</span>{" "}
+                              <span className="font-mono">{srShipmentId ?? "—"}</span>
+                            </div>
+                            <div>
+                              <span className="font-semibold">AWB:</span>{" "}
+                              <span className="font-mono">{srAwb || "—"}</span>
+                            </div>
+                            <div>
+                              <span className="font-semibold">SR Order:</span>{" "}
+                              <span className="font-mono">{srOrderId || "—"}</span>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="space-y-2">
+                            <div className="text-[11px] text-gray-500">No shipment created</div>
+                            <button
+                              type="button"
+                              disabled={!canCreateShipment || isBusy}
+                              onClick={() => onCreateShipment(orderId)}
+                              className="inline-flex h-9 items-center justify-center rounded-xl bg-blue-600 px-3 text-[12px] font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
+                            >
+                              {isBusy ? "Creating…" : "Create Shipment"}
+                            </button>
+                            {!canCreateShipment ? (
+                              <div className="text-[11px] text-gray-500">
+                                {st !== "CONFIRMED"
+                                  ? "Confirm order first"
+                                  : pm === "ONLINE" && ps !== "PAID"
+                                  ? "Online payment must be PAID"
+                                  : pm === "COD" && !codIsConfirmed
+                                  ? "Confirm COD first"
+                                  : "—"}
+                              </div>
+                            ) : null}
+                          </div>
+                        )}
+                      </td>
+
                       {/* Status */}
                       <td className="px-5 py-3">
                         <select
@@ -422,17 +491,11 @@ export default function AdminOrdersPage() {
                           className="h-10 rounded-xl border px-3 text-sm outline-none focus:border-gray-400 bg-white disabled:opacity-60"
                         >
                           {STATUS_OPTIONS.map((s) => {
-                            // UI rule: COD placed cannot pick CONFIRMED via dropdown (must use button)
-                            const disableConfirmed =
-                              pm === "COD" && st === "PLACED" && s === "CONFIRMED";
-
-                            // UI rule: COD placed cannot ship/deliver
-                            const disableShipDeliver =
-                              blockShipUntilConfirm && (s === "SHIPPED" || s === "DELIVERED");
-
-                            // UI rule: delivered/cancelled lock handled above
+                            // COD placed cannot pick confirmed by dropdown
+                            const disableConfirmed = pm === "COD" && st === "PLACED" && s === "CONFIRMED";
+                            // COD not confirmed cannot ship/deliver
+                            const disableShipDeliver = blockShipUntilConfirm && (s === "SHIPPED" || s === "DELIVERED");
                             const disabled = disableConfirmed || disableShipDeliver;
-
                             return (
                               <option key={s} value={s} disabled={disabled}>
                                 {s}
@@ -441,15 +504,11 @@ export default function AdminOrdersPage() {
                           })}
                         </select>
 
-                        {pm === "COD" && st === "PLACED" ? (
-                          <div className="mt-1 text-[11px] text-gray-500">
-                            Use “Confirm COD” before shipping.
-                          </div>
+                        {pm === "COD" && !codIsConfirmed ? (
+                          <div className="mt-1 text-[11px] text-gray-500">Confirm COD before shipping.</div>
                         ) : null}
 
-                        {isBusy ? (
-                          <div className="mt-1 text-[11px] text-gray-500">Updating…</div>
-                        ) : null}
+                        {isBusy ? <div className="mt-1 text-[11px] text-gray-500">Updating…</div> : null}
                       </td>
 
                       <td className="px-5 py-3 text-gray-700">{created}</td>
