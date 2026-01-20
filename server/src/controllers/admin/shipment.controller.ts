@@ -16,8 +16,7 @@ const toNum = (v: any, fb = 0) => {
 };
 
 // ✅ IMPORTANT: pickup location name must match Shiprocket dashboard pickup location NAME
-const SHIPROCKET_PICKUP_LOCATION =
-  process.env.SHIPROCKET_PICKUP_LOCATION || "Primary";
+const SHIPROCKET_PICKUP_LOCATION = process.env.SHIPROCKET_PICKUP_LOCATION || "Primary";
 
 // ✅ Your default pickup (single-vendor now)
 // Later in multivendor: pickup will come from vendor profile
@@ -40,37 +39,34 @@ const DEFAULT_DIM = {
 export const adminCreateShiprocketShipment = async (req: Request, res: Response) => {
   try {
     const { orderId } = req.params;
-    if (!Types.ObjectId.isValid(orderId))
-      return res.status(400).json({ message: "Invalid orderId" });
+    if (!Types.ObjectId.isValid(orderId)) return res.status(400).json({ message: "Invalid orderId" });
 
     const order: any = await Order.findById(orderId).lean();
     if (!order) return res.status(404).json({ message: "Order not found" });
 
     // ✅ Only confirmed orders can be shipped
     if (String(order.status) !== "CONFIRMED") {
-      return res
-        .status(400)
-        .json({ message: "Order must be CONFIRMED before creating shipment" });
+      return res.status(400).json({
+        message: "Order must be CONFIRMED before creating shipment",
+      });
     }
 
     // ✅ Payment guard
-    if (
-      String(order.paymentMethod) === "ONLINE" &&
-      String(order.paymentStatus) !== "PAID"
-    ) {
-      return res
-        .status(400)
-        .json({ message: "ONLINE order must be PAID before shipping" });
+    if (String(order.paymentMethod) === "ONLINE" && String(order.paymentStatus) !== "PAID") {
+      return res.status(400).json({ message: "ONLINE order must be PAID before shipping" });
     }
 
     // ✅ Prevent duplicate shipment (single-vendor now)
     const existing = (order.shipments || []).find(
-      (s: any) => s?.provider === "SHIPROCKET" && (s?.shiprocket?.awb || s?.shiprocket?.shipmentId)
+      (s: any) =>
+        String(s?.provider || "").toUpperCase() === "SHIPROCKET" &&
+        (s?.shiprocket?.awb || s?.shiprocket?.shipmentId)
     );
     if (existing) {
-      return res
-        .status(409)
-        .json({ message: "Shipment already created for this order", data: existing });
+      return res.status(409).json({
+        message: "Shipment already created for this order",
+        data: existing,
+      });
     }
 
     const ship = order.address || {};
@@ -135,9 +131,7 @@ export const adminCreateShiprocketShipment = async (req: Request, res: Response)
       });
 
       const companies =
-        svc?.data?.available_courier_companies ||
-        svc?.available_courier_companies ||
-        [];
+        svc?.data?.available_courier_companies || svc?.available_courier_companies || [];
 
       if (Array.isArray(companies) && companies.length) {
         courier_company_id = Number(companies[0].courier_company_id || null);
@@ -151,7 +145,6 @@ export const adminCreateShiprocketShipment = async (req: Request, res: Response)
       order_id: String(order.orderCode || order._id),
       order_date: shiprocketFormatOrderDate(new Date(order.createdAt || Date.now())),
 
-      // ✅ FIX: do not hardcode
       pickup_location: SHIPROCKET_PICKUP_LOCATION,
 
       billing_customer_name: toStr(ship.fullName || contact.name || "Customer"),
@@ -204,7 +197,7 @@ export const adminCreateShiprocketShipment = async (req: Request, res: Response)
 
     // ✅ Save shipment snapshot to Order
     const shipmentDoc = {
-      provider: "SHIPROCKET",
+      provider: "SHIPROCKET", // ✅ keep uppercase for UI check
       vendorId: null,
       items: items.map((it: any) => ({
         productId: it.productId,
@@ -247,14 +240,19 @@ export const adminCreateShiprocketShipment = async (req: Request, res: Response)
       }
     );
 
-    const fresh = await Order.findById(orderId).lean();
+    // ✅ IMPORTANT: populate here so UI gets product info consistently
+    const fresh = await Order.findById(orderId)
+      .populate({
+        path: "items.productId",
+        select: "title variants colors galleryImages featureImage",
+      })
+      .lean();
 
     return res.json({
       message: "Shipment created",
       data: fresh,
     });
   } catch (err: any) {
-    // ✅ Better error visibility
     console.error("adminCreateShiprocketShipment error:", err);
     console.error("Shiprocket status:", err?.status);
     console.error("Shiprocket payload:", err?.payload);

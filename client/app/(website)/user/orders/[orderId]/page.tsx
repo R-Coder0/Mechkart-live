@@ -17,15 +17,6 @@ function toNum(v: any, fb = 0) {
   return Number.isFinite(n) ? n : fb;
 }
 
-function fmtDate(d?: any) {
-  if (!d) return "";
-  try {
-    return new Date(d).toLocaleDateString("en-IN", { weekday: "short", day: "2-digit", month: "short" });
-  } catch {
-    return "";
-  }
-}
-
 function fmtDateLong(d?: any) {
   if (!d) return "";
   try {
@@ -101,7 +92,7 @@ export default function WebsiteUserOrderDetailsPage() {
   const [error, setError] = useState<string | null>(null);
   const [order, setOrder] = useState<Order | null>(null);
 
-  // ✅ Tracking states
+  // Tracking states
   const [trackingLoading, setTrackingLoading] = useState(false);
   const [trackingError, setTrackingError] = useState<string | null>(null);
   const [tracking, setTracking] = useState<TrackingResponse | null>(null);
@@ -148,21 +139,13 @@ export default function WebsiteUserOrderDetailsPage() {
     }
   };
 
-  useEffect(() => {
-    if (orderId) load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orderId]);
-
-  // ✅ auto-load tracking once order is available
+  // ✅ FIX: refresh / open page => always fetch order + tracking once.
   useEffect(() => {
     if (!orderId) return;
-    const st = String(order?.status || "").toUpperCase();
-    const hasShipment = Array.isArray(order?.shipments) && order!.shipments.length > 0;
-    if (hasShipment || ["SHIPPED", "DELIVERED"].includes(st)) {
-      loadTracking();
-    }
+    load();
+    loadTracking(); // ✅ important (this fixes "refresh pe gayab")
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orderId, order?.status, order?.shipments?.length]);
+  }, [orderId]);
 
   const items = useMemo(() => (Array.isArray(order?.items) ? order.items : []), [order?.items]);
 
@@ -256,7 +239,7 @@ export default function WebsiteUserOrderDetailsPage() {
     return `Delivery expected by ${fmtDateLong(expectedDelivery)}`;
   }, [isCancelled, isDelivered, updatedAt, expectedDelivery]);
 
-  // ✅ tracking derived
+  // tracking derived
   const shipments = useMemo(() => {
     const t = tracking?.shipments;
     if (Array.isArray(t) && t.length) return t;
@@ -297,24 +280,24 @@ export default function WebsiteUserOrderDetailsPage() {
 
   if (loading) {
     return (
-      <div className=" border bg-white p-6">
+      <div className="border bg-white p-6">
         <div className="h-6 w-64 rounded bg-gray-200 animate-pulse" />
-        <div className="mt-6 h-44  bg-gray-100 animate-pulse" />
+        <div className="mt-6 h-44 bg-gray-100 animate-pulse" />
       </div>
     );
   }
 
   if (error || !order) {
     return (
-      <div className=" border bg-white p-6">
+      <div className="border bg-white p-6">
         <div className="text-lg font-bold text-gray-900">Order Details</div>
-        <div className="mt-3  border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+        <div className="mt-3 border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
           {error || "Order not found"}
         </div>
 
         <button
           onClick={() => router.push("/user/orders")}
-          className="mt-4  border px-4 py-2 text-sm font-semibold hover:bg-gray-50"
+          className="mt-4 border px-4 py-2 text-sm font-semibold hover:bg-gray-50"
         >
           Back to Orders
         </button>
@@ -330,11 +313,16 @@ export default function WebsiteUserOrderDetailsPage() {
           <div className="text-xl font-bold text-gray-900">Order Details</div>
           <div className="text-xs text-gray-500 mt-1">
             Order Code:{" "}
-            <span className="font-semibold text-gray-800">{order?.orderCode || String(order?._id).slice(-8)}</span>
+            <span className="font-semibold text-gray-800">
+              {order?.orderCode || String(order?._id).slice(-8)}
+            </span>
           </div>
         </div>
 
-        <button onClick={() => router.push("/user/orders")} className=" border px-4 py-2 text-sm font-semibold hover:bg-gray-50">
+        <button
+          onClick={() => router.push("/user/orders")}
+          className="border px-4 py-2 text-sm font-semibold hover:bg-gray-50"
+        >
           Back
         </button>
       </div>
@@ -343,17 +331,22 @@ export default function WebsiteUserOrderDetailsPage() {
         {/* LEFT */}
         <div className="lg:col-span-8 space-y-6">
           {/* Product summary card */}
-          <div className=" border bg-white overflow-hidden">
-            <div className="bg-yellow-50 px-5 py-2 text-xs text-gray-700">Order status updates will appear here.</div>
+          <div className="border bg-white overflow-hidden">
+            <div className="bg-yellow-50 px-5 py-2 text-xs text-gray-700">
+              Order status updates will appear here.
+            </div>
 
             <div className="p-5 flex gap-4 items-start">
               <div className="flex-1">
                 <div className="text-lg font-semibold text-gray-900">{headerTitle}</div>
 
-                {headerSubtitle ? <div className="mt-1 text-sm text-gray-600">{headerSubtitle}</div> : null}
+                {headerSubtitle ? (
+                  <div className="mt-1 text-sm text-gray-600">{headerSubtitle}</div>
+                ) : null}
 
                 <div className="mt-2 text-xs text-gray-500">
-                  Payment: <span className="font-semibold text-gray-700">{order?.paymentMethod || "COD"}</span>{" "}
+                  Payment:{" "}
+                  <span className="font-semibold text-gray-700">{order?.paymentMethod || "COD"}</span>{" "}
                   ({order?.paymentStatus || "PENDING"})
                 </div>
 
@@ -362,7 +355,7 @@ export default function WebsiteUserOrderDetailsPage() {
                 <div className="mt-1 text-xs text-gray-500">{items.length} item(s)</div>
               </div>
 
-              <div className="h-20 w-20  overflow-hidden bg-gray-50 shrink-0">
+              <div className="h-20 w-20 overflow-hidden bg-gray-50 shrink-0">
                 {headerImg ? <img src={headerImg} alt={headerTitle} className="h-full w-full object-cover" /> : null}
               </div>
             </div>
@@ -382,8 +375,8 @@ export default function WebsiteUserOrderDetailsPage() {
             </div>
           </div>
 
-          {/* ✅ Tracking card */}
-          <div className=" border bg-white p-5">
+          {/* Tracking card */}
+          <div className="border bg-white p-5">
             <div className="flex items-center justify-between gap-3">
               <div className="font-semibold text-gray-900">Tracking</div>
 
@@ -398,25 +391,24 @@ export default function WebsiteUserOrderDetailsPage() {
             </div>
 
             {trackingError ? (
-              <div className="mt-3 border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{trackingError}</div>
+              <div className="mt-3 border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+                {trackingError}
+              </div>
             ) : null}
 
             {!shipments.length ? (
               <div className="mt-3 text-sm text-gray-600">Shipment not created yet.</div>
             ) : (
               <div className="mt-4 space-y-3">
-                <div className="border p-4">
-                  <div className="text-sm text-gray-800">
-                    <span className="font-semibold">AWB:</span> <span className="font-mono">{awb || "—"}</span>
-                  </div>
-                  <div className="mt-1 text-sm text-gray-800">
-                    <span className="font-semibold">Shipment ID:</span> <span className="font-mono">{shipmentId ?? "—"}</span>
-                  </div>
-                  <div className="mt-1 text-sm text-gray-800">
-                    <span className="font-semibold">Shiprocket Order:</span> <span className="font-mono">{srOrderId || "—"}</span>
+                {/* ✅ "Table-like" rows (same UI, just structured) */}
+                <div className="border">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-0">
+                    <InfoCell label="AWB" value={awb || "—"} mono />
+                    <InfoCell label="Shipment ID" value={shipmentId ?? "—"} mono />
+                    <InfoCell label="Shiprocket Order" value={srOrderId || "—"} mono />
                   </div>
 
-                  <div className="mt-3 text-sm text-gray-800">
+                  <div className="border-t px-4 py-3 text-sm text-gray-800">
                     <span className="font-semibold">Latest Status:</span> {trackingStatusText}
                     {trackingEta ? <span className="text-gray-500"> • ETA: {trackingEta}</span> : null}
                   </div>
@@ -428,10 +420,14 @@ export default function WebsiteUserOrderDetailsPage() {
                     <div className="mt-3 space-y-3">
                       {trackingEvents.slice(0, 8).map((ev: any, idx: number) => {
                         const date = ev?.date || ev?.activity_date || ev?.updated_at || ev?.timestamp;
-                        const statusText = ev?.status || ev?.activity || ev?.current_status || ev?.status_description || "Update";
+                        const statusText =
+                          ev?.status || ev?.activity || ev?.current_status || ev?.status_description || "Update";
                         const loc = ev?.location || ev?.city || ev?.pickup_location || "";
                         return (
-                          <div key={idx} className="flex items-start justify-between gap-4 border-b pb-3 last:border-b-0 last:pb-0">
+                          <div
+                            key={idx}
+                            className="flex items-start justify-between gap-4 border-b pb-3 last:border-b-0 last:pb-0"
+                          >
                             <div className="min-w-0">
                               <div className="text-sm font-semibold text-gray-900">{String(statusText)}</div>
                               {loc ? <div className="text-xs text-gray-600 mt-0.5">{String(loc)}</div> : null}
@@ -453,14 +449,18 @@ export default function WebsiteUserOrderDetailsPage() {
           </div>
 
           {/* Items */}
-          <div className=" border bg-white p-5">
+          <div className="border bg-white p-5">
             <div className="font-semibold text-gray-900">Items</div>
 
             <div className="mt-4 space-y-4">
               {computedItems.map((x: any, idx: number) => (
                 <div key={idx} className="flex gap-4 border-b pb-4 last:border-b-0 last:pb-0">
                   <div className="h-20 w-20 overflow-hidden bg-gray-100 shrink-0">
-                    {x.img ? <img src={x.img} alt={x.title} className="h-full w-full object-cover" /> : <div className="h-full w-full bg-gray-200" />}
+                    {x.img ? (
+                      <img src={x.img} alt={x.title} className="h-full w-full object-cover" />
+                    ) : (
+                      <div className="h-full w-full bg-gray-200" />
+                    )}
                   </div>
 
                   <div className="flex-1">
@@ -488,15 +488,15 @@ export default function WebsiteUserOrderDetailsPage() {
               ))}
 
               {!computedItems.length ? (
-                <div className=" border bg-white p-5 text-sm text-gray-700">No items found.</div>
+                <div className="border bg-white p-5 text-sm text-gray-700">No items found.</div>
               ) : null}
             </div>
           </div>
 
           {/* Rate experience placeholder */}
-          <div className=" border bg-white p-5">
+          <div className="border bg-white p-5">
             <div className="font-semibold text-gray-900">Rate your experience</div>
-            <div className="mt-3  border px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer">
+            <div className="mt-3 border px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer">
               Did you find this page helpful?
             </div>
           </div>
@@ -505,10 +505,10 @@ export default function WebsiteUserOrderDetailsPage() {
         {/* RIGHT */}
         <div className="lg:col-span-4 space-y-6">
           {/* Delivery details */}
-          <div className=" border bg-white p-5">
+          <div className="border bg-white p-5">
             <div className="text-lg font-bold text-gray-900">Delivery details</div>
 
-            <div className="mt-4  border p-4">
+            <div className="mt-4 border p-4">
               <div className="text-sm font-semibold text-gray-900">
                 {order?.address?.addressType ? String(order.address.addressType) : "Home"}
               </div>
@@ -532,10 +532,10 @@ export default function WebsiteUserOrderDetailsPage() {
           </div>
 
           {/* Price details */}
-          <div className=" border bg-white p-5">
+          <div className="border bg-white p-5">
             <div className="text-lg font-bold text-gray-900">Price details</div>
 
-            <div className="mt-4  border p-4 space-y-3 text-sm">
+            <div className="mt-4 border p-4 space-y-3 text-sm">
               <Row label="Listing price" value={money(mrpTotal || payable)} />
               <Row label="Special price" value={money(payable)} />
               <Row label="Total fees" value={money(0)} />
@@ -547,7 +547,7 @@ export default function WebsiteUserOrderDetailsPage() {
                 <div className="font-bold text-gray-900">{money(payable)}</div>
               </div>
 
-              <div className="mt-3  border px-4 py-3">
+              <div className="mt-3 border px-4 py-3">
                 <div className="flex items-center justify-between">
                   <div className="text-gray-700">Payment method</div>
                   <div className="font-semibold text-gray-900">{String(order?.paymentMethod || "COD")}</div>
@@ -555,15 +555,15 @@ export default function WebsiteUserOrderDetailsPage() {
                 <div className="mt-1 text-xs text-gray-500">Status: {String(order?.paymentStatus || "PENDING")}</div>
               </div>
 
-              {savings > 0 ? <div className="text-xs font-semibold text-emerald-700">You saved {money(savings)}</div> : null}
+              {savings > 0 ? (
+                <div className="text-xs font-semibold text-emerald-700">You saved {money(savings)}</div>
+              ) : null}
             </div>
           </div>
         </div>
       </div>
 
-      <div className="text-xs text-gray-500">
-        Order No. : {order?.orderCode || String(order?._id).slice(-8)}
-      </div>
+      <div className="text-xs text-gray-500">Order No. : {order?.orderCode || String(order?._id).slice(-8)}</div>
     </div>
   );
 }
@@ -573,6 +573,16 @@ function Row({ label, value }: { label: string; value: string }) {
     <div className="flex items-center justify-between">
       <div className="text-gray-600">{label}</div>
       <div className="text-gray-900 font-semibold">{value}</div>
+    </div>
+  );
+}
+
+// minimal "table cell" without redesign
+function InfoCell({ label, value, mono }: { label: string; value: any; mono?: boolean }) {
+  return (
+    <div className="px-4 py-3 border-b sm:border-b-0 sm:border-r last:sm:border-r-0">
+      <div className="text-[11px] uppercase tracking-wide text-gray-500">{label}</div>
+      <div className={`mt-1 text-sm text-gray-900 ${mono ? "font-mono" : "font-semibold"}`}>{String(value ?? "—")}</div>
     </div>
   );
 }
@@ -645,7 +655,7 @@ function Step({
   danger?: boolean;
 }) {
   return (
-    <div className={`flex gap-3`}>
+    <div className="flex gap-3">
       <div className="flex flex-col items-center">
         <div
           className={`h-5 w-5 rounded-full flex items-center justify-center border ${
@@ -657,7 +667,7 @@ function Step({
         <div className={`w-px flex-1 ${done ? (danger ? "bg-red-200" : "bg-emerald-200") : "bg-gray-200"}`} />
       </div>
 
-      <div className={`flex-1  p-3 ${active ? (danger ? "bg-red-50" : "bg-emerald-50") : ""}`}>
+      <div className={`flex-1 p-3 ${active ? (danger ? "bg-red-50" : "bg-emerald-50") : ""}`}>
         <div className="font-semibold text-gray-900">{title}</div>
         <div className="mt-1 text-sm text-gray-600">{subtitle}</div>
       </div>

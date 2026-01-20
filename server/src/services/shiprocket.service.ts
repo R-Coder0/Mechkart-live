@@ -1,26 +1,30 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-/**
- * Shiprocket Service (multi-vendor ready)
- * - Handles authentication token caching
- * - Create Shiprocket order
- * - Generate AWB
- * - Track by AWB (optional)
- *
- * ENV required:
- *  - SHIPROCKET_EMAIL
- *  - SHIPROCKET_PASSWORD
- * Optional:
- *  - SHIPROCKET_BASE_URL (default: https://apiv2.shiprocket.in/v1)
- */
-
-const SHIPROCKET_EMAIL = process.env.SHIPROCKET_EMAIL || "";
+const SHIPROCKET_EMAIL = (process.env.SHIPROCKET_EMAIL || "").trim();
 const SHIPROCKET_PASSWORD = process.env.SHIPROCKET_PASSWORD || "";
-const SHIPROCKET_BASE_URL = process.env.SHIPROCKET_BASE_URL || "https://apiv2.shiprocket.in/v1";
 
-// Token cache (in-memory)
+// keep default as you have
+const SHIPROCKET_BASE_URL_RAW =
+  process.env.SHIPROCKET_BASE_URL || "https://apiv2.shiprocket.in/v1";
+
+// Normalize base url (remove trailing slash)
+const SHIPROCKET_BASE_URL = SHIPROCKET_BASE_URL_RAW.replace(/\/+$/, "");
+
+// ---- Debug flags (safe) ----
+const SR_DEBUG = String(process.env.SHIPROCKET_DEBUG ?? "").toLowerCase() === "true";
+
+// In-memory token cache (per Node process)
 let cachedToken: string | null = null;
-let cachedTokenExpMs = 0; // epoch ms
+let cachedTokenExpMs = 0;
+
+// Prevent parallel login calls
+let inFlightLogin: Promise<string> | null = null;
+
+// Block cooldown to avoid extending Shiprocket lock
+let blockedUntilMs = 0;
+
+// Counter for visibility
+let loginAttemptCount = 0;
 
 function assertShiprocketEnv() {
   if (!SHIPROCKET_EMAIL || !SHIPROCKET_PASSWORD) {
@@ -32,58 +36,118 @@ function nowMs() {
   return Date.now();
 }
 
-// Shiprocket token usually valid for some time; we refresh 2 minutes earlier
+// Refresh 2 minutes earlier
 function isTokenValid() {
   return !!cachedToken && cachedTokenExpMs > nowMs() + 2 * 60 * 1000;
 }
 
-async function srFetch(path: string, opts?: RequestInit) {
-  const url = `${SHIPROCKET_BASE_URL}${path}`;
-  const res = await fetch(url, {
-    ...opts,
-    headers: {
-      "Content-Type": "application/json",
-      ...(opts?.headers || {}),
-    },
-  });
-
-  const text = await res.text();
-  let json: any = {};
-  try {
-    json = text ? JSON.parse(text) : {};
-  } catch {
-    json = { raw: text };
-  }
-
-  if (!res.ok) {
-    const msg =
-      json?.message ||
-      json?.error ||
-      json?.errors ||
-      `Shiprocket request failed (${res.status})`;
-    const err: any = new Error(typeof msg === "string" ? msg : "Shiprocket request failed");
-    err.status = res.status;
-    err.payload = json;
-    throw err;
-  }
-
-  return json;
+function safeDebugEnvOnce() {
+  if (!SR_DEBUG) return;
+  // DO NOT log password value, only length.
+  console.log("[SR][ENV] baseUrl:", SHIPROCKET_BASE_URL);
+  console.log("[SR][ENV] email:", JSON.stringify(SHIPROCKET_EMAIL));
+  console.log("[SR][ENV] pass_len:", SHIPROCKET_PASSWORD.length);
 }
 
-/**
- * Login & cache token
- */
-export async function shiprocketGetToken(force = false): Promise<string> {
+function decodeJwtExpMs(token: string): number | null {
+  try {
+    const parts = token.split(".");
+    if (parts.length < 2) return null;
+
+    const payloadB64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const padded = payloadB64 + "===".slice((payloadB64.length + 3) % 4);
+    const json = JSON.parse(Buffer.from(padded, "base64").toString("utf8"));
+    const expSec = Number(json?.exp);
+    if (!expSec || Number.isNaN(expSec)) return null;
+    return expSec * 1000;
+  } catch {
+    return null;
+  }
+}
+
+function isBlockedLoginMessage(msg: any) {
+  const s = String(msg || "").toLowerCase();
+  return s.includes("blocked") && s.includes("login");
+}
+
+function enterBlockedCooldown(minutes = 3) {
+  blockedUntilMs = nowMs() + minutes * 60 * 1000;
+}
+
+function assertNotInBlockedCooldown() {
+  if (blockedUntilMs > nowMs()) {
+    const secs = Math.ceil((blockedUntilMs - nowMs()) / 1000);
+    const err: any = new Error(`Shiprocket login temporarily blocked. Cooldown active for ~${secs}s`);
+    err.status = 429;
+    err.code = "SR_LOGIN_COOLDOWN";
+    throw err;
+  }
+}
+
+async function srFetch(path: string, opts?: RequestInit) {
+  const url = `${SHIPROCKET_BASE_URL}${path}`;
+
+  const controller = new AbortController();
+  const timeoutMs = 20000;
+  const t = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const res = await fetch(url, {
+      ...opts,
+      signal: controller.signal,
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+        "User-Agent": "MechkartShiprocket/1.0",
+        ...(opts?.headers || {}),
+      },
+    });
+
+    const text = await res.text();
+    let json: any = {};
+    try {
+      json = text ? JSON.parse(text) : {};
+    } catch {
+      json = { raw: text };
+    }
+
+    if (!res.ok) {
+      const msg =
+        json?.message ||
+        json?.error ||
+        json?.errors ||
+        `Shiprocket request failed (${res.status})`;
+
+      const err: any = new Error(typeof msg === "string" ? msg : "Shiprocket request failed");
+      err.status = res.status;
+      err.payload = json;
+
+      // If Shiprocket says blocked, set cooldown so we don't keep hammering login
+      if (res.status === 403 && isBlockedLoginMessage(msg)) {
+        enterBlockedCooldown(5);
+      }
+
+      throw err;
+    }
+
+    return json;
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+async function shiprocketLoginAndCache(): Promise<string> {
   assertShiprocketEnv();
+  assertNotInBlockedCooldown();
+  safeDebugEnvOnce();
 
-  if (!force && isTokenValid()) return cachedToken as string;
+  loginAttemptCount += 1;
+  if (SR_DEBUG) {
+    console.log(`[SR][LOGIN] attempt #${loginAttemptCount} at`, new Date().toISOString());
+  }
 
-  const payload = {
-    email: SHIPROCKET_EMAIL,
-    password: SHIPROCKET_PASSWORD,
-  };
+  const payload = { email: SHIPROCKET_EMAIL, password: SHIPROCKET_PASSWORD };
 
-  // Shiprocket login endpoint (v1)
   const json = await srFetch("/external/auth/login", {
     method: "POST",
     body: JSON.stringify(payload),
@@ -96,13 +160,49 @@ export async function shiprocketGetToken(force = false): Promise<string> {
     throw err;
   }
 
-  // Shiprocket sometimes doesn't return expiry explicitly; assume 24h if missing
-  // If "expires_in" exists (seconds), use it.
-  const expiresInSec = Number(json?.expires_in || 24 * 60 * 60);
+  const jwtExpMs = decodeJwtExpMs(token);
+  const expiresInSecRaw = json?.expires_in;
+  const expiresInSec = Number(expiresInSecRaw);
+
+  let expMs: number;
+  if (jwtExpMs) {
+    expMs = jwtExpMs;
+  } else if (expiresInSecRaw != null && !Number.isNaN(expiresInSec) && expiresInSec > 60) {
+    expMs = nowMs() + expiresInSec * 1000;
+  } else {
+    expMs = nowMs() + 24 * 60 * 60 * 1000;
+  }
+
   cachedToken = token;
-  cachedTokenExpMs = nowMs() + expiresInSec * 1000;
+  cachedTokenExpMs = expMs;
+
+  if (SR_DEBUG) {
+    const ttlMin = Math.floor((cachedTokenExpMs - nowMs()) / 60000);
+    console.log("[SR][LOGIN] token cached, approx ttl(min):", ttlMin);
+  }
 
   return token;
+}
+
+/**
+ * Login & cache token (singleflight)
+ */
+export async function shiprocketGetToken(force = false): Promise<string> {
+  assertShiprocketEnv();
+
+  if (!force && isTokenValid()) return cachedToken as string;
+
+  if (!force && inFlightLogin) return inFlightLogin;
+
+  inFlightLogin = (async () => {
+    try {
+      return await shiprocketLoginAndCache();
+    } finally {
+      inFlightLogin = null;
+    }
+  })();
+
+  return inFlightLogin;
 }
 
 async function shiprocketAuthHeaders() {
@@ -110,19 +210,13 @@ async function shiprocketAuthHeaders() {
   return { Authorization: `Bearer ${token}` };
 }
 
+function isBlockedLoginError(e: any) {
+  const msg = String(e?.message || "").toLowerCase();
+  return e?.status === 403 && msg.includes("blocked") && msg.includes("login");
+}
+
 /**
  * Create order in Shiprocket
- * Shiprocket "order" expects:
- *  - order_id (string)
- *  - order_date (YYYY-MM-DD HH:mm)
- *  - billing_* fields
- *  - shipping_is_billing (true)
- *  - order_items array [{ name, sku, units, selling_price }]
- *  - payment_method ("COD"/"Prepaid")
- *  - sub_total
- *  - length/breadth/height/weight (required by many accounts)
- *
- * We keep this generic; controller will map our Order -> this payload.
  */
 export async function shiprocketCreateOrder(orderPayload: any) {
   const headers = await shiprocketAuthHeaders();
@@ -134,7 +228,8 @@ export async function shiprocketCreateOrder(orderPayload: any) {
       body: JSON.stringify(orderPayload),
     });
   } catch (e: any) {
-    // token might be expired; retry once with force refresh
+    if (isBlockedLoginError(e)) throw e;
+
     if (e?.status === 401) {
       const token = await shiprocketGetToken(true);
       return await srFetch("/external/orders/create/adhoc", {
@@ -148,19 +243,11 @@ export async function shiprocketCreateOrder(orderPayload: any) {
 }
 
 /**
- * Generate AWB for a shipment
- * Requires shipment_id and courier_id (courier_company_id)
+ * Generate AWB
  */
-export async function shiprocketGenerateAwb(params: {
-  shipment_id: number;
-  courier_id: number;
-}) {
+export async function shiprocketGenerateAwb(params: { shipment_id: number; courier_id: number }) {
   const headers = await shiprocketAuthHeaders();
-
-  const payload = {
-    shipment_id: params.shipment_id,
-    courier_id: params.courier_id,
-  };
+  const payload = { shipment_id: params.shipment_id, courier_id: params.courier_id };
 
   try {
     return await srFetch("/external/courier/assign/awb", {
@@ -169,6 +256,8 @@ export async function shiprocketGenerateAwb(params: {
       body: JSON.stringify(payload),
     });
   } catch (e: any) {
+    if (isBlockedLoginError(e)) throw e;
+
     if (e?.status === 401) {
       const token = await shiprocketGetToken(true);
       return await srFetch("/external/courier/assign/awb", {
@@ -182,13 +271,12 @@ export async function shiprocketGenerateAwb(params: {
 }
 
 /**
- * Get courier serviceability
- * Useful to choose courier_id automatically (optional)
+ * Courier serviceability
  */
 export async function shiprocketCheckServiceability(params: {
   pickup_postcode: string;
   delivery_postcode: string;
-  weight: number; // kg
+  weight: number;
   cod: 0 | 1;
 }) {
   const headers = await shiprocketAuthHeaders();
@@ -205,6 +293,8 @@ export async function shiprocketCheckServiceability(params: {
       headers,
     });
   } catch (e: any) {
+    if (isBlockedLoginError(e)) throw e;
+
     if (e?.status === 401) {
       const token = await shiprocketGetToken(true);
       return await srFetch(`/external/courier/serviceability?${sp.toString()}`, {
@@ -218,19 +308,18 @@ export async function shiprocketCheckServiceability(params: {
 
 /**
  * Track by AWB
- * (Optional; you can use webhooks later for auto updates)
  */
 export async function shiprocketTrackByAwb(awb: string) {
   const headers = await shiprocketAuthHeaders();
 
   try {
-    // Some accounts use: /external/courier/track/awb/:awb
-    // We'll keep this generic; if your endpoint differs we’ll adjust quickly.
     return await srFetch(`/external/courier/track/awb/${encodeURIComponent(awb)}`, {
       method: "GET",
       headers,
     });
   } catch (e: any) {
+    if (isBlockedLoginError(e)) throw e;
+
     if (e?.status === 401) {
       const token = await shiprocketGetToken(true);
       return await srFetch(`/external/courier/track/awb/${encodeURIComponent(awb)}`, {
@@ -242,9 +331,6 @@ export async function shiprocketTrackByAwb(awb: string) {
   }
 }
 
-/**
- * Helpers to format date for Shiprocket: "YYYY-MM-DD HH:mm"
- */
 export function shiprocketFormatOrderDate(d: Date) {
   const pad = (n: number) => String(n).padStart(2, "0");
   const yyyy = d.getFullYear();

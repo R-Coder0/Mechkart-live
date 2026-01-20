@@ -48,8 +48,9 @@ export const adminGetOrders = async (req: Request, res: Response) => {
           path: "items.productId",
           select: "title variants colors galleryImages featureImage",
         })
+        // ✅ FIX: include `shipments` so refresh ke baad shipment details rahein
         .select(
-          "orderCode userId items totals appliedOffer contact address paymentMethod paymentStatus status pg cod createdAt updatedAt"
+          "orderCode userId items totals appliedOffer contact address paymentMethod paymentStatus status pg cod shipments createdAt updatedAt"
         )
         .sort({ createdAt: -1 })
         .skip(skip)
@@ -64,7 +65,10 @@ export const adminGetOrders = async (req: Request, res: Response) => {
     });
   } catch (err: any) {
     console.error("adminGetOrders error:", err);
-    return res.status(500).json({ message: "Failed to fetch orders", error: err?.message || "Unknown error" });
+    return res.status(500).json({
+      message: "Failed to fetch orders",
+      error: err?.message || "Unknown error",
+    });
   }
 };
 
@@ -130,7 +134,10 @@ export const adminUpdateOrderStatus = async (req: Request, res: Response) => {
     return res.json({ message: "Order status updated", data: order });
   } catch (err: any) {
     console.error("adminUpdateOrderStatus error:", err);
-    return res.status(500).json({ message: "Status update failed", error: err?.message || "Unknown error" });
+    return res.status(500).json({
+      message: "Status update failed",
+      error: err?.message || "Unknown error",
+    });
   }
 };
 
@@ -163,6 +170,9 @@ export const adminConfirmCodOrder = async (req: Request, res: Response) => {
     return res.json({ message: "COD order confirmed", data: order });
   } catch (err: any) {
     console.error("adminConfirmCodOrder error:", err);
-    return res.status(500).json({ message: "COD confirm failed", error: err?.message || "Unknown error" });
+    return res.status(500).json({
+      message: "COD confirm failed",
+      error: err?.message || "Unknown error",
+    });
   }
 };
