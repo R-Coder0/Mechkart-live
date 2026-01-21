@@ -36,6 +36,20 @@ const DEFAULT_DIM = {
   weight: Number(process.env.SHIP_WEIGHT_KG || 0.5),
 };
 
+// small helpers
+const safeKey = (v: any) =>
+  String(v ?? "")
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, "-")
+    .replace(/[^A-Z0-9\-]/g, "")
+    .slice(0, 12);
+
+const shortId = (v: any, len = 6) => {
+  const s = String(v ?? "");
+  return s ? s.slice(-len) : "";
+};
+
 export const adminCreateShiprocketShipment = async (req: Request, res: Response) => {
   try {
     const { orderId } = req.params;
@@ -96,14 +110,29 @@ export const adminCreateShiprocketShipment = async (req: Request, res: Response)
     }
 
     // ✅ Build shiprocket order_items
-    // IMPORTANT: selling_price must be > 0 and numeric
+    // IMPORTANT: Shiprocket requires SKU unique within same order.
+    // We will make SKU unique by adding variantId/colorKey suffix.
+    const usedSkus = new Set<string>();
+
     const order_items = items.map((it: any, idx: number) => {
       const units = Math.max(1, toNum(it.qty, 1));
       const selling = Math.max(1, toNum(it.salePrice, 0) || toNum(it.mrp, 0) || 1);
 
+      const baseSku = toStr(it.productCode) || `SKU-${idx + 1}`;
+
+      // stable suffix per variant/color
+      const vSuffix = it?.variantId ? `V${shortId(it.variantId, 6)}` : "VNA";
+      const cSuffix = it?.colorKey ? `C${safeKey(it.colorKey)}` : "";
+
+      let sku = `${baseSku}-${vSuffix}${cSuffix ? "-" + cSuffix : ""}`;
+
+      // final collision-proof fallback (if still repeated for any reason)
+      if (usedSkus.has(sku)) sku = `${sku}-${idx + 1}`;
+      usedSkus.add(sku);
+
       return {
         name: toStr(it.title) || `Item ${idx + 1}`,
-        sku: toStr(it.productCode) || `SKU-${idx + 1}`,
+        sku, // ✅ UNIQUE now
         units,
         selling_price: selling,
         discount: 0,
