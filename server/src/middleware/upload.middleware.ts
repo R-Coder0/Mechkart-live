@@ -62,3 +62,5 @@ export const uploadGalleryImages = upload.array("galleryImages", 10);
  */
 export const uploadProductImages = upload.any();
 export const uploadCategoryImage = upload.single("image");
+// ✅ Return request images (max 5)
+export const uploadReturnImages = upload.array("images", 5);

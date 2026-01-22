@@ -24,6 +24,7 @@ import {
 } from "@/lib/userApi";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL;
+const VENDOR_URL = "/vendor"; // change if your vendor panel route is different
 
 async function fetchCartCount(): Promise<number> {
   try {
@@ -394,6 +395,12 @@ useEffect(() => {
 
               {/* MOBILE ACTIONS */}
               <div className="flex md:hidden items-center gap-3 text-[14px] font-medium text-gray-700">
+                <Link
+  href={VENDOR_URL}
+  className="text-[13px] font-semibold text-gray-800 hover:text-[#82008F] whitespace-nowrap"
+>
+  Become a Supplier
+</Link>
                 {!user ? (
                   <button onClick={openLogin} className="hover:text-[#82008F]">
                     Login
@@ -495,9 +502,17 @@ useEffect(() => {
 
             {/* RIGHT: DESKTOP ACTIONS */}
             <div className="hidden md:flex items-center gap-6 text-[15px] font-medium text-gray-700">
-              <ProfileButton />
-              {CartIconWithBadge}
-            </div>
+  <Link
+    href={VENDOR_URL}
+    className="text-[14px] font-semibold text-gray-800 hover:text-[#82008F]"
+  >
+    Become a Supplier
+  </Link>
+
+  <ProfileButton />
+  {CartIconWithBadge}
+</div>
+
           </div>
         </div>
       </header>

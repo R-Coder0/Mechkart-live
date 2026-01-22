@@ -83,6 +83,14 @@ type TrackingResponse = {
   createdAt?: string;
 };
 
+type BankDetails = {
+  accountHolderName: string;
+  accountNumber: string;
+  ifsc: string;
+  bankName?: string;
+  upiId?: string;
+};
+
 export default function WebsiteUserOrderDetailsPage() {
   const params = useParams();
   const router = useRouter();
@@ -96,6 +104,27 @@ export default function WebsiteUserOrderDetailsPage() {
   const [trackingLoading, setTrackingLoading] = useState(false);
   const [trackingError, setTrackingError] = useState<string | null>(null);
   const [tracking, setTracking] = useState<TrackingResponse | null>(null);
+
+  // Return Request states
+  const [rrOpen, setRrOpen] = useState(false);
+  const [rrBusy, setRrBusy] = useState(false);
+  const [rrErr, setRrErr] = useState<string | null>(null);
+  const [rrOk, setRrOk] = useState<string | null>(null);
+
+  const [rrReason, setRrReason] = useState("");
+  const [rrNote, setRrNote] = useState(""); // comment/description (optional)
+
+  // ✅ Return proof images (max 5)
+  const [rrFiles, setRrFiles] = useState<File[]>([]);
+
+  // ✅ COD bank details (mandatory if paymentMethod=COD)
+  const [bank, setBank] = useState<BankDetails>({
+    accountHolderName: "",
+    accountNumber: "",
+    ifsc: "",
+    bankName: "",
+    upiId: "",
+  });
 
   const load = async () => {
     try {
@@ -139,11 +168,96 @@ export default function WebsiteUserOrderDetailsPage() {
     }
   };
 
-  // ✅ FIX: refresh / open page => always fetch order + tracking once.
+  const paymentMethod = String(order?.paymentMethod || "COD").toUpperCase();
+  const isCOD = paymentMethod === "COD";
+
+  function validateBankDetails(b: BankDetails) {
+    const ah = (b.accountHolderName || "").trim();
+    const an = (b.accountNumber || "").trim();
+    const ifsc = (b.ifsc || "").trim();
+
+    if (!ah) return "Account holder name is required for COD refund.";
+    if (!an) return "Account number is required for COD refund.";
+    if (!ifsc) return "IFSC is required for COD refund.";
+    // light validation
+    if (an.length < 6) return "Account number looks too short.";
+    if (ifsc.length < 8) return "IFSC looks invalid.";
+    return null;
+  }
+
+  const submitReturnRequest = async () => {
+    try {
+      setRrBusy(true);
+      setRrErr(null);
+      setRrOk(null);
+
+      const reason = rrReason.trim();
+      const note = rrNote.trim();
+
+      if (!reason) {
+        setRrErr("Please select a return reason.");
+        return;
+      }
+
+      // ✅ COD requires bank details
+      if (isCOD) {
+        const bankErr = validateBankDetails(bank);
+        if (bankErr) {
+          setRrErr(bankErr);
+          return;
+        }
+      }
+
+      // ✅ Max 5 images
+      const files = rrFiles.slice(0, 5);
+
+      // ✅ multipart/form-data
+      const fd = new FormData();
+      fd.append("reason", reason);
+      if (note) fd.append("note", note);
+
+      if (isCOD) {
+        fd.append(
+          "bankDetails",
+          JSON.stringify({
+            accountHolderName: bank.accountHolderName.trim(),
+            accountNumber: bank.accountNumber.trim(),
+            ifsc: bank.ifsc.trim(),
+            bankName: (bank.bankName || "").trim() || null,
+            upiId: (bank.upiId || "").trim() || null,
+          })
+        );
+      }
+
+      for (const f of files) {
+        fd.append("images", f); // backend should use upload.array("images", 5)
+      }
+
+      const res = await fetch(`${API_BASE}/users/orders/${orderId}/return-request`, {
+        method: "POST",
+        credentials: "include",
+        body: fd,
+      });
+
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(json?.message || "Return request failed");
+
+      setRrOk("Return request submitted.");
+      setRrOpen(false);
+
+      // refresh order data so return appears
+      await load();
+    } catch (e: any) {
+      setRrErr(e?.message || "Return request failed");
+    } finally {
+      setRrBusy(false);
+    }
+  };
+
   useEffect(() => {
     if (!orderId) return;
     load();
-    loadTracking(); // ✅ important (this fixes "refresh pe gayab")
+    loadTracking();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orderId]);
 
@@ -230,6 +344,9 @@ export default function WebsiteUserOrderDetailsPage() {
   const status = String(order?.status || "PLACED").toUpperCase();
   const isCancelled = status === "CANCELLED";
   const isDelivered = status === "DELIVERED";
+
+  const returnReq = order?.return || null;
+  const returnReqStatus = String(returnReq?.status || "").toUpperCase();
 
   const expectedDelivery = addDays(createdAt, 7);
 
@@ -400,7 +517,6 @@ export default function WebsiteUserOrderDetailsPage() {
               <div className="mt-3 text-sm text-gray-600">Shipment not created yet.</div>
             ) : (
               <div className="mt-4 space-y-3">
-                {/* ✅ "Table-like" rows (same UI, just structured) */}
                 <div className="border">
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-0">
                     <InfoCell label="AWB" value={awb || "—"} mono />
@@ -446,6 +562,129 @@ export default function WebsiteUserOrderDetailsPage() {
                 )}
               </div>
             )}
+          </div>
+
+          {/* Return Card */}
+          <div className="border bg-white p-5">
+            <div className="flex items-center justify-between gap-3">
+              <div className="font-semibold text-gray-900">Return</div>
+
+              {isDelivered ? (
+                returnReqStatus ? (
+                  <div className="text-xs font-semibold text-gray-700">
+                    {returnReqStatus === "REQUESTED" ? "Return Requested" : `Return ${returnReqStatus}`}
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setRrErr(null);
+                      setRrOk(null);
+                      setRrReason("");
+                      setRrNote("");
+                      setRrFiles([]);
+                      setBank({
+                        accountHolderName: "",
+                        accountNumber: "",
+                        ifsc: "",
+                        bankName: "",
+                        upiId: "",
+                      });
+                      setRrOpen(true);
+                    }}
+                    className="border px-3 py-2 text-xs font-semibold hover:bg-gray-50"
+                  >
+                    Request Return
+                  </button>
+                )
+              ) : null}
+            </div>
+
+            {returnReqStatus ? (
+              <div className="mt-3 border p-4 text-sm">
+                <div className="flex items-center justify-between">
+                  <div className="text-gray-700">Return status</div>
+                  <div className="font-semibold text-gray-900">{returnReqStatus}</div>
+                </div>
+
+                {returnReq?.reason ? (
+                  <div className="mt-2 text-xs text-gray-600">
+                    <span className="font-semibold text-gray-700">Reason:</span> {String(returnReq.reason)}
+                  </div>
+                ) : null}
+
+                {/* ✅ backend uses note (not comment) */}
+                {returnReq?.note ? (
+                  <div className="mt-1 text-xs text-gray-600">
+                    <span className="font-semibold text-gray-700">Note:</span> {String(returnReq.note)}
+                  </div>
+                ) : null}
+
+                {returnReqStatus === "REJECTED" && returnReq?.rejectReason ? (
+                  <div className="mt-2 border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
+                    <span className="font-semibold">Reject reason:</span> {String(returnReq.rejectReason)}
+                  </div>
+                ) : null}
+
+                {/* ✅ show COD bank details if present */}
+                {returnReq?.bankDetails ? (
+                  <div className="mt-3 border p-3 text-xs text-gray-700">
+                    <div className="font-semibold text-gray-900 mb-2">Refund bank details</div>
+                    <div>
+                      <span className="font-semibold">A/C Holder:</span>{" "}
+                      {returnReq.bankDetails?.accountHolderName || "—"}
+                    </div>
+                    <div>
+                      <span className="font-semibold">A/C No:</span>{" "}
+                      {returnReq.bankDetails?.accountNumber || "—"}
+                    </div>
+                    <div>
+                      <span className="font-semibold">IFSC:</span>{" "}
+                      {returnReq.bankDetails?.ifsc || "—"}
+                    </div>
+                    {returnReq.bankDetails?.bankName ? (
+                      <div>
+                        <span className="font-semibold">Bank:</span> {returnReq.bankDetails.bankName}
+                      </div>
+                    ) : null}
+                    {returnReq.bankDetails?.upiId ? (
+                      <div>
+                        <span className="font-semibold">UPI:</span> {returnReq.bankDetails.upiId}
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {/* ✅ show uploaded images if present */}
+                {Array.isArray(returnReq?.images) && returnReq.images.length ? (
+                  <div className="mt-3">
+                    <div className="text-xs font-semibold text-gray-700 mb-2">Uploaded images</div>
+                    <div className="grid grid-cols-5 gap-2">
+                      {returnReq.images.slice(0, 5).map((p: string, i: number) => {
+                        const src = resolveImageUrl(p);
+                        return (
+                          <div key={i} className="h-16 w-16 overflow-hidden border bg-gray-50">
+                            {src ? <img src={src} alt={`return-${i}`} className="h-full w-full object-cover" /> : null}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : null}
+
+                {returnReq?.requestedAt ? (
+                  <div className="mt-2 text-[11px] text-gray-500">
+                    Requested: {fmtDateTime(returnReq.requestedAt)}
+                  </div>
+                ) : null}
+              </div>
+            ) : (
+              <div className="mt-3 text-sm text-gray-600">
+                {isDelivered ? "You can request a return within the return window." : "Return is available only after delivery."}
+              </div>
+            )}
+
+            {rrOk ? <div className="mt-3 text-xs font-semibold text-emerald-700">{rrOk}</div> : null}
           </div>
 
           {/* Items */}
@@ -564,6 +803,181 @@ export default function WebsiteUserOrderDetailsPage() {
       </div>
 
       <div className="text-xs text-gray-500">Order No. : {order?.orderCode || String(order?._id).slice(-8)}</div>
+
+      {/* Return Request Modal */}
+      {rrOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-lg border bg-white">
+            <div className="border-b px-5 py-4">
+              <div className="text-lg font-bold text-gray-900">Request Return</div>
+              <div className="mt-1 text-xs text-gray-500">
+                Order: {order?.orderCode || String(order?._id).slice(-8)}
+              </div>
+              <div className="mt-1 text-[11px] text-gray-500">
+                Payment: <span className="font-semibold text-gray-800">{paymentMethod}</span>
+                {isCOD ? " (Bank details required)" : ""}
+              </div>
+            </div>
+
+            <div className="p-5 space-y-4">
+              {rrErr ? (
+                <div className="border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{rrErr}</div>
+              ) : null}
+
+              <div>
+                <div className="text-xs font-semibold text-gray-700 mb-1">Reason</div>
+                <select
+                  value={rrReason}
+                  onChange={(e) => setRrReason(e.target.value)}
+                  className="h-11 w-full rounded-xl border px-3 text-sm outline-none bg-white focus:border-gray-400"
+                >
+                  <option value="">Select reason</option>
+                  <option value="Wrong item delivered">Wrong item delivered</option>
+                  <option value="Damaged product">Damaged product</option>
+                  <option value="Size issue">Size issue</option>
+                  <option value="Quality issue">Quality issue</option>
+                  <option value="Other">Other</option>
+                </select>
+              </div>
+
+              <div>
+                <div className="text-xs font-semibold text-gray-700 mb-1">Description / Note (optional)</div>
+                <textarea
+                  value={rrNote}
+                  onChange={(e) => setRrNote(e.target.value)}
+                  rows={4}
+                  className="w-full rounded-xl border px-3 py-2 text-sm outline-none focus:border-gray-400"
+                  placeholder="Add details to help us process your return."
+                />
+              </div>
+
+              {/* ✅ Images (max 5) */}
+              <div>
+                <div className="flex items-center justify-between">
+                  <div className="text-xs font-semibold text-gray-700 mb-1">Upload images (optional)</div>
+                  <div className="text-[11px] text-gray-500">Max 5</div>
+                </div>
+
+                <input
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  onChange={(e) => {
+                    const next = Array.from(e.target.files || []);
+                    const merged = [...rrFiles, ...next].slice(0, 5);
+                    setRrFiles(merged);
+                    e.currentTarget.value = "";
+                  }}
+                  className="w-full text-sm"
+                />
+
+                {rrFiles.length ? (
+                  <div className="mt-2 grid grid-cols-5 gap-2">
+                    {rrFiles.map((f, i) => {
+                      const url = URL.createObjectURL(f);
+                      return (
+                        <div key={i} className="relative h-16 w-16 border bg-gray-50 overflow-hidden">
+                          <img src={url} alt={`rr-${i}`} className="h-full w-full object-cover" />
+                          <button
+                            type="button"
+                            onClick={() => setRrFiles((prev) => prev.filter((_, idx) => idx !== i))}
+                            className="absolute top-1 right-1 h-5 w-5 rounded-full bg-white border text-[10px] font-bold"
+                            title="Remove"
+                          >
+                            ×
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : null}
+              </div>
+
+              {/* ✅ COD bank details */}
+              {isCOD ? (
+                <div className="border p-4">
+                  <div className="text-sm font-semibold text-gray-900">Bank details for refund (COD)</div>
+                  <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <div className="text-xs font-semibold text-gray-700 mb-1">Account holder name *</div>
+                      <input
+                        value={bank.accountHolderName}
+                        onChange={(e) => setBank((p) => ({ ...p, accountHolderName: e.target.value }))}
+                        className="h-11 w-full rounded-xl border px-3 text-sm outline-none focus:border-gray-400"
+                        placeholder="Full name"
+                      />
+                    </div>
+
+                    <div>
+                      <div className="text-xs font-semibold text-gray-700 mb-1">Account number *</div>
+                      <input
+                        value={bank.accountNumber}
+                        onChange={(e) => setBank((p) => ({ ...p, accountNumber: e.target.value }))}
+                        className="h-11 w-full rounded-xl border px-3 text-sm outline-none focus:border-gray-400"
+                        placeholder="1234567890"
+                      />
+                    </div>
+
+                    <div>
+                      <div className="text-xs font-semibold text-gray-700 mb-1">IFSC *</div>
+                      <input
+                        value={bank.ifsc}
+                        onChange={(e) => setBank((p) => ({ ...p, ifsc: e.target.value.toUpperCase() }))}
+                        className="h-11 w-full rounded-xl border px-3 text-sm outline-none focus:border-gray-400"
+                        placeholder="SBIN0001234"
+                      />
+                    </div>
+
+                    <div>
+                      <div className="text-xs font-semibold text-gray-700 mb-1">Bank name (optional)</div>
+                      <input
+                        value={bank.bankName || ""}
+                        onChange={(e) => setBank((p) => ({ ...p, bankName: e.target.value }))}
+                        className="h-11 w-full rounded-xl border px-3 text-sm outline-none focus:border-gray-400"
+                        placeholder="State Bank of India"
+                      />
+                    </div>
+
+                    <div className="sm:col-span-2">
+                      <div className="text-xs font-semibold text-gray-700 mb-1">UPI ID (optional)</div>
+                      <input
+                        value={bank.upiId || ""}
+                        onChange={(e) => setBank((p) => ({ ...p, upiId: e.target.value }))}
+                        className="h-11 w-full rounded-xl border px-3 text-sm outline-none focus:border-gray-400"
+                        placeholder="name@upi"
+                      />
+                    </div>
+                  </div>
+                </div>
+              ) : null}
+
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  disabled={rrBusy}
+                  onClick={() => setRrOpen(false)}
+                  className="border px-4 py-2 text-sm font-semibold hover:bg-gray-50 disabled:opacity-60"
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="button"
+                  disabled={rrBusy}
+                  onClick={submitReturnRequest}
+                  className="bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-black disabled:opacity-60"
+                >
+                  {rrBusy ? "Submitting…" : "Submit"}
+                </button>
+              </div>
+
+              <div className="text-[11px] text-gray-500">
+                Note: Images are optional. For COD refunds, bank details are required.
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -577,7 +991,6 @@ function Row({ label, value }: { label: string; value: string }) {
   );
 }
 
-// minimal "table cell" without redesign
 function InfoCell({ label, value, mono }: { label: string; value: any; mono?: boolean }) {
   return (
     <div className="px-4 py-3 border-b sm:border-b-0 sm:border-r last:sm:border-r-0">

@@ -8,6 +8,11 @@ import {
   adminUpdateOrderStatus,
   adminConfirmCod,
   adminCreateShiprocketShipment,
+
+  // ✅ Return/Refund calls (make sure you added these in adminOrdersApi.ts)
+  adminApproveReturn,
+  adminRejectReturn,
+  adminProcessRefund,
 } from "@/lib/adminOrdersApi";
 
 function money(n: number) {
@@ -165,6 +170,59 @@ export default function AdminOrdersPage() {
     }
   };
 
+  // ✅ Return Actions
+  const onApproveReturn = async (orderId: string) => {
+    try {
+      setBusyId(orderId);
+      setError(null);
+
+      const updated = await adminApproveReturn(orderId);
+      replaceLocalOrder(orderId, updated);
+    } catch (e: any) {
+      setError(e?.message || "Approve return failed");
+      await load(page);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const onRejectReturn = async (orderId: string) => {
+    try {
+      const reason = prompt("Reject reason?") || "";
+      if (!reason.trim()) return;
+
+      setBusyId(orderId);
+      setError(null);
+
+      const updated = await adminRejectReturn(orderId, reason.trim());
+      replaceLocalOrder(orderId, updated);
+    } catch (e: any) {
+      setError(e?.message || "Reject return failed");
+      await load(page);
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+const onProcessRefund = async (orderId: string) => {
+  try {
+    const ok = confirm("Process refund now?");
+    if (!ok) return;
+
+    setBusyId(orderId);
+    setError(null);
+
+    const updated = await adminProcessRefund(orderId); // no amount
+    replaceLocalOrder(orderId, updated);
+  } catch (e: any) {
+    setError(e?.message || "Refund failed");
+    await load(page);
+  } finally {
+    setBusyId(null);
+  }
+};
+
+
   const summaryText = useMemo(() => {
     const total = Number(data?.total || 0);
     return `${total} order(s)`;
@@ -176,7 +234,6 @@ export default function AdminOrdersPage() {
   const latestShiprocketShipment = (o: any) => {
     const list = Array.isArray(o?.shipments) ? o.shipments.filter((s: any) => s?.provider === "SHIPROCKET") : [];
     if (!list.length) return null;
-    // latest by createdAt if exists, else last
     const sorted = [...list].sort((a: any, b: any) => {
       const ta = a?.createdAt ? new Date(a.createdAt).getTime() : 0;
       const tb = b?.createdAt ? new Date(b.createdAt).getTime() : 0;
@@ -274,7 +331,7 @@ export default function AdminOrdersPage() {
           </div>
         ) : items.length ? (
           <div className="overflow-x-auto">
-            <table className="min-w-[1350px] w-full text-sm">
+            <table className="min-w-[1600px] w-full text-sm">
               <thead className="bg-white">
                 <tr className="border-b text-left text-xs font-bold text-gray-600">
                   <th className="px-5 py-3">Order</th>
@@ -283,6 +340,10 @@ export default function AdminOrdersPage() {
                   <th className="px-5 py-3">Payable</th>
                   <th className="px-5 py-3">Payment Details</th>
                   <th className="px-5 py-3">Shipment</th>
+
+                  {/* ✅ NEW */}
+                  <th className="px-5 py-3">Return / Refund</th>
+
                   <th className="px-5 py-3">Status</th>
                   <th className="px-5 py-3">Created</th>
                 </tr>
@@ -312,7 +373,6 @@ export default function AdminOrdersPage() {
                   const cod = o?.cod || null;
                   const codConfirmedAt = cod?.confirmedAt || null;
 
-                  // ✅ COD confirmed should remain true even after shipped/delivered
                   const codIsConfirmed =
                     pm === "COD" && (Boolean(codConfirmedAt) || ["CONFIRMED", "SHIPPED", "DELIVERED"].includes(st));
 
@@ -331,12 +391,19 @@ export default function AdminOrdersPage() {
 
                   const shipmentExists = hasShiprocketShipment(o);
 
-                  // Create shipment allowed when CONFIRMED and not already shipped created (single shipment)
                   const canCreateShipment =
                     st === "CONFIRMED" &&
                     !shipmentExists &&
                     !(pm === "COD" && !codIsConfirmed) &&
                     !(pm === "ONLINE" && ps !== "PAID");
+
+                  // ✅ Return/Refund (new)
+                  const ret = o?.return || null;
+                  const retStatus = String(ret?.status || "").toUpperCase(); // REQUESTED/APPROVED/REJECTED/REFUNDED
+                  const refund = o?.refund || null;
+                  const refundStatus = String(refund?.status || "").toUpperCase(); // PENDING/PROCESSED/FAILED
+                  const canApproveReject = retStatus === "REQUESTED";
+                  const canRefund = retStatus === "APPROVED" || retStatus === "RECEIVED";
 
                   return (
                     <tr key={orderId} className="border-b last:border-b-0">
@@ -472,11 +539,89 @@ export default function AdminOrdersPage() {
                                 {st !== "CONFIRMED"
                                   ? "Confirm order first"
                                   : pm === "ONLINE" && ps !== "PAID"
-                                  ? "Online payment must be PAID"
-                                  : pm === "COD" && !codIsConfirmed
-                                  ? "Confirm COD first"
-                                  : "—"}
+                                    ? "Online payment must be PAID"
+                                    : pm === "COD" && !codIsConfirmed
+                                      ? "Confirm COD first"
+                                      : "—"}
                               </div>
+                            ) : null}
+                          </div>
+                        )}
+                      </td>
+
+                      {/* ✅ Return / Refund */}
+                      <td className="px-5 py-3">
+                        {!retStatus ? (
+                          <div className="text-[11px] text-gray-500">—</div>
+                        ) : (
+                          <div className="space-y-2">
+                            <div className="text-[12px] font-semibold text-gray-900">
+                              Return: <span className="font-mono">{retStatus}</span>
+                            </div>
+
+                            {ret?.requestedAt ? (
+                              <div className="text-[11px] text-gray-600">
+                                Requested: {fmtDateTime(ret.requestedAt)}
+                              </div>
+                            ) : null}
+
+                            {ret?.reason ? (
+                              <div className="text-[11px] text-gray-600">
+                                Reason: <span className="font-semibold text-gray-800">{String(ret.reason)}</span>
+                              </div>
+                            ) : null}
+
+                            {retStatus === "REJECTED" && ret?.rejectReason ? (
+                              <div className="text-[11px] text-red-700">
+                                Reject: {String(ret.rejectReason)}
+                              </div>
+                            ) : null}
+
+                            {canApproveReject ? (
+                              <div className="flex gap-2">
+                                <button
+                                  disabled={isBusy}
+                                  onClick={() => onApproveReturn(orderId)}
+                                  className="h-9 rounded-xl bg-emerald-600 px-3 text-[12px] font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+                                >
+                                  {isBusy ? "..." : "Approve"}
+                                </button>
+
+                                <button
+                                  disabled={isBusy}
+                                  onClick={() => onRejectReturn(orderId)}
+                                  className="h-9 rounded-xl bg-red-600 px-3 text-[12px] font-semibold text-white hover:bg-red-700 disabled:opacity-60"
+                                >
+                                  {isBusy ? "..." : "Reject"}
+                                </button>
+                              </div>
+                            ) : null}
+
+                            {refund ? (
+                              <div className="text-[11px] text-gray-700">
+                                Refund:{" "}
+                                <span className="font-semibold">
+                                  {refundStatus || "—"}
+                                </span>
+                                {refund?.amount ? (
+                                  <span className="text-gray-500"> • {money(refund.amount)}</span>
+                                ) : null}
+                              </div>
+                            ) : null}
+                            {canRefund ? (
+                              <button
+                                disabled={isBusy}
+onClick={() => onProcessRefund(orderId)}
+
+                                className="h-9 rounded-xl bg-gray-900 px-3 text-[12px] font-semibold text-white hover:bg-black disabled:opacity-60"
+                              >
+                                {isBusy ? "Processing…" : "Process Refund"}
+                              </button>
+                            ) : null}
+
+
+                            {retStatus === "REFUNDED" ? (
+                              <div className="text-[11px] font-semibold text-emerald-700">Refund Completed</div>
                             ) : null}
                           </div>
                         )}
@@ -491,9 +636,7 @@ export default function AdminOrdersPage() {
                           className="h-10 rounded-xl border px-3 text-sm outline-none focus:border-gray-400 bg-white disabled:opacity-60"
                         >
                           {STATUS_OPTIONS.map((s) => {
-                            // COD placed cannot pick confirmed by dropdown
                             const disableConfirmed = pm === "COD" && st === "PLACED" && s === "CONFIRMED";
-                            // COD not confirmed cannot ship/deliver
                             const disableShipDeliver = blockShipUntilConfirm && (s === "SHIPPED" || s === "DELIVERED");
                             const disabled = disableConfirmed || disableShipDeliver;
                             return (
@@ -541,7 +684,7 @@ export default function AdminOrdersPage() {
           <button
             disabled={loading || page >= totalPages}
             onClick={() => load(page + 1)}
-            className="rounded-xl border px-4 py-2 text-sm font-semibold hover:bg-gray-50 disabled:opacity-50"
+            className="rounded-xl border px-4 py-2 text-sm font-semibold hover:bg-gray-Y-50 disabled:opacity-50"
           >
             Next
           </button>

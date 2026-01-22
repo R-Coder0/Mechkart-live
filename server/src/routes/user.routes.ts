@@ -23,6 +23,9 @@ import {
 
 import { getCheckoutSummary, offerPreview } from "../controllers/user/checkout.controller";
 import { getOrderTracking } from "../controllers/user/tracking.controller";
+import { createReturnRequest, getReturnRequest } from "../controllers/user/return.controller";
+import { uploadReturnImagesController } from "../controllers/user/return.upload.controller";
+import { uploadReturnImages } from "../middleware/upload.middleware";
 
 const router = Router();
 
@@ -64,5 +67,15 @@ router.get("/orders/:orderId", verifyUser, getOrderById);
 router.get("/orders/:orderId/invoice", verifyUser, downloadInvoicePdf);
 
 router.get("/orders/:orderId/tracking", verifyUser, getOrderTracking);
+
+// return
+router.post(
+  "/orders/:orderId/return-request",
+  verifyUser,
+  uploadReturnImages,     // ✅ add this
+  createReturnRequest
+);
+router.get("/orders/:orderId/return-request", verifyUser, getReturnRequest);
+router.post("/uploads/return-images", verifyUser, uploadReturnImages, uploadReturnImagesController);
 
 export default router;

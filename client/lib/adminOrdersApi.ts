@@ -10,7 +10,7 @@ export type RazorpaySnapshot = {
   orderId?: string | null;
   paymentId?: string | null;
   signature?: string | null;
-  amount?: number | null; // in paise
+  amount?: number | null; // paise
   currency?: string | null; // INR
   verifiedAt?: string | null;
   raw?: any;
@@ -47,6 +47,62 @@ export type OrderShipment = {
   updatedAt?: string;
 };
 
+export type ReturnStatus =
+  | "REQUESTED"
+  | "APPROVED"
+  | "REJECTED"
+  | "PICKUP_CREATED"
+  | "RECEIVED"
+  | "REFUNDED";
+
+export type RefundStatus = "PENDING" | "PROCESSED" | "FAILED";
+
+export type ReturnBankDetails = {
+  accountHolderName?: string;
+  accountNumber?: string;
+  ifsc?: string;
+  bankName?: string | null;
+  upiId?: string | null;
+};
+
+export type OrderReturn = {
+  requestedAt?: string;
+  reason: string;
+  note?: string | null;
+
+  // optional partial return items
+  items?: Array<{
+    productId: string;
+    qty: number;
+    variantId?: string | null;
+    colorKey?: string | null;
+  }>;
+
+  // ✅ images for return proof (max 5 in UI)
+  images?: string[];
+
+  // ✅ COD bank details (if paymentMethod=COD)
+  bankDetails?: ReturnBankDetails | null;
+
+  status: ReturnStatus;
+
+  approvedAt?: string | null;
+  approvedBy?: string | null;
+
+  rejectedAt?: string | null;
+  rejectReason?: string | null;
+};
+
+export type OrderRefund = {
+  method: "COD" | "ONLINE";
+  amount: number; // rupees (as per your backend storage)
+  status: RefundStatus;
+  provider?: "RAZORPAY" | "MANUAL";
+  refundId?: string | null;
+  processedAt?: string | null;
+  raw?: any;
+};
+
 export type AdminOrder = {
   _id: string;
   orderCode: string;
@@ -81,6 +137,10 @@ export type AdminOrder = {
 
   shipments?: OrderShipment[];
 
+  // ✅ return/refund snapshots (NEW)
+  return?: OrderReturn | null;
+  refund?: OrderRefund | null;
+
   createdAt: string;
   updatedAt: string;
 };
@@ -92,6 +152,8 @@ export type AdminOrdersResponse = {
   total: number;
   totalPages: number;
 };
+
+export type AdminReturnsResponse = AdminOrdersResponse;
 
 /* =========================
  * HELPERS
@@ -110,8 +172,34 @@ function authHeaders(extra?: Record<string, string>) {
   };
 }
 
+async function adminFetchJson(url: string, opts: RequestInit = {}) {
+  const res = await fetch(url, {
+    ...opts,
+    credentials: "include",
+    headers: {
+      ...(opts.headers as any),
+      ...authHeaders(),
+    },
+  });
+
+  const json = await res.json().catch(() => ({}));
+
+  if (!res.ok) {
+    const rzDesc =
+      json?.error?.description ||
+      json?.error?.reason ||
+      json?.error?.message ||
+      (typeof json?.error === "string" ? json.error : "");
+
+    const msg = json?.message || "Request failed";
+    throw new Error(rzDesc ? `${msg} - ${rzDesc}` : msg);
+  }
+
+  return json?.data ?? json;
+}
+
 /* =========================
- * API CALLS
+ * ORDERS API
  * ========================= */
 
 export async function adminFetchOrders(params?: {
@@ -190,4 +278,62 @@ export async function adminCreateShiprocketShipment(orderId: string): Promise<Ad
   if (!res.ok) throw new Error(json?.message || "Create shipment failed");
 
   return json?.data || json;
+}
+
+/* =========================
+ * RETURNS API (ADMIN)
+ * ========================= */
+
+/**
+ * ✅ List return requests (server returns Orders with `return` not null)
+ * GET /admin/returns?status=REQUESTED&q=...&page=&limit=
+ */
+export async function adminFetchReturns(params?: {
+  q?: string;
+  status?: ReturnStatus | "";
+  page?: number;
+  limit?: number;
+}): Promise<AdminReturnsResponse> {
+  const sp = new URLSearchParams();
+  if (params?.q) sp.set("q", params.q);
+  if (params?.status) sp.set("status", params.status);
+
+  sp.set("page", String(params?.page ?? 1));
+  sp.set("limit", String(params?.limit ?? 20));
+
+  const res = await fetch(`${API_BASE}/admin/returns?${sp.toString()}`, {
+    method: "GET",
+    credentials: "include",
+    cache: "no-store",
+    headers: authHeaders(),
+  });
+
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(json?.message || "Failed to fetch returns");
+
+  return json?.data || json;
+}
+
+export async function adminApproveReturn(orderId: string): Promise<AdminOrder> {
+  return adminFetchJson(`${API_BASE}/admin/returns/${orderId}/approve`, {
+    method: "POST",
+    headers: authHeaders(),
+  });
+}
+
+export async function adminRejectReturn(orderId: string, reason: string): Promise<AdminOrder> {
+  return adminFetchJson(`${API_BASE}/admin/returns/${orderId}/reject`, {
+    method: "POST",
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify({ reason }),
+  });
+}
+
+export async function adminProcessRefund(orderId: string, amount?: number): Promise<AdminOrder> {
+  // amount is RUPEES (optional)
+  return adminFetchJson(`${API_BASE}/admin/returns/${orderId}/process-refund`, {
+    method: "POST",
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    body: JSON.stringify(typeof amount === "number" && amount > 0 ? { amount } : {}),
+  });
 }

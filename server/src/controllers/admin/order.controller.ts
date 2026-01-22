@@ -50,7 +50,7 @@ export const adminGetOrders = async (req: Request, res: Response) => {
         })
         // ✅ FIX: include `shipments` so refresh ke baad shipment details rahein
         .select(
-          "orderCode userId items totals appliedOffer contact address paymentMethod paymentStatus status pg cod shipments createdAt updatedAt"
+          "orderCode userId items totals appliedOffer contact address paymentMethod paymentStatus status pg cod shipments  return refund createdAt updatedAt"
         )
         .sort({ createdAt: -1 })
         .skip(skip)

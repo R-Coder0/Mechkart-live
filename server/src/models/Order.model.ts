@@ -43,7 +43,7 @@ export interface IOrderContact {
 }
 
 /* =========================
- * Shipment (multi-vendor ready)
+ * Shipment
  * ========================= */
 export type ShipmentStatus =
   | "CREATED"
@@ -62,8 +62,6 @@ export interface IShipmentItemRef {
 
 export interface IOrderShipment {
   provider: "SHIPROCKET";
-
-  // ✅ future: multivendor mapping
   vendorId?: Types.ObjectId | null;
 
   items: IShipmentItemRef[];
@@ -79,8 +77,8 @@ export interface IOrderShipment {
   } | null;
 
   shiprocket?: {
-    orderId?: string | null;      // shiprocket order_id
-    shipmentId?: number | null;   // shiprocket shipment_id
+    orderId?: string | null;
+    shipmentId?: number | null;
     awb?: string | null;
     courierName?: string | null;
     courierCompanyId?: number | null;
@@ -90,15 +88,82 @@ export interface IOrderShipment {
     invoiceUrl?: string | null;
 
     pickupScheduledAt?: Date | null;
-
-    tracking?: any; // later: store last tracking snapshot
-    raw?: any;      // save raw API responses (optional)
+    tracking?: any;
+    raw?: any;
   } | null;
 
   status: ShipmentStatus;
 
   createdAt: Date;
   updatedAt: Date;
+}
+
+/* =========================
+ * RETURN & REFUND
+ * ========================= */
+
+export type ReturnStatus =
+  | "REQUESTED"
+  | "APPROVED"
+  | "REJECTED"
+  | "PICKUP_CREATED"
+  | "RECEIVED"
+  | "REFUNDED";
+
+export interface IReturnBankDetails {
+  accountHolderName: string;
+  accountNumber: string;
+  ifsc: string;
+  bankName?: string | null;
+  upiId?: string | null;
+}
+
+export interface IOrderReturn {
+  requestedAt: Date;
+  reason: string;
+
+  // ✅ optional description (not mandatory)
+  note?: string | null;
+
+  // ✅ user can upload up to 5 images (urls stored)
+  images?: string[];
+
+  // ✅ COD refund needs bank details (captured at request time)
+  bankDetails?: IReturnBankDetails | null;
+
+  // optional: partial return
+  items?: {
+    productId: Types.ObjectId;
+    qty: number;
+    variantId?: Types.ObjectId | null;
+    colorKey?: string | null;
+  }[];
+
+  status: ReturnStatus;
+
+  approvedAt?: Date | null;
+  approvedBy?: Types.ObjectId | null;
+
+  rejectedAt?: Date | null;
+  rejectReason?: string | null;
+
+  // optional: return shipment snapshot (future use)
+  returnShipment?: IOrderShipment | null;
+}
+
+export type RefundStatus = "PENDING" | "PROCESSED" | "FAILED";
+
+export interface IOrderRefund {
+  method: "COD" | "ONLINE";
+  amount: number;
+
+  status: RefundStatus;
+
+  provider?: "RAZORPAY" | "MANUAL";
+  refundId?: string | null;
+
+  processedAt?: Date | null;
+  raw?: any;
 }
 
 /* =========================
@@ -120,47 +185,34 @@ export interface IOrder extends Document {
     grandTotal: number;
   };
 
-  appliedOffer?:
-    | {
-        offerId: Types.ObjectId;
-        name: string;
-        mode: "AUTO" | "COUPON";
-        couponCode?: string | null;
-        offerType: "FLAT" | "PERCENT";
-        value: number;
-        discountAmount: number;
-      }
-    | null;
+  appliedOffer?: {
+    offerId: Types.ObjectId;
+    name: string;
+    mode: "AUTO" | "COUPON";
+    couponCode?: string | null;
+    offerType: "FLAT" | "PERCENT";
+    value: number;
+    discountAmount: number;
+  } | null;
 
   contact: IOrderContact;
   address: IOrderAddress;
 
   paymentMethod: "COD" | "ONLINE";
   paymentStatus: "PENDING" | "PAID" | "FAILED";
+
+  // NOTE: keep original order flow status only
   status: "PLACED" | "CONFIRMED" | "SHIPPED" | "DELIVERED" | "CANCELLED";
 
-  // Razorpay snapshot
-  pg?:
-    | {
-        provider: "RAZORPAY";
-        orderId?: string | null;
-        paymentId?: string | null;
-        signature?: string | null;
-        amount?: number | null;
-        currency?: string | null;
-        verifiedAt?: Date | null;
-        raw?: any;
-      }
-    | null;
+  // Razorpay + COD snapshots
+  pg?: any;
+  cod?: any;
 
-  // COD confirmation snapshot
-  cod?: {
-    confirmedAt?: Date | null;
-    confirmedBy?: Types.ObjectId | null;
-  } | null;
-
-  // ✅ NEW: shipments array (multi-vendor ready)
   shipments?: IOrderShipment[];
+
+  // ✅ Return & refund separate (does NOT change order.status)
+  return?: IOrderReturn | null;
+  refund?: IOrderRefund | null;
 
   createdAt: Date;
   updatedAt: Date;
@@ -178,11 +230,11 @@ const OrderItemSchema = new Schema<IOrderItem>(
     variantId: { type: Schema.Types.ObjectId, default: null },
     variantText: { type: String, default: null, trim: true },
 
-    colorKey: { type: String, default: null },
+    colorKey: { type: String, default: null, trim: true },
     qty: { type: Number, required: true, min: 1 },
 
     title: { type: String, required: true, trim: true },
-    image: { type: String, default: null },
+    image: { type: String, default: null, trim: true },
 
     mrp: { type: Number, required: true, min: 0 },
     salePrice: { type: Number, required: true, min: 0 },
@@ -195,7 +247,7 @@ const ShipmentItemRefSchema = new Schema<IShipmentItemRef>(
     productId: { type: Schema.Types.ObjectId, ref: "Product", required: true },
     qty: { type: Number, required: true, min: 1 },
     variantId: { type: Schema.Types.ObjectId, default: null },
-    colorKey: { type: String, default: null },
+    colorKey: { type: String, default: null, trim: true },
   },
   { _id: false }
 );
@@ -203,7 +255,6 @@ const ShipmentItemRefSchema = new Schema<IShipmentItemRef>(
 const OrderShipmentSchema = new Schema<IOrderShipment>(
   {
     provider: { type: String, enum: ["SHIPROCKET"], required: true, default: "SHIPROCKET" },
-
     vendorId: { type: Schema.Types.ObjectId, ref: "Vendor", default: null },
 
     items: { type: [ShipmentItemRefSchema], default: [] },
@@ -246,17 +297,94 @@ const OrderShipmentSchema = new Schema<IOrderShipment>(
       enum: ["CREATED", "AWB_ASSIGNED", "PICKUP_SCHEDULED", "IN_TRANSIT", "DELIVERED", "CANCELLED"],
       default: "CREATED",
     },
-
-    createdAt: { type: Date, default: Date.now },
-    updatedAt: { type: Date, default: Date.now },
   },
-  { _id: true }
+  { timestamps: true }
+);
+
+/** ✅ NEW: Bank details schema for COD returns */
+const ReturnBankDetailsSchema = new Schema<IReturnBankDetails>(
+  {
+    accountHolderName: { type: String, required: true, trim: true },
+    accountNumber: { type: String, required: true, trim: true },
+    ifsc: { type: String, required: true, trim: true },
+    bankName: { type: String, default: null, trim: true },
+    upiId: { type: String, default: null, trim: true },
+  },
+  { _id: false }
+);
+
+const OrderReturnSchema = new Schema<IOrderReturn>(
+  {
+    requestedAt: { type: Date, default: Date.now },
+    reason: { type: String, required: true, trim: true },
+
+    // optional description
+    note: { type: String, default: null, trim: true },
+
+    // ✅ up to 5 images (urls)
+    images: {
+      type: [String],
+      default: [],
+      validate: {
+        validator: function (arr: any) {
+          if (!Array.isArray(arr)) return true;
+          return arr.length <= 5;
+        },
+        message: "You can upload up to 5 images only.",
+      },
+    },
+
+    // ✅ COD bank details snapshot
+    bankDetails: { type: ReturnBankDetailsSchema, default: null },
+
+    items: {
+      type: [
+        {
+          productId: { type: Schema.Types.ObjectId, ref: "Product", required: true },
+          qty: { type: Number, required: true, min: 1 },
+          variantId: { type: Schema.Types.ObjectId, default: null },
+          colorKey: { type: String, default: null, trim: true },
+        },
+      ],
+      default: undefined, // optional
+    },
+
+    status: {
+      type: String,
+      enum: ["REQUESTED", "APPROVED", "REJECTED", "PICKUP_CREATED", "RECEIVED", "REFUNDED"],
+      default: "REQUESTED",
+    },
+
+    approvedAt: { type: Date, default: null },
+    approvedBy: { type: Schema.Types.ObjectId, ref: "Admin", default: null },
+
+    rejectedAt: { type: Date, default: null },
+    rejectReason: { type: String, default: null, trim: true },
+
+    returnShipment: { type: OrderShipmentSchema, default: null },
+  },
+  { _id: false }
+);
+
+const OrderRefundSchema = new Schema<IOrderRefund>(
+  {
+    method: { type: String, enum: ["COD", "ONLINE"], required: true },
+    amount: { type: Number, required: true, min: 0 },
+
+    status: { type: String, enum: ["PENDING", "PROCESSED", "FAILED"], default: "PENDING" },
+
+    provider: { type: String, enum: ["RAZORPAY", "MANUAL"], default: null },
+    refundId: { type: String, default: null, trim: true },
+
+    processedAt: { type: Date, default: null },
+    raw: { type: Schema.Types.Mixed, default: null },
+  },
+  { _id: false }
 );
 
 const OrderSchema = new Schema<IOrder>(
   {
     userId: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
-
     orderCode: { type: String, required: true, unique: true, index: true, trim: true },
 
     parentOrderId: { type: Schema.Types.ObjectId, ref: "Order", default: null, index: true },
@@ -264,41 +392,39 @@ const OrderSchema = new Schema<IOrder>(
     items: { type: [OrderItemSchema], required: true },
 
     totals: {
-      subtotal: { type: Number, required: true },
-      mrpTotal: { type: Number, required: true },
-      savings: { type: Number, required: true },
-      discount: { type: Number, required: true, default: 0 },
-      grandTotal: { type: Number, required: true, default: 0 },
+      type: {
+        subtotal: { type: Number, required: true, default: 0 },
+        mrpTotal: { type: Number, required: true, default: 0 },
+        savings: { type: Number, required: true, default: 0 },
+        discount: { type: Number, required: true, default: 0 },
+        grandTotal: { type: Number, required: true, default: 0 },
+      },
+      required: true,
     },
 
-    appliedOffer: {
-      type: {
-        offerId: { type: Schema.Types.ObjectId, ref: "Offer" },
-        name: { type: String, trim: true },
-        mode: { type: String, enum: ["AUTO", "COUPON"] },
-        couponCode: { type: String, default: null, trim: true },
-        offerType: { type: String, enum: ["FLAT", "PERCENT"] },
-        value: { type: Number },
-        discountAmount: { type: Number, default: 0 },
-      },
-      default: null,
-    },
+    appliedOffer: { type: Schema.Types.Mixed, default: null },
 
     contact: {
-      name: { type: String, required: true, trim: true },
-      phone: { type: String, required: true, trim: true },
-      email: { type: String, trim: true },
+      type: {
+        name: { type: String, required: true, trim: true },
+        phone: { type: String, required: true, trim: true },
+        email: { type: String, default: null, trim: true },
+      },
+      required: true,
     },
 
     address: {
-      fullName: { type: String, required: true, trim: true },
-      phone: { type: String, required: true, trim: true },
-      pincode: { type: String, required: true, trim: true },
-      state: { type: String, required: true, trim: true },
-      city: { type: String, required: true, trim: true },
-      addressLine1: { type: String, required: true, trim: true },
-      addressLine2: { type: String, trim: true },
-      landmark: { type: String, trim: true },
+      type: {
+        fullName: { type: String, required: true, trim: true },
+        phone: { type: String, required: true, trim: true },
+        pincode: { type: String, required: true, trim: true },
+        state: { type: String, required: true, trim: true },
+        city: { type: String, required: true, trim: true },
+        addressLine1: { type: String, required: true, trim: true },
+        addressLine2: { type: String, default: null, trim: true },
+        landmark: { type: String, default: null, trim: true },
+      },
+      required: true,
     },
 
     paymentMethod: { type: String, enum: ["COD", "ONLINE"], required: true },
@@ -310,45 +436,17 @@ const OrderSchema = new Schema<IOrder>(
       default: "PLACED",
     },
 
-    pg: {
-      type: {
-        provider: { type: String, enum: ["RAZORPAY"], default: "RAZORPAY" },
-        orderId: { type: String, default: null, trim: true },
-        paymentId: { type: String, default: null, trim: true },
-        signature: { type: String, default: null, trim: true },
-        amount: { type: Number, default: null },
-        currency: { type: String, default: "INR", trim: true },
-        verifiedAt: { type: Date, default: null },
-        raw: { type: Schema.Types.Mixed, default: null },
-      },
-      default: null,
-    },
+    pg: { type: Schema.Types.Mixed, default: null },
+    cod: { type: Schema.Types.Mixed, default: null },
 
-    cod: {
-      type: {
-        confirmedAt: { type: Date, default: null },
-        confirmedBy: { type: Schema.Types.ObjectId, ref: "Admin", default: null },
-      },
-      default: null,
-    },
-
-    // ✅ NEW
     shipments: { type: [OrderShipmentSchema], default: [] },
+
+    // ✅ return & refund
+    return: { type: OrderReturnSchema, default: null },
+    refund: { type: OrderRefundSchema, default: null },
   },
   { timestamps: true }
 );
-
-// keep shipment.updatedAt fresh automatically when saving order
-OrderSchema.pre("save", function (next) {
-  const doc: any = this;
-  if (Array.isArray(doc.shipments)) {
-    doc.shipments.forEach((s: any) => {
-      if (s && !s.createdAt) s.createdAt = new Date();
-      s.updatedAt = new Date();
-    });
-  }
-  next();
-});
 
 export const Order: Model<IOrder> =
   mongoose.models.Order || mongoose.model<IOrder>("Order", OrderSchema);

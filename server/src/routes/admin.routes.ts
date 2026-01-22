@@ -37,6 +37,8 @@ import {
   listOffers,
 } from "../controllers/admin/offer.admin.controller";
 import { adminCreateShiprocketShipment } from "../controllers/admin/shipment.controller.js";
+import { adminApproveReturn, adminListReturnRequests, adminRejectReturn } from "../controllers/admin/return.controller.js";
+import { adminProcessRefund } from "../controllers/admin/refund.controller.js";
 
 const router = Router();
 
@@ -87,5 +89,11 @@ router.patch("/discount/offers/:id/toggle", verifyAdmin, toggleOffer);
 router.get("/discount/offers", verifyAdmin, listOffers);
 
 router.post("/orders/:orderId/shiprocket/create-shipment", verifyAdmin, adminCreateShiprocketShipment);
+
+// Return & Refund
+router.get("/returns", verifyAdmin, adminListReturnRequests);
+router.post("/returns/:orderId/approve", verifyAdmin, adminApproveReturn);
+router.post("/returns/:orderId/reject", verifyAdmin, adminRejectReturn);
+router.post("/returns/:orderId/process-refund", verifyAdmin, adminProcessRefund);
 
 export default router;
