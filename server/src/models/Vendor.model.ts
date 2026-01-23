@@ -1,22 +1,133 @@
-import mongoose, { Schema, Document, Model } from "mongoose";
+import { Schema, model, Document } from "mongoose";
 
 export interface IVendor extends Document {
-  shopName: string;
+  name: {
+    first: string;
+    last: string;
+  };
+
   email: string;
-  password: string;
+  phone: string;
+  passwordHash: string;
+
+  // KYC
+  kyc: {
+    panNumber: string;
+    panImage: string; // uploaded file path / url
+  };
+
+  // Company details
+  company: {
+    name: string;
+    email: string;
+    gst?: string;
+  };
+
+  // Shiprocket pickup
+  pickupAddress: {
+    name: string;
+    phone: string;
+    address: string;
+    city: string;
+    state: string;
+    pincode: string;
+  };
+
+  // Payment info
+  payment: {
+    upiId?: string;
+    bankAccount?: string;
+    ifsc?: string;
+    qrImage?: string;
+  };
+
+  status: "PENDING" | "APPROVED" | "REJECTED";
+  rejectReason?: string;
+
+  isLoginEnabled: boolean;
+
   createdAt: Date;
+  updatedAt: Date;
 }
 
-const vendorSchema = new Schema<IVendor>(
+const VendorSchema = new Schema<IVendor>(
   {
-    shopName: String,
-    email: String,
-    password: String,
+    name: {
+      first: { type: String, required: true, trim: true },
+      last: { type: String, required: true, trim: true },
+    },
+
+    email: {
+      type: String,
+      required: true,
+      unique: true,
+      lowercase: true,
+      trim: true,
+    },
+
+    phone: {
+      type: String,
+      required: true,
+      unique: true,
+    },
+
+    passwordHash: {
+      type: String,
+      required: true,
+    },
+
+    kyc: {
+      panNumber: {
+        type: String,
+        required: true,
+        uppercase: true,
+      },
+      panImage: {
+        type: String,
+        required: true,
+      },
+    },
+
+    company: {
+      name: { type: String, required: true },
+      email: { type: String, required: true },
+      gst: { type: String },
+    },
+
+    pickupAddress: {
+      name: { type: String, required: true },
+      phone: { type: String, required: true },
+      address: { type: String, required: true },
+      city: { type: String, required: true },
+      state: { type: String, required: true },
+      pincode: { type: String, required: true },
+    },
+
+    payment: {
+      upiId: { type: String },
+      bankAccount: { type: String },
+      ifsc: { type: String },
+      qrImage: { type: String },
+    },
+
+    status: {
+      type: String,
+      enum: ["PENDING", "APPROVED", "REJECTED"],
+      default: "PENDING",
+    },
+
+    rejectReason: {
+      type: String,
+    },
+
+    isLoginEnabled: {
+      type: Boolean,
+      default: false,
+    },
   },
-  { timestamps: true }
+  {
+    timestamps: true,
+  }
 );
 
-const Vendor: Model<IVendor> =
-  mongoose.models.Vendor || mongoose.model<IVendor>("Vendor", vendorSchema);
-
-export default Vendor;
+export const Vendor = model<IVendor>("Vendor", VendorSchema);

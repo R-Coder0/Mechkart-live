@@ -806,8 +806,8 @@ export default function WebsiteUserOrderDetailsPage() {
 
       {/* Return Request Modal */}
       {rrOpen ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
-          <div className="w-full max-w-lg border bg-white">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 overflow-y-auto">
+          <div className="w-full max-w-lg border bg-white max-h-[90vh] overflow-hidden">
             <div className="border-b px-5 py-4">
               <div className="text-lg font-bold text-gray-900">Request Return</div>
               <div className="mt-1 text-xs text-gray-500">
@@ -819,7 +819,7 @@ export default function WebsiteUserOrderDetailsPage() {
               </div>
             </div>
 
-            <div className="p-5 space-y-4">
+            <div className="p-5 space-y-4 overflow-y-auto max-h-[calc(90vh-120px)]">
               {rrErr ? (
                 <div className="border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{rrErr}</div>
               ) : null}
@@ -852,46 +852,61 @@ export default function WebsiteUserOrderDetailsPage() {
               </div>
 
               {/* ✅ Images (max 5) */}
-              <div>
-                <div className="flex items-center justify-between">
-                  <div className="text-xs font-semibold text-gray-700 mb-1">Upload images (optional)</div>
-                  <div className="text-[11px] text-gray-500">Max 5</div>
-                </div>
+<div>
+  <div className="flex items-center justify-between mb-1">
+    <div className="text-xs font-semibold text-gray-700">
+      Upload images (optional)
+    </div>
+    <div className="text-[11px] text-gray-500">Max 5</div>
+  </div>
 
-                <input
-                  type="file"
-                  accept="image/*"
-                  multiple
-                  onChange={(e) => {
-                    const next = Array.from(e.target.files || []);
-                    const merged = [...rrFiles, ...next].slice(0, 5);
-                    setRrFiles(merged);
-                    e.currentTarget.value = "";
-                  }}
-                  className="w-full text-sm"
-                />
+  {/* Hidden input */}
+  <input
+    id="rr-upload"
+    type="file"
+    accept="image/*"
+    multiple
+    className="hidden"
+    onChange={(e) => {
+      const next = Array.from(e.target.files || []);
+      setRrFiles((prev) => [...prev, ...next].slice(0, 5));
+      e.currentTarget.value = "";
+    }}
+  />
 
-                {rrFiles.length ? (
-                  <div className="mt-2 grid grid-cols-5 gap-2">
-                    {rrFiles.map((f, i) => {
-                      const url = URL.createObjectURL(f);
-                      return (
-                        <div key={i} className="relative h-16 w-16 border bg-gray-50 overflow-hidden">
-                          <img src={url} alt={`rr-${i}`} className="h-full w-full object-cover" />
-                          <button
-                            type="button"
-                            onClick={() => setRrFiles((prev) => prev.filter((_, idx) => idx !== i))}
-                            className="absolute top-1 right-1 h-5 w-5 rounded-full bg-white border text-[10px] font-bold"
-                            title="Remove"
-                          >
-                            ×
-                          </button>
-                        </div>
-                      );
-                    })}
-                  </div>
-                ) : null}
-              </div>
+  {/* Visible upload box */}
+  <label
+    htmlFor="rr-upload"
+    className="flex items-center justify-center gap-2 h-14 w-full cursor-pointer rounded-xl border-2 border-dashed border-gray-300 text-sm text-gray-600 hover:border-gray-400 hover:bg-gray-50"
+  >
+    <span className="font-semibold">Click to upload</span>
+    <span className="text-xs text-gray-400">(JPG, PNG)</span>
+  </label>
+
+  {/* Preview */}
+  {rrFiles.length > 0 && (
+    <div className="mt-3 grid grid-cols-5 gap-2">
+      {rrFiles.map((file, i) => {
+        const url = URL.createObjectURL(file);
+        return (
+          <div key={i} className="relative h-16 w-16 rounded-lg border overflow-hidden">
+            <img src={url} alt={`upload-${i}`} className="h-full w-full object-cover" />
+            <button
+              type="button"
+              onClick={() =>
+                setRrFiles((prev) => prev.filter((_, idx) => idx !== i))
+              }
+              className="absolute top-1 right-1 h-5 w-5 rounded-full bg-white border text-[10px] font-bold"
+            >
+              ×
+            </button>
+          </div>
+        );
+      })}
+    </div>
+  )}
+</div>
+
 
               {/* ✅ COD bank details */}
               {isCOD ? (

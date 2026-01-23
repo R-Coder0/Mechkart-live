@@ -9,11 +9,13 @@ import {
   adminConfirmCod,
   adminCreateShiprocketShipment,
 
-  // ✅ Return/Refund calls (make sure you added these in adminOrdersApi.ts)
+  // Return/Refund calls
   adminApproveReturn,
   adminRejectReturn,
   adminProcessRefund,
 } from "@/lib/adminOrdersApi";
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL;
 
 function money(n: number) {
   return `₹${Math.round(Number(n || 0))}`;
@@ -32,6 +34,13 @@ function fmtDateTime(v?: any) {
   } catch {
     return "—";
   }
+}
+
+function resolveImageUrl(path?: string) {
+  if (!path) return "";
+  if (path.startsWith("http://") || path.startsWith("https://")) return path;
+  const host = (API_BASE || "").replace(/\/api\/?$/, "");
+  return path.startsWith("/") ? `${host}${path}` : `${host}/${path}`;
 }
 
 const STATUS_OPTIONS = ["PLACED", "CONFIRMED", "SHIPPED", "DELIVERED", "CANCELLED"] as const;
@@ -157,7 +166,6 @@ export default function AdminOrdersPage() {
       setBusyId(orderId);
       setError(null);
 
-      // optimistic: move to SHIPPED
       patchLocalOrder(orderId, { status: "SHIPPED" });
 
       const updated = await adminCreateShiprocketShipment(orderId);
@@ -204,24 +212,29 @@ export default function AdminOrdersPage() {
     }
   };
 
-const onProcessRefund = async (orderId: string) => {
-  try {
-    const ok = confirm("Process refund now?");
-    if (!ok) return;
+  // ✅ Refund (optional partial amount in rupees)
+  const onProcessRefund = async (orderId: string) => {
+    try {
+      const ok = confirm("Process refund now?");
+      if (!ok) return;
 
-    setBusyId(orderId);
-    setError(null);
+      // optional amount prompt
+      const raw = prompt("Refund amount in RUPEES? (Leave blank for full refund)") || "";
+      const amt = raw.trim() ? Number(raw.trim()) : undefined;
+      const amount = Number.isFinite(amt as any) && (amt as number) > 0 ? (amt as number) : undefined;
 
-    const updated = await adminProcessRefund(orderId); // no amount
-    replaceLocalOrder(orderId, updated);
-  } catch (e: any) {
-    setError(e?.message || "Refund failed");
-    await load(page);
-  } finally {
-    setBusyId(null);
-  }
-};
+      setBusyId(orderId);
+      setError(null);
 
+      const updated = await adminProcessRefund(orderId, amount);
+      replaceLocalOrder(orderId, updated);
+    } catch (e: any) {
+      setError(e?.message || "Refund failed");
+      await load(page);
+    } finally {
+      setBusyId(null);
+    }
+  };
 
   const summaryText = useMemo(() => {
     const total = Number(data?.total || 0);
@@ -331,7 +344,7 @@ const onProcessRefund = async (orderId: string) => {
           </div>
         ) : items.length ? (
           <div className="overflow-x-auto">
-            <table className="min-w-[1600px] w-full text-sm">
+            <table className="min-w-[1700px] w-full text-sm">
               <thead className="bg-white">
                 <tr className="border-b text-left text-xs font-bold text-gray-600">
                   <th className="px-5 py-3">Order</th>
@@ -340,10 +353,7 @@ const onProcessRefund = async (orderId: string) => {
                   <th className="px-5 py-3">Payable</th>
                   <th className="px-5 py-3">Payment Details</th>
                   <th className="px-5 py-3">Shipment</th>
-
-                  {/* ✅ NEW */}
                   <th className="px-5 py-3">Return / Refund</th>
-
                   <th className="px-5 py-3">Status</th>
                   <th className="px-5 py-3">Created</th>
                 </tr>
@@ -399,11 +409,18 @@ const onProcessRefund = async (orderId: string) => {
 
                   // ✅ Return/Refund (new)
                   const ret = o?.return || null;
-                  const retStatus = String(ret?.status || "").toUpperCase(); // REQUESTED/APPROVED/REJECTED/REFUNDED
+                  const retStatus = String(ret?.status || "").toUpperCase(); // REQUESTED/APPROVED/REJECTED/PICKUP_CREATED/RECEIVED/REFUNDED
                   const refund = o?.refund || null;
                   const refundStatus = String(refund?.status || "").toUpperCase(); // PENDING/PROCESSED/FAILED
+
                   const canApproveReject = retStatus === "REQUESTED";
-                  const canRefund = retStatus === "APPROVED" || retStatus === "RECEIVED";
+                  const canRefund = ["APPROVED", "RECEIVED"].includes(retStatus);
+
+                  const refundProcessed = refundStatus === "PROCESSED" || retStatus === "REFUNDED";
+                  const refundButtonDisabled = !canRefund || refundProcessed || isBusy;
+
+                  const bank = ret?.bankDetails || null; // if your backend stores it here
+                  const imgs = Array.isArray(ret?.images) ? ret.images : [];
 
                   return (
                     <tr key={orderId} className="border-b last:border-b-0">
@@ -571,9 +588,68 @@ const onProcessRefund = async (orderId: string) => {
                               </div>
                             ) : null}
 
+                            {/* ✅ note (not comment) */}
+                            {ret?.note ? (
+                              <div className="text-[11px] text-gray-600">
+                                Note: <span className="font-semibold text-gray-800">{String(ret.note)}</span>
+                              </div>
+                            ) : null}
+
                             {retStatus === "REJECTED" && ret?.rejectReason ? (
                               <div className="text-[11px] text-red-700">
                                 Reject: {String(ret.rejectReason)}
+                              </div>
+                            ) : null}
+
+                            {/* ✅ show COD bank details (if present) */}
+                            {bank ? (
+                              <div className="border p-2 text-[11px] text-gray-700">
+                                <div className="font-semibold text-gray-900 mb-1">Bank Details (COD)</div>
+                                <div>
+                                  <span className="font-semibold">A/C Holder:</span>{" "}
+                                  {bank?.accountHolderName || "—"}
+                                </div>
+                                <div>
+                                  <span className="font-semibold">A/C No:</span>{" "}
+                                  {bank?.accountNumber || "—"}
+                                </div>
+                                <div>
+                                  <span className="font-semibold">IFSC:</span> {bank?.ifsc || "—"}
+                                </div>
+                                {bank?.bankName ? (
+                                  <div>
+                                    <span className="font-semibold">Bank:</span> {bank.bankName}
+                                  </div>
+                                ) : null}
+                                {bank?.upiId ? (
+                                  <div>
+                                    <span className="font-semibold">UPI:</span> {bank.upiId}
+                                  </div>
+                                ) : null}
+                              </div>
+                            ) : null}
+
+                            {/* ✅ image proofs preview */}
+                            {imgs.length ? (
+                              <div>
+                                <div className="text-[11px] font-semibold text-gray-700 mb-1">Images</div>
+                                <div className="flex flex-wrap gap-2">
+                                  {imgs.slice(0, 5).map((p: string, i: number) => {
+                                    const src = resolveImageUrl(p);
+                                    return (
+                                      <a
+                                        key={i}
+                                        href={src || "#"}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="h-10 w-10 border bg-gray-50 overflow-hidden"
+                                        title="Open"
+                                      >
+                                        {src ? <img src={src} alt={`ret-${i}`} className="h-full w-full object-cover" /> : null}
+                                      </a>
+                                    );
+                                  })}
+                                </div>
                               </div>
                             ) : null}
 
@@ -597,28 +673,25 @@ const onProcessRefund = async (orderId: string) => {
                               </div>
                             ) : null}
 
+                            {/* Refund status */}
                             {refund ? (
                               <div className="text-[11px] text-gray-700">
-                                Refund:{" "}
-                                <span className="font-semibold">
-                                  {refundStatus || "—"}
-                                </span>
-                                {refund?.amount ? (
-                                  <span className="text-gray-500"> • {money(refund.amount)}</span>
-                                ) : null}
+                                Refund: <span className="font-semibold">{refundStatus || "—"}</span>
+                                {refund?.amount ? <span className="text-gray-500"> • {money(refund.amount)}</span> : null}
+                                {refund?.processedAt ? <span className="text-gray-500"> • {fmtDateTime(refund.processedAt)}</span> : null}
                               </div>
                             ) : null}
+
+                            {/* Refund action */}
                             {canRefund ? (
                               <button
-                                disabled={isBusy}
-onClick={() => onProcessRefund(orderId)}
-
+                                disabled={refundButtonDisabled}
+                                onClick={() => onProcessRefund(orderId)}
                                 className="h-9 rounded-xl bg-gray-900 px-3 text-[12px] font-semibold text-white hover:bg-black disabled:opacity-60"
                               >
-                                {isBusy ? "Processing…" : "Process Refund"}
+                                {isBusy ? "Processing…" : refundProcessed ? "Refund Done" : "Process Refund"}
                               </button>
                             ) : null}
-
 
                             {retStatus === "REFUNDED" ? (
                               <div className="text-[11px] font-semibold text-emerald-700">Refund Completed</div>
@@ -684,7 +757,7 @@ onClick={() => onProcessRefund(orderId)}
           <button
             disabled={loading || page >= totalPages}
             onClick={() => load(page + 1)}
-            className="rounded-xl border px-4 py-2 text-sm font-semibold hover:bg-gray-Y-50 disabled:opacity-50"
+            className="rounded-xl border px-4 py-2 text-sm font-semibold hover:bg-gray-50 disabled:opacity-50"
           >
             Next
           </button>

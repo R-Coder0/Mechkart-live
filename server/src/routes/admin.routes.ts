@@ -39,6 +39,7 @@ import {
 import { adminCreateShiprocketShipment } from "../controllers/admin/shipment.controller.js";
 import { adminApproveReturn, adminListReturnRequests, adminRejectReturn } from "../controllers/admin/return.controller.js";
 import { adminProcessRefund } from "../controllers/admin/refund.controller.js";
+import { approveVendor, rejectVendor } from "../controllers/vendor/vendor.controller.js";
 
 const router = Router();
 
@@ -96,4 +97,17 @@ router.post("/returns/:orderId/approve", verifyAdmin, adminApproveReturn);
 router.post("/returns/:orderId/reject", verifyAdmin, adminRejectReturn);
 router.post("/returns/:orderId/process-refund", verifyAdmin, adminProcessRefund);
 
+// approve vendor
+router.post(
+  "/vendors/:vendorId/approve",
+  verifyAdmin,
+  approveVendor
+);
+
+// reject vendor
+router.post(
+  "/vendors/:vendorId/reject",
+  verifyAdmin,
+  rejectVendor
+);
 export default router;

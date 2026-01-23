@@ -24,7 +24,7 @@ import {
 } from "@/lib/userApi";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL;
-const VENDOR_URL = "/vendor"; // change if your vendor panel route is different
+const VENDOR_URL = "/supplier"; // change if your vendor panel route is different
 
 async function fetchCartCount(): Promise<number> {
   try {
