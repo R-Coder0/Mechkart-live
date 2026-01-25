@@ -1,4 +1,5 @@
 import { Schema, model, Document, Types } from "mongoose";
+import { Counter } from "./Counter.model"; // ✅ ADD THIS
 
 // -------------------- COLORS (Product level) --------------------
 export interface IProductColor {
@@ -29,6 +30,13 @@ export interface IProductVariant {
   images: string[];
 }
 
+export interface IProductShip {
+  lengthCm: number;
+  breadthCm: number;
+  heightCm: number;
+  weightKg: number;
+}
+
 export interface IProduct extends Document {
   productId: string; // MECH000001 etc.
 
@@ -40,7 +48,7 @@ export interface IProduct extends Document {
   featureImage?: string;
   galleryImages: string[];
 
-  // ✅ NEW: product-level colors
+  // ✅ product-level colors
   colors: IProductColor[];
 
   mrp: number;
@@ -58,7 +66,19 @@ export interface IProduct extends Document {
   subCategory?: Types.ObjectId | null;
 
   isActive: boolean;
-  createdBy?: Types.ObjectId | null;
+
+  // ✅ NEW: ownership (multivendor)
+  ownerType: "ADMIN" | "VENDOR";
+  vendorId?: Types.ObjectId | null;
+
+  // ✅ NEW: approval flow for vendor products
+  approvalStatus: "PENDING" | "APPROVED" | "REJECTED";
+  approvalNote?: string;
+
+  // ✅ NEW: shipping dimensions on product
+  ship: IProductShip;
+
+  createdBy?: Types.ObjectId | null; // admin who created/approved (optional)
 }
 
 // -------------------- SCHEMAS --------------------
@@ -79,7 +99,6 @@ const VariantSchema = new Schema<IProductVariant>(
     weight: { type: String },
     size: { type: String },
 
-    // keep comboText (variant identity)
     comboText: { type: String },
 
     // keep color only for backward compatibility
@@ -92,6 +111,16 @@ const VariantSchema = new Schema<IProductVariant>(
     images: { type: [String], default: [] },
   },
   { _id: true }
+);
+
+const ShipSchema = new Schema<IProductShip>(
+  {
+    lengthCm: { type: Number, default: 20 },
+    breadthCm: { type: Number, default: 15 },
+    heightCm: { type: Number, default: 10 },
+    weightKg: { type: Number, default: 0.5 },
+  },
+  { _id: false }
 );
 
 const ProductSchema = new Schema<IProduct>(
@@ -113,7 +142,7 @@ const ProductSchema = new Schema<IProduct>(
     featureImage: { type: String },
     galleryImages: { type: [String], default: [] },
 
-    // ✅ NEW: colors array on product
+    // ✅ colors array on product
     colors: { type: [ColorSchema], default: [] },
 
     mrp: { type: Number, required: true },
@@ -139,6 +168,33 @@ const ProductSchema = new Schema<IProduct>(
 
     isActive: { type: Boolean, default: true },
 
+    // ✅ multivendor fields
+    ownerType: {
+      type: String,
+      enum: ["ADMIN", "VENDOR"],
+      default: "ADMIN",
+      index: true,
+    },
+
+    vendorId: {
+      type: Schema.Types.ObjectId,
+      ref: "Vendor",
+      default: null,
+      index: true,
+    },
+
+    approvalStatus: {
+      type: String,
+      enum: ["PENDING", "APPROVED", "REJECTED"],
+      default: "APPROVED", // ✅ admin-created products auto approved
+      index: true,
+    },
+
+    approvalNote: { type: String, default: "" },
+
+    // ✅ shipment defaults
+    ship: { type: ShipSchema, default: () => ({}) },
+
     createdBy: {
       type: Schema.Types.ObjectId,
       ref: "Admin",
@@ -149,7 +205,7 @@ const ProductSchema = new Schema<IProduct>(
 );
 
 /**
- * Helper inside model:
+ * Helper:
  * totalStock = variants sum (if variants exist) else baseStock
  * isLowStock = totalStock <= lowStockThreshold
  */
@@ -159,10 +215,7 @@ const computeStock = (doc: IProduct) => {
 
   if (hasVariants) {
     doc.baseStock = 0;
-    doc.totalStock = variantsArr.reduce(
-      (sum, v) => sum + Number(v.quantity || 0),
-      0
-    );
+    doc.totalStock = variantsArr.reduce((sum, v) => sum + Number(v.quantity || 0), 0);
   } else {
     doc.totalStock = Number(doc.baseStock || 0);
   }
@@ -172,40 +225,38 @@ const computeStock = (doc: IProduct) => {
 };
 
 /**
- * Auto-generate productId = MECH000001, MECH000002, ...
+ * ✅ Auto-generate productId safely using Counter (atomic)
  */
 ProductSchema.pre<IProduct>("validate", async function (next) {
   try {
+    // ✅ productId generation (atomic, race-condition safe)
     if (this.isNew && !this.productId) {
-      const last: { productId?: string } | null = await (this.constructor as any)
-        .findOne({}, { productId: 1 })
-        .sort({ createdAt: -1 })
-        .lean();
+      const PREFIX = "MECH";
 
-      let nextNumber = 1;
-      if (last?.productId) {
-        const numericPart = last.productId.replace(/^CH/, "");
-        const parsed = parseInt(numericPart, 10);
-        if (!Number.isNaN(parsed)) nextNumber = parsed + 1;
-      }
+      const counter = await Counter.findOneAndUpdate(
+        { name: "productId" },
+        { $inc: { seq: 1 } },
+        { new: true, upsert: true }
+      ).lean();
 
-      this.productId = `CH${String(nextNumber).padStart(6, "0")}`;
+      const nextNumber = counter?.seq ?? 1;
+      this.productId = `${PREFIX}${String(nextNumber).padStart(6, "0")}`;
     }
 
-    // ✅ compute stock on validate as well (safe)
-    computeStock(this);
+    // ✅ ship defaults normalize
+    if (!(this as any).ship) {
+      (this as any).ship = { lengthCm: 20, breadthCm: 15, heightCm: 10, weightKg: 0.5 };
+    } else {
+      (this as any).ship.lengthCm = Number((this as any).ship.lengthCm ?? 20);
+      (this as any).ship.breadthCm = Number((this as any).ship.breadthCm ?? 15);
+      (this as any).ship.heightCm = Number((this as any).ship.heightCm ?? 10);
+      (this as any).ship.weightKg = Number((this as any).ship.weightKg ?? 0.5);
+    }
 
+    computeStock(this);
     next();
   } catch (e) {
     next(e as any);
-  }
-});
-
-ProductSchema.pre("findOneAndUpdate", function (next) {
-  try {
-    return next();
-  } catch (err) {
-    return next(err as any);
   }
 });
 

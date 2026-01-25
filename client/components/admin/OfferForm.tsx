@@ -303,7 +303,7 @@ const res = await fetch(url, {
                 className="w-full border rounded px-3 py-2"
                 value={form.couponCode || ""}
                 onChange={(e) => onChange("couponCode", e.target.value.toUpperCase())}
-                placeholder="e.g. CH-NEW10"
+                placeholder="e.g. MECH-NEW10"
               />
               <div className="flex items-center gap-2 mt-2">
                 <input

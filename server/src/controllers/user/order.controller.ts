@@ -60,7 +60,7 @@ const computeVariantText = (p: any, variantId: any) => {
 
 /**
  * ✅ Create order with atomic unique orderCode (no duplicates)
- * Uses generateOrderCode("CH") which you built with OrderCounter ($inc upsert).
+ * Uses generateOrderCode("MECH") which you built with OrderCounter ($inc upsert).
  * Retries few times just in case.
  */
 async function createOrderWithUniqueCode(createDoc: any) {
@@ -68,7 +68,7 @@ async function createOrderWithUniqueCode(createDoc: any) {
 
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      const orderCode = await generateOrderCode("CH");
+      const orderCode = await generateOrderCode("MECH");
       created = await Order.create({ ...createDoc, orderCode });
       break;
     } catch (err: any) {
@@ -721,7 +721,7 @@ export const downloadInvoicePdf = async (req: Request, res: Response) => {
 
     // ---------- Provider ----------
     const PROVIDER = {
-      legalName: "COUNTRY HOME PRIVATE LIMITED",
+      legalName: "Mechkart PRIVATE LIMITED",
       addressLine1: "Your Office Address Line 1",
       addressLine2: "Your Office Address Line 2",
       city: "Your City",
@@ -737,7 +737,7 @@ export const downloadInvoicePdf = async (req: Request, res: Response) => {
       year: "numeric",
     });
 
-    const invoiceNumber = `CH${createdAt.getFullYear()}${pad(createdAt.getMonth() + 1, 2)}${pad(
+    const invoiceNumber = `MECH${createdAt.getFullYear()}${pad(createdAt.getMonth() + 1, 2)}${pad(
       createdAt.getDate(),
       2
     )}-${String(order._id).slice(-6).toUpperCase()}`;

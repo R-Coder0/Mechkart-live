@@ -36,7 +36,7 @@ export type CartItem = {
   _id: string;
 
   productId: string;
-  productCode?: string; // snapshot code (MECH/CH...)
+  productCode?: string; // snapshot code (MECH/MECH...)
 
   // variant can be null for non-variant products
   variantId?: string | null;

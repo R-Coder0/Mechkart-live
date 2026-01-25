@@ -439,7 +439,7 @@ export default function CheckoutPage() {
         key: rp.keyId || RZP_KEY,
         amount: rp.amount, // paise
         currency: rp.currency || "INR",
-        name: "Country Home",
+        name: "Mechkart",
         description: `Order ${data?.orderCode || ""}`,
         order_id: rp.orderId, // razorpay_order_id
         prefill: {

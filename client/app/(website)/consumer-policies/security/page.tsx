@@ -15,7 +15,7 @@ export default function SecurityPolicyPage() {
             1. Overview
           </h2>
           <p>
-            At <strong>Country Home</strong>, we take the security of your
+            At <strong>Mechkart</strong>, we take the security of your
             personal information and transactions seriously. This Security
             Policy explains the measures we use to help protect your data and
             how you can help keep your account secure.
@@ -104,7 +104,7 @@ export default function SecurityPolicyPage() {
           </h2>
           <p>
             While we implement reasonable safeguards, no method of transmission
-            over the internet is 100% secure. Country Home cannot guarantee
+            over the internet is 100% secure. Mechkart cannot guarantee
             absolute security; however, we continuously improve our security
             practices to reduce risks.
           </p>

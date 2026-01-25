@@ -18,7 +18,7 @@ export default function TermsAndServicesPage() {
             1. Introduction
           </h2>
           <p>
-            Welcome to <strong>Country Home</strong>. These Terms & Conditions
+            Welcome to <strong>Mechkart</strong>. These Terms & Conditions
             govern your use of our website and services. By accessing or using
             our platform, you agree to be bound by these terms. If you do not
             agree, please do not use our services.
@@ -33,7 +33,7 @@ export default function TermsAndServicesPage() {
           <p>
             You must be at least 18 years old or accessing the website under the
             supervision of a parent or legal guardian to make a purchase on
-            Country Home.
+            Mechkart.
           </p>
         </section>
 
@@ -45,7 +45,7 @@ export default function TermsAndServicesPage() {
           <p>
             You are responsible for maintaining the confidentiality of your
             account credentials and for all activities conducted through your
-            account. Country Home shall not be liable for any loss arising from
+            account. Mechkart shall not be liable for any loss arising from
             unauthorized account usage.
           </p>
         </section>
@@ -57,7 +57,7 @@ export default function TermsAndServicesPage() {
           </h2>
           <p>
             We strive to provide accurate product descriptions, pricing, and
-            availability. However, errors may occur. Country Home reserves the
+            availability. However, errors may occur. Mechkart reserves the
             right to correct any errors and cancel orders if required.
           </p>
         </section>
@@ -81,7 +81,7 @@ export default function TermsAndServicesPage() {
           </h2>
           <p>
             Delivery timelines are estimates and may vary due to logistics or
-            external factors. Country Home is not liable for delays beyond its
+            external factors. Mechkart is not liable for delays beyond its
             reasonable control.
           </p>
         </section>
@@ -106,7 +106,7 @@ export default function TermsAndServicesPage() {
           </h2>
           <p>
             All content on this website, including text, images, logos, and
-            designs, is the property of Country Home and is protected by
+            designs, is the property of Mechkart and is protected by
             applicable intellectual property laws. Unauthorized use is strictly
             prohibited.
           </p>
@@ -118,7 +118,7 @@ export default function TermsAndServicesPage() {
             9. Limitation of Liability
           </h2>
           <p>
-            Country Home shall not be liable for any indirect, incidental, or
+            Mechkart shall not be liable for any indirect, incidental, or
             consequential damages arising from the use of our website or
             products.
           </p>

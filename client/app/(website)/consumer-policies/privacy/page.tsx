@@ -13,7 +13,7 @@ export default function PrivacyPolicyPage() {
             1. Overview
           </h2>
           <p>
-            This Privacy Policy describes how <strong>Country Home</strong>{" "}
+            This Privacy Policy describes how <strong>Mechkart</strong>{" "}
             (“we”, “us”, “our”) collects, uses, shares, and protects your
             personal information when you use our website and services. By using
             our platform, you consent to the practices described in this policy.
@@ -190,7 +190,7 @@ export default function PrivacyPolicyPage() {
           </p>
 
           <div className="mt-3 rounded-2xl border bg-gray-50 p-4">
-            <p className="font-semibold text-gray-900">Country Home</p>
+            <p className="font-semibold text-gray-900">Mechkart</p>
             <p className="mt-1">
               Email: <span className="font-medium">contact@Mechkart.co.in</span>
               <br />

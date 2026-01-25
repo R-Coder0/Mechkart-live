@@ -133,7 +133,7 @@ function wrapHtml(title: string, bodyHtml: string) {
     <div style="max-width:720px;margin:0 auto;padding:24px;">
       <div style="background:#ffffff;border:1px solid #e6e8ef;border-radius:14px;overflow:hidden;">
         <div style="padding:18px 20px;background:#111827;color:#fff;">
-          <div style="font-size:16px;font-weight:700;">Country Home</div>
+          <div style="font-size:16px;font-weight:700;">Mechkart</div>
           <div style="font-size:12px;opacity:0.85;margin-top:4px;">${escapeHtml(title)}</div>
         </div>
         <div style="padding:18px 20px;color:#111827;">
@@ -238,12 +238,12 @@ function buildTotalsBlock(order: EmailOrder) {
 
 function subjectForOrderPlaced(order: EmailOrder) {
   const code = order.orderCode ? ` ${order.orderCode}` : "";
-  return `Order Placed${code} | Country Home`;
+  return `Order Placed${code} | Mechkart`;
 }
 
 function subjectForOwnerNewOrder(order: EmailOrder) {
   const code = order.orderCode ? ` ${order.orderCode}` : "";
-  return `New Order${code} | Country Home`;
+  return `New Order${code} | Mechkart`;
 }
 
 /**

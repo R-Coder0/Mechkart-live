@@ -17,7 +17,7 @@ export default function Footer() {
             <li><Link href="/contact" className="hover:underline font-medium text-white">Contact Us</Link></li>
             <li><Link href="#" className="hover:underline font-medium text-white">About Us</Link></li>
             <li><Link href="#" className="hover:underline font-medium text-white">Careers</Link></li>
-            {/* <li><Link href="#" className="hover:underline font-medium text-white">Country Home Stories</Link></li>
+            {/* <li><Link href="#" className="hover:underline font-medium text-white">Mechkart Stories</Link></li>
             <li><Link href="#" className="hover:underline font-medium text-white">Press</Link></li>
             <li><Link href="#" className="hover:underline font-medium text-white">Corporate Information</Link></li> */}
           </ul>
@@ -96,7 +96,7 @@ export default function Footer() {
             Registered Office Address
           </h3>
           <p className="text-gray-300 leading-relaxed text-[13px]">
-            Country Home Private Limited,
+            Mechkart Private Limited,
             <br /> Pankaj Palace Shop No.7
             <br />  Near City Palace Mall Burhanpur
             <br /> Madhya Pradesh, 450331, India

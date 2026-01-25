@@ -20,7 +20,7 @@ const normalizeIds = (arr: any): Types.ObjectId[] => {
 
 const upper = (s: any) => (typeof s === "string" ? s.trim().toUpperCase() : "");
 
-const generateCoupon = (prefix = "CH", len = 8) => {
+const generateCoupon = (prefix = "MECH", len = 8) => {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
   let out = `${prefix}-`;
   for (let i = 0; i < len; i++) out += chars[Math.floor(Math.random() * chars.length)];
@@ -93,7 +93,7 @@ export const createOffer = async (req: Request, res: Response, next: NextFunctio
     // coupon
     if (body.mode === "COUPON") {
       if (body.autoGenerateCoupon === "true" || body.autoGenerateCoupon === true) {
-        body.couponCode = generateCoupon("CH", 8);
+        body.couponCode = generateCoupon("MECH", 8);
       }
       body.couponCode = upper(body.couponCode);
     } else {
@@ -168,7 +168,7 @@ export const updateOffer = async (req: Request, res: Response, next: NextFunctio
 
     if (patch.mode === "COUPON") {
       if (patch.autoGenerateCoupon === "true" || patch.autoGenerateCoupon === true) {
-        patch.couponCode = generateCoupon("CH", 8);
+        patch.couponCode = generateCoupon("MECH", 8);
       }
       if (patch.couponCode !== undefined) patch.couponCode = upper(patch.couponCode);
     }

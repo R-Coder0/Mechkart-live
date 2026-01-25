@@ -6,7 +6,7 @@ import Link from "next/link";
 export default function WhatsAppFloatingButton() {
   // ✅ Your WhatsApp number (no +, no spaces)
   const phone = "919879511957";
-  const text = "Hi Country Home, I need help with my order.";
+  const text = "Hi Mechkart, I need help with my order.";
   const href = `https://wa.me/${phone}?text=${encodeURIComponent(text)}`;
 
   return (

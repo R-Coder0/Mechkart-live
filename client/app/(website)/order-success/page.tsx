@@ -302,7 +302,7 @@ export default function OrderSuccessPage() {
         key: RZP_KEY,
         amount: amountPaise,
         currency: "INR",
-        name: "Country Home",
+        name: "Mechkart",
         description: `Complete payment for ${String(order?.orderCode || "")}`,
         order_id: rpOrderId,
         prefill: {

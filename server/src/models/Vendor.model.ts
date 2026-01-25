@@ -1,5 +1,7 @@
 import { Schema, model, Document } from "mongoose";
 
+export type VendorStatus = "PENDING" | "APPROVED" | "REJECTED" | "DISABLED";
+
 export interface IVendor extends Document {
   name: {
     first: string;
@@ -10,20 +12,17 @@ export interface IVendor extends Document {
   phone: string;
   passwordHash: string;
 
-  // KYC
   kyc: {
     panNumber: string;
-    panImage: string; // uploaded file path / url
+    panImage: string;
   };
 
-  // Company details
   company: {
     name: string;
     email: string;
     gst?: string;
   };
 
-  // Shiprocket pickup
   pickupAddress: {
     name: string;
     phone: string;
@@ -33,7 +32,6 @@ export interface IVendor extends Document {
     pincode: string;
   };
 
-  // Payment info
   payment: {
     upiId?: string;
     bankAccount?: string;
@@ -41,8 +39,12 @@ export interface IVendor extends Document {
     qrImage?: string;
   };
 
-  status: "PENDING" | "APPROVED" | "REJECTED";
+  status: VendorStatus;
   rejectReason?: string;
+
+  // ✅ disable fields
+  disabledAt?: Date;
+  disabledReason?: string;
 
   isLoginEnabled: boolean;
 
@@ -77,15 +79,8 @@ const VendorSchema = new Schema<IVendor>(
     },
 
     kyc: {
-      panNumber: {
-        type: String,
-        required: true,
-        uppercase: true,
-      },
-      panImage: {
-        type: String,
-        required: true,
-      },
+      panNumber: { type: String, required: true, uppercase: true },
+      panImage: { type: String, required: true },
     },
 
     company: {
@@ -112,22 +107,19 @@ const VendorSchema = new Schema<IVendor>(
 
     status: {
       type: String,
-      enum: ["PENDING", "APPROVED", "REJECTED"],
+      enum: ["PENDING", "APPROVED", "REJECTED", "DISABLED"],
       default: "PENDING",
     },
 
-    rejectReason: {
-      type: String,
-    },
+    rejectReason: { type: String },
 
-    isLoginEnabled: {
-      type: Boolean,
-      default: false,
-    },
+    // ✅ disable fields in schema
+    disabledAt: { type: Date },
+    disabledReason: { type: String },
+
+    isLoginEnabled: { type: Boolean, default: false },
   },
-  {
-    timestamps: true,
-  }
+  { timestamps: true }
 );
 
 export const Vendor = model<IVendor>("Vendor", VendorSchema);

@@ -9,7 +9,7 @@ export default function ContactPage() {
   const instagram =
     "https://www.instagram.com/Mechkartofficial_/?igsh=MWxxZmh1cjUxMXN1NA%3D%3D#";
 
-  const waText = "Hi Country Home, I need help with my order.";
+  const waText = "Hi Mechkart, I need help with my order.";
   const waLink = `https://wa.me/919879511957?text=${encodeURIComponent(waText)}`;
 
   return (

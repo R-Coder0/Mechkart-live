@@ -42,6 +42,11 @@ export const upload = multer({
     fileSize: 5 * 1024 * 1024, // 5 MB per file
   },
 });
+// ✅ Vendor KYC images (PAN + QR)
+export const uploadVendorKyc = upload.fields([
+  { name: "panImage", maxCount: 1 },
+  { name: "qrImage", maxCount: 1 },
+]);
 
 // Helpers jo routes me use kar sakte ho
 

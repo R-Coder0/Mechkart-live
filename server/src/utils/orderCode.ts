@@ -5,13 +5,13 @@ function pad(num: number, size = 4) {
   return s.length >= size ? s : "0".repeat(size - s.length) + s;
 }
 
-export async function generateOrderCode(prefix = "CH") {
+export async function generateOrderCode(prefix = "MECH") {
   const now = new Date();
   const yyyy = now.getFullYear();
   const mm = String(now.getMonth() + 1).padStart(2, "0");
   const dd = String(now.getDate()).padStart(2, "0");
 
-  const key = `${prefix}-${yyyy}${mm}${dd}`; // CH-20260118
+  const key = `${prefix}-${yyyy}${mm}${dd}`; // MECH-20260118
 
   const counter = await OrderCounter.findOneAndUpdate(
     { key },
@@ -20,5 +20,5 @@ export async function generateOrderCode(prefix = "CH") {
   ).lean();
 
   const seq = counter?.seq || 1;
-  return `${key}-${pad(seq, 4)}`; // CH-20260118-0001
+  return `${key}-${pad(seq, 4)}`; // MECH-20260118-0001
 }

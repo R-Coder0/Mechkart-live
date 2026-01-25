@@ -20,14 +20,19 @@ import {
   getProductBySlug,
 } from "../controllers/admin/product.controller";
 
-import { uploadProductImages, uploadCategoryImage } from "../middleware/upload.middleware.js";
+import {
+  uploadProductImages,
+  uploadCategoryImage,
+  
+} from "../middleware/upload.middleware.js";
+
 import { upsertBannerByKey } from "../controllers/admin/banner.admin.controller.js";
 import { adminGetUsers } from "../controllers/user/auth.controller.js";
 
 import {
   adminGetOrders,
   adminUpdateOrderStatus,
-  adminConfirmCodOrder, // ✅ NEW
+  adminConfirmCodOrder,
 } from "../controllers/admin/order.controller.js";
 
 import {
@@ -36,10 +41,28 @@ import {
   toggleOffer,
   listOffers,
 } from "../controllers/admin/offer.admin.controller";
+
 import { adminCreateShiprocketShipment } from "../controllers/admin/shipment.controller.js";
-import { adminApproveReturn, adminListReturnRequests, adminRejectReturn } from "../controllers/admin/return.controller.js";
+
+import {
+  adminApproveReturn,
+  adminListReturnRequests,
+  adminRejectReturn,
+} from "../controllers/admin/return.controller.js";
+
 import { adminProcessRefund } from "../controllers/admin/refund.controller.js";
-import { approveVendor, rejectVendor } from "../controllers/vendor/vendor.controller.js";
+
+// ✅ Vendor controllers (updated)
+import {
+  approveVendor,
+  rejectVendor,
+  adminListVendors,
+  adminGetVendor,
+  adminDisableVendor,
+  adminEnableVendor,
+  adminDeleteVendor,
+} from "../controllers/vendor/vendor.controller.js";
+import { adminApproveVendorProduct, adminGetVendorProductById, adminListVendorProducts, adminRejectVendorProduct } from "../controllers/admin/Vendor.Product.Controller.js";
 
 const router = Router();
 
@@ -76,12 +99,13 @@ router.get("/users", verifyAdmin, adminGetUsers);
 
 // ---------- ORDERS ----------
 router.get("/orders", verifyAdmin, adminGetOrders);
-
-// status change (dropdown etc.)
 router.patch("/orders/:orderId/status", verifyAdmin, adminUpdateOrderStatus);
-
-// ✅ NEW: confirm COD (Admin approves COD before shipment)
 router.patch("/orders/:orderId/confirm-cod", verifyAdmin, adminConfirmCodOrder);
+router.post(
+  "/orders/:orderId/shiprocket/create-shipment",
+  verifyAdmin,
+  adminCreateShiprocketShipment
+);
 
 // ---------- OFFERS ----------
 router.post("/discount/offers", verifyAdmin, createOffer);
@@ -89,25 +113,55 @@ router.patch("/discount/offers/:id", verifyAdmin, updateOffer);
 router.patch("/discount/offers/:id/toggle", verifyAdmin, toggleOffer);
 router.get("/discount/offers", verifyAdmin, listOffers);
 
-router.post("/orders/:orderId/shiprocket/create-shipment", verifyAdmin, adminCreateShiprocketShipment);
-
-// Return & Refund
+// ---------- Return & Refund ----------
 router.get("/returns", verifyAdmin, adminListReturnRequests);
 router.post("/returns/:orderId/approve", verifyAdmin, adminApproveReturn);
 router.post("/returns/:orderId/reject", verifyAdmin, adminRejectReturn);
 router.post("/returns/:orderId/process-refund", verifyAdmin, adminProcessRefund);
 
-// approve vendor
-router.post(
-  "/vendors/:vendorId/approve",
+// ==============================
+// ✅ VENDORS (Admin)
+// ==============================
+
+// ✅ List vendors (PENDING/APPROVED/REJECTED/ALL + search + pagination)
+router.get("/vendors", verifyAdmin, adminListVendors);
+
+// ✅ Get single vendor details
+router.get("/vendors/:vendorId", verifyAdmin, adminGetVendor);
+
+// ✅ Approve vendor
+router.post("/vendors/:vendorId/approve", verifyAdmin, approveVendor);
+
+// ✅ Reject vendor
+router.post("/vendors/:vendorId/reject", verifyAdmin, rejectVendor);
+router.post("/vendors/:vendorId/disable", verifyAdmin, adminDisableVendor);
+router.post("/vendors/:vendorId/enable", verifyAdmin, adminEnableVendor);
+
+// optional hard delete
+router.delete("/vendors/:vendorId", verifyAdmin, adminDeleteVendor);
+
+
+router.get(
+  "/vendor-products",
   verifyAdmin,
-  approveVendor
+  adminListVendorProducts
 );
 
-// reject vendor
 router.post(
-  "/vendors/:vendorId/reject",
+  "/vendor-products/:id/approve",
   verifyAdmin,
-  rejectVendor
+  adminApproveVendorProduct
 );
+
+router.post(
+  "/vendor-products/:id/reject",
+  verifyAdmin,
+  adminRejectVendorProduct
+);
+router.get(
+  "/vendor-products/:id",
+  verifyAdmin,
+  adminGetVendorProductById
+);
+
 export default router;

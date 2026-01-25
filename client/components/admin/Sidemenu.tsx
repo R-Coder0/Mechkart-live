@@ -20,10 +20,12 @@ export default function Sidemenu() {
     { label: "Users", icon: Users, href: "/admin/users" },
     { label: "Category", icon: Layers, href: "/admin/categories" },
     { label: "Banner", icon: Layers, href: "/admin/banner" },
+    { label: "Vendor", icon: Layers, href: "/admin/vendor" },
     { label: "Order", icon: Layers, href: "/admin/order" },
     { label: "Offer", icon: Layers, href: "/admin/offer" },
     { label: "Add Product", icon: Layers, href: "/admin/products-add" },
     { label: "Inventory", icon: Layers, href: "/admin/products" },
+    { label: "vendor-products", icon: Layers, href: "/admin/vendor-products" },
   ];
 
   return (
@@ -36,11 +38,11 @@ export default function Sidemenu() {
         <div className="flex h-16 items-center justify-between border-b px-4">
           {!collapsed ? (
             <h1 className="text-[17px] font-semibold tracking-tight">
-              Country Home
+              Mechkart
             </h1>
           ) : (
             <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-600 text-xs font-bold text-white">
-              CH
+              MECH
             </div>
           )}
 

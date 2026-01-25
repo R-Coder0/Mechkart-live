@@ -18,7 +18,7 @@ export default function PaymentsHelpPage() {
             1. Accepted Payment Methods
           </h2>
           <p>
-            Country Home offers multiple secure and convenient payment options to
+            Mechkart offers multiple secure and convenient payment options to
             make your shopping experience smooth. You can choose from the
             following methods at checkout:
           </p>
@@ -37,13 +37,13 @@ export default function PaymentsHelpPage() {
             2. Payment Security
           </h2>
           <p>
-            All online payments on Country Home are processed through secure and
+            All online payments on Mechkart are processed through secure and
             trusted payment gateway partners. We do not store your card details,
             CVV, or banking credentials on our servers.
           </p>
           <p className="mt-2">
             Please never share your OTP, UPI PIN, or card details with anyone,
-            including people claiming to represent Country Home.
+            including people claiming to represent Mechkart.
           </p>
         </section>
 
@@ -115,7 +115,7 @@ export default function PaymentsHelpPage() {
             7. Fraud Prevention
           </h2>
           <p>
-            Country Home reserves the right to cancel or hold orders if a
+            Mechkart reserves the right to cancel or hold orders if a
             transaction appears suspicious or fraudulent. Additional
             verification may be requested in such cases to protect customers.
           </p>

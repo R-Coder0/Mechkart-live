@@ -18,7 +18,7 @@ export default function CancellationAndReturnsPage() {
             1. Overview
           </h2>
           <p>
-            At <strong>Country Home</strong>, we strive to provide a smooth and
+            At <strong>Mechkart</strong>, we strive to provide a smooth and
             transparent shopping experience. This policy explains how order
             cancellations, returns, replacements, and refunds are handled. By
             placing an order on our website, you agree to the terms outlined
@@ -160,7 +160,7 @@ export default function CancellationAndReturnsPage() {
           </p>
 
           <div className="mt-3 rounded-2xl border bg-gray-50 p-4">
-            <p className="font-semibold text-gray-900">Country Home Support</p>
+            <p className="font-semibold text-gray-900">Mechkart Support</p>
             <p className="mt-1">
               Email: <span className="font-medium">contact@Mechkart.co.in</span>
               <br />

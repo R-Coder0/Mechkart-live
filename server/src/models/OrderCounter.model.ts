@@ -1,7 +1,7 @@
 import mongoose, { Schema, Document } from "mongoose";
 
 export interface IOrderCounter extends Document {
-  key: string;   // e.g. CH-20260118
+  key: string;   // e.g. MECH-20260118
   seq: number;   // 1,2,3...
 }
 
