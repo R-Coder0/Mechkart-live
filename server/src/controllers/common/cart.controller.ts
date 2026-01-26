@@ -97,15 +97,22 @@ const enrichCartLean = async (cartLean: any) => {
     _id: { $in: productIds },
     isActive: true,
   })
-    .select("title slug featureImage galleryImages variants colors isActive")
+    .select(
+      "title slug featureImage galleryImages variants colors isActive ownerType vendorId approvalStatus"
+    )
+    .populate({
+      path: "vendorId", // ✅ if your schema uses `vendorId`
+      select: "company.name",
+    })
     .lean();
+
 
   const map = new Map(products.map((p: any) => [String(p._id), p]));
 
-  const items = (cartLean.items || []).map((it: any) => ({
-    ...it,
-    product: map.get(String(it.productId)) || null,
-  }));
+const items = (cartLean.items || []).map((it: any) => ({
+  ...it,
+  product: map.get(String(it.productId)) || null,
+}));
 
   return { ...cartLean, items };
 };
@@ -211,7 +218,7 @@ export const getMyCart = async (req: Request, res: Response, next: NextFunction)
  */
 export const addToCart = async (req: any, res: any) => {
   try {
-   const { productId, variantId = null, colorKey = null, qty = 1, selectOnAdd = false, clearOthers = false } = req.body;
+    const { productId, variantId = null, colorKey = null, qty = 1, selectOnAdd = false, clearOthers = false } = req.body;
 
     const safeQty = Math.max(1, Number(qty) || 1);
     const normColorKey =
@@ -221,7 +228,7 @@ export const addToCart = async (req: any, res: any) => {
     const product = await Product.findById(productId).lean();
     if (!product) return res.status(404).json({ message: "Product not found" });
 
-    const productTitle = product.title || "Product"; 
+    const productTitle = product.title || "Product";
     const productCode = String((product as any).productId || "");
     const productMrp = Number((product as any).mrp) || 0;
     const productSale = Number((product as any).salePrice) || 0;
@@ -289,50 +296,50 @@ export const addToCart = async (req: any, res: any) => {
       const sameColor = String(it.colorKey || "") === String(normColorKey || "");
       return sameProduct && sameVariant && sameColor;
     });
-// ✅ BuyNow behavior: optionally unselect all other items
-// ✅ BuyNow behavior: optionally unselect all other items
-if (clearOthers === true) {
-  for (const it of cart.items as any[]) it.isSelected = false;
-}
+    // ✅ BuyNow behavior: optionally unselect all other items
+    // ✅ BuyNow behavior: optionally unselect all other items
+    if (clearOthers === true) {
+      for (const it of cart.items as any[]) it.isSelected = false;
+    }
 
-// ✅ Selection rules:
-// - default add-to-cart: selected true
-// - buyNow: selected true + clearOthers already handled
-const finalSelected = true;
+    // ✅ Selection rules:
+    // - default add-to-cart: selected true
+    // - buyNow: selected true + clearOthers already handled
+    const finalSelected = true;
 
-const payload: any = {
-  productId,
-  productCode,
-  variantId: hasVariants ? variantId : null,
-  colorKey: normColorKey,
-  qty: safeQty,
-  isSelected: finalSelected,
-  title: productTitle,
-  image: resolvedImage,
-  mrp: resolvedMrp,
-  salePrice: resolvedSalePrice,
-  addedAt: new Date(),
-  updatedAt: new Date(),
-};
+    const payload: any = {
+      productId,
+      productCode,
+      variantId: hasVariants ? variantId : null,
+      colorKey: normColorKey,
+      qty: safeQty,
+      isSelected: finalSelected,
+      title: productTitle,
+      image: resolvedImage,
+      mrp: resolvedMrp,
+      salePrice: resolvedSalePrice,
+      addedAt: new Date(),
+      updatedAt: new Date(),
+    };
 
-if (idx >= 0) {
-  cart.items[idx].qty += safeQty;
-  cart.items[idx].updatedAt = new Date();
+    if (idx >= 0) {
+      cart.items[idx].qty += safeQty;
+      cart.items[idx].updatedAt = new Date();
 
-  // refresh snapshot
-  cart.items[idx].title = payload.title;
-  cart.items[idx].productCode = payload.productCode;
-  cart.items[idx].image = payload.image;
-  cart.items[idx].mrp = payload.mrp;
-  cart.items[idx].salePrice = payload.salePrice;
-  cart.items[idx].colorKey = payload.colorKey;
-  cart.items[idx].variantId = payload.variantId;
+      // refresh snapshot
+      cart.items[idx].title = payload.title;
+      cart.items[idx].productCode = payload.productCode;
+      cart.items[idx].image = payload.image;
+      cart.items[idx].mrp = payload.mrp;
+      cart.items[idx].salePrice = payload.salePrice;
+      cart.items[idx].colorKey = payload.colorKey;
+      cart.items[idx].variantId = payload.variantId;
 
-  // ✅ keep selected true unless BuyNow cleared others
-  cart.items[idx].isSelected = true;
-} else {
-  cart.items.unshift(payload);
-}
+      // ✅ keep selected true unless BuyNow cleared others
+      cart.items[idx].isSelected = true;
+    } else {
+      cart.items.unshift(payload);
+    }
     await cart.save();
 
     // ✅ return enriched cart (same as GET)

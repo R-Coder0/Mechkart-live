@@ -56,6 +56,10 @@ export default function AdminProductsPage() {
   const [loadingCategories, setLoadingCategories] = useState(false);
   const [parentCategoryId, setParentCategoryId] = useState<string>("");
   const [subCategoryId, setSubCategoryId] = useState<string>("");
+const [shipLengthCm, setShipLengthCm] = useState("");
+const [shipBreadthCm, setShipBreadthCm] = useState("");
+const [shipHeightCm, setShipHeightCm] = useState("");
+const [shipWeightKg, setShipWeightKg] = useState("");
 
   // variations
   const [variants, setVariants] = useState<VariantInput[]>([
@@ -370,7 +374,7 @@ export default function AdminProductsPage() {
       setSubmitting(false);
       return;
     }
-
+    
     if (!parentCategoryId) {
       setError("Please select a category");
       setSubmitting(false);
@@ -456,6 +460,7 @@ export default function AdminProductsPage() {
       formData.append("slug", slug);
       formData.append("description", description.trim());
       formData.append("features", featuresText.trim()); // ✅ NEW
+      
 
       formData.append("mrp", baseMrp);
       formData.append("salePrice", baseSalePrice);
@@ -465,6 +470,11 @@ export default function AdminProductsPage() {
         formData.append("subCategoryId", subCategoryId);
       }
       formData.append("isActive", "true");
+    // ✅ Shipping fields (append AFTER formData exists)
+    if (shipLengthCm) formData.append("shipLengthCm", shipLengthCm);
+    if (shipBreadthCm) formData.append("shipBreadthCm", shipBreadthCm);
+    if (shipHeightCm) formData.append("shipHeightCm", shipHeightCm);
+    if (shipWeightKg) formData.append("shipWeightKg", shipWeightKg);
 
       // variants as JSON string (backend normalizeVariants handle karega)
       if (cleanVariants.length > 0) {
@@ -947,6 +957,95 @@ export default function AdminProductsPage() {
               </div>
             </div>
           </div>
+{/* Shipping Details */}
+{/* Shipping Details Card */}
+<div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+  <div className="px-6 py-3 border-b border-gray-200 bg-slate-50">
+    <h2 className="text-sm font-semibold text-slate-800 flex items-center gap-2">
+      <svg
+        className="w-4 h-4 text-slate-500"
+        fill="none"
+        stroke="currentColor"
+        viewBox="0 0 24 24"
+      >
+        <path
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          strokeWidth={2}
+          d="M3 7h13l4 4v6a2 2 0 01-2 2H7a2 2 0 01-2-2V7zm13 0V5a2 2 0 00-2-2H5a2 2 0 00-2 2v2m4 12a2 2 0 100-4 2 2 0 000 4zm10 0a2 2 0 100-4 2 2 0 000 4z"
+        />
+      </svg>
+      Shipping Details
+    </h2>
+  </div>
+
+  <div className="p-6">
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+      {/* Length */}
+      <div className="space-y-2">
+        <label className="text-sm font-medium text-slate-700">Length (cm)</label>
+        <input
+          type="number"
+          min={0}
+          value={shipLengthCm}
+          onChange={(e) => setShipLengthCm(e.target.value)}
+          className="w-full border border-gray-300 rounded-md px-3 py-2.5 text-sm outline-none transition-all focus:ring-1 focus:ring-slate-900 focus:border-slate-900 bg-white"
+          placeholder="e.g. 30"
+        />
+        <p className="text-xs text-slate-500">Package length in centimeters.</p>
+      </div>
+
+      {/* Breadth */}
+      <div className="space-y-2">
+        <label className="text-sm font-medium text-slate-700">Breadth (cm)</label>
+        <input
+          type="number"
+          min={0}
+          value={shipBreadthCm}
+          onChange={(e) => setShipBreadthCm(e.target.value)}
+          className="w-full border border-gray-300 rounded-md px-3 py-2.5 text-sm outline-none transition-all focus:ring-1 focus:ring-slate-900 focus:border-slate-900 bg-white"
+          placeholder="e.g. 20"
+        />
+        <p className="text-xs text-slate-500">Package breadth in centimeters.</p>
+      </div>
+
+      {/* Height */}
+      <div className="space-y-2">
+        <label className="text-sm font-medium text-slate-700">Height (cm)</label>
+        <input
+          type="number"
+          min={0}
+          value={shipHeightCm}
+          onChange={(e) => setShipHeightCm(e.target.value)}
+          className="w-full border border-gray-300 rounded-md px-3 py-2.5 text-sm outline-none transition-all focus:ring-1 focus:ring-slate-900 focus:border-slate-900 bg-white"
+          placeholder="e.g. 10"
+        />
+        <p className="text-xs text-slate-500">Package height in centimeters.</p>
+      </div>
+
+      {/* Weight */}
+      <div className="space-y-2">
+        <label className="text-sm font-medium text-slate-700">Weight (kg)</label>
+        <input
+          type="number"
+          min={0}
+          step="0.01"
+          value={shipWeightKg}
+          onChange={(e) => setShipWeightKg(e.target.value)}
+          className="w-full border border-gray-300 rounded-md px-3 py-2.5 text-sm outline-none transition-all focus:ring-1 focus:ring-slate-900 focus:border-slate-900 bg-white"
+          placeholder="e.g. 0.75"
+        />
+        <p className="text-xs text-slate-500">Total package weight in kilograms.</p>
+      </div>
+    </div>
+
+    <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 px-4 py-3">
+      <p className="text-xs text-slate-600">
+        These fields help calculate shipping rates and generate labels correctly (Shiprocket/other couriers).
+      </p>
+    </div>
+  </div>
+</div>
 
           {/* Categories Card */}
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">

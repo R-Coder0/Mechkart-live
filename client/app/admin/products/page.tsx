@@ -59,6 +59,11 @@ interface Product {
   title: string;
   slug: string;
   description?: string;
+  shipLengthCm?: number;
+  shipBreadthCm?: number;
+  shipHeightCm?: number;
+  shipWeightKg?: number;
+
   features: string;
   featureImage?: string;
   galleryImages: string[];
@@ -111,6 +116,11 @@ export default function AdminProductsListPage() {
   const [message, setMessage] = useState<string | null>(null);
 
   const [search, setSearch] = useState("");
+  const [editShipLengthCm, setEditShipLengthCm] = useState("");
+  const [editShipBreadthCm, setEditShipBreadthCm] = useState("");
+  const [editShipHeightCm, setEditShipHeightCm] = useState("");
+  const [editShipWeightKg, setEditShipWeightKg] = useState("");
+
 
   // edit modal state
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
@@ -125,10 +135,10 @@ export default function AdminProductsListPage() {
   const [editMrp, setEditMrp] = useState("");
   const [editSalePrice, setEditSalePrice] = useState("");
   const [editIsActive, setEditIsActive] = useState(true);
-const [editFeatureExisting, setEditFeatureExisting] = useState<string>(""); // existing path
-const [editFeatureNewFile, setEditFeatureNewFile] = useState<File | null>(null);
-const [editFeatureNewPreview, setEditFeatureNewPreview] = useState<string>("");
-const [removeFeatureImage, setRemoveFeatureImage] = useState(false);
+  const [editFeatureExisting, setEditFeatureExisting] = useState<string>(""); // existing path
+  const [editFeatureNewFile, setEditFeatureNewFile] = useState<File | null>(null);
+  const [editFeatureNewPreview, setEditFeatureNewPreview] = useState<string>("");
+  const [removeFeatureImage, setRemoveFeatureImage] = useState(false);
 
   // gallery editing state
   const [editGalleryExisting, setEditGalleryExisting] = useState<string[]>([]);
@@ -150,9 +160,9 @@ const [removeFeatureImage, setRemoveFeatureImage] = useState(false);
 
   const [savingEdit, setSavingEdit] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
-const [editVariantNewFiles, setEditVariantNewFiles] = useState<Record<number, File[]>>({});
-const [editVariantNewPreviews, setEditVariantNewPreviews] = useState<Record<number, string[]>>({});
-const [editVariantRemovedImages, setEditVariantRemovedImages] = useState<Record<number, string[]>>({});
+  const [editVariantNewFiles, setEditVariantNewFiles] = useState<Record<number, File[]>>({});
+  const [editVariantNewPreviews, setEditVariantNewPreviews] = useState<Record<number, string[]>>({});
+  const [editVariantRemovedImages, setEditVariantRemovedImages] = useState<Record<number, string[]>>({});
 
   const getToken = () => {
     if (typeof window === "undefined") return null;
@@ -290,12 +300,17 @@ const [editVariantRemovedImages, setEditVariantRemovedImages] = useState<Record<
     setEditIsActive(product.isActive);
     setEditError(null);
     setEditBaseStock(String(product.baseStock ?? ""));
+    setEditShipLengthCm(product.shipLengthCm != null ? String(product.shipLengthCm) : "");
+    setEditShipBreadthCm(product.shipBreadthCm != null ? String(product.shipBreadthCm) : "");
+    setEditShipHeightCm(product.shipHeightCm != null ? String(product.shipHeightCm) : "");
+    setEditShipWeightKg(product.shipWeightKg != null ? String(product.shipWeightKg) : "");
+
     setEditLowStockThreshold(String(product.lowStockThreshold ?? ""));
-// feature image
-setEditFeatureExisting(product.featureImage || "");
-setEditFeatureNewFile(null);
-setEditFeatureNewPreview("");
-setRemoveFeatureImage(false);
+    // feature image
+    setEditFeatureExisting(product.featureImage || "");
+    setEditFeatureNewFile(null);
+    setEditFeatureNewPreview("");
+    setRemoveFeatureImage(false);
     // gallery
     setEditGalleryExisting(product.galleryImages || []);
     setEditGalleryNewFiles([]);
@@ -344,9 +359,9 @@ setRemoveFeatureImage(false);
 
     setEditVariants(mappedVariants);
     // variant images editing maps reset
-setEditVariantNewFiles({});
-setEditVariantNewPreviews({});
-setEditVariantRemovedImages({});
+    setEditVariantNewFiles({});
+    setEditVariantNewPreviews({});
+    setEditVariantRemovedImages({});
   };
 
   const closeEditModal = () => {
@@ -356,16 +371,20 @@ setEditVariantRemovedImages({});
     setEditGalleryNewFiles([]);
     setEditGalleryNewPreviews([]);
     setEditColors([]);
-    
-setEditColorNewPreviews({});
-setEditFeatureExisting("");
-setEditFeatureNewFile(null);
-setEditFeatureNewPreview("");
-setRemoveFeatureImage(false);
 
-setEditVariantNewFiles({});
-setEditVariantNewPreviews({});
-setEditVariantRemovedImages({});
+    setEditColorNewPreviews({});
+    setEditFeatureExisting("");
+    setEditFeatureNewFile(null);
+    setEditFeatureNewPreview("");
+    setRemoveFeatureImage(false);
+    setEditShipLengthCm("");
+    setEditShipBreadthCm("");
+    setEditShipHeightCm("");
+    setEditShipWeightKg("");
+
+    setEditVariantNewFiles({});
+    setEditVariantNewPreviews({});
+    setEditVariantRemovedImages({});
   };
   const handleEditColorChange = (
     index: number,
@@ -406,7 +425,7 @@ setEditVariantRemovedImages({});
       return next;
     });
   };
-  
+
   const handleEditColorImageUpload = (index: number, files: FileList | null) => {
     if (!files) return;
     const arr = Array.from(files);
@@ -452,23 +471,23 @@ setEditVariantRemovedImages({});
       [colorIndex]: (prev[colorIndex] || []).filter((_, i) => i !== fileIndex),
     }));
   };
-const handleEditFeatureImageChange = (files: FileList | null) => {
-  if (!files || files.length === 0) return;
-  const file = files[0];
-  setEditFeatureNewFile(file);
-  setEditFeatureNewPreview(URL.createObjectURL(file));
-  setRemoveFeatureImage(false); // new file aaya toh remove flag false
-};
+  const handleEditFeatureImageChange = (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    const file = files[0];
+    setEditFeatureNewFile(file);
+    setEditFeatureNewPreview(URL.createObjectURL(file));
+    setRemoveFeatureImage(false); // new file aaya toh remove flag false
+  };
 
-const removeExistingFeatureImage = () => {
-  setEditFeatureExisting("");
-  setRemoveFeatureImage(true);
-};
+  const removeExistingFeatureImage = () => {
+    setEditFeatureExisting("");
+    setRemoveFeatureImage(true);
+  };
 
-const removeNewFeatureImage = () => {
-  setEditFeatureNewFile(null);
-  setEditFeatureNewPreview("");
-};
+  const removeNewFeatureImage = () => {
+    setEditFeatureNewFile(null);
+    setEditFeatureNewPreview("");
+  };
 
   // gallery handlers inside modal
   const handleEditGalleryAdd = (
@@ -518,49 +537,49 @@ const removeNewFeatureImage = () => {
       },
     ]);
   };
-const handleEditVariantImageUpload = (variantIndex: number, files: FileList | null) => {
-  if (!files) return;
-  const arr = Array.from(files);
-  const previews = arr.map((f) => URL.createObjectURL(f));
+  const handleEditVariantImageUpload = (variantIndex: number, files: FileList | null) => {
+    if (!files) return;
+    const arr = Array.from(files);
+    const previews = arr.map((f) => URL.createObjectURL(f));
 
-  setEditVariantNewFiles((prev) => ({
-    ...prev,
-    [variantIndex]: [...(prev[variantIndex] || []), ...arr],
-  }));
+    setEditVariantNewFiles((prev) => ({
+      ...prev,
+      [variantIndex]: [...(prev[variantIndex] || []), ...arr],
+    }));
 
-  setEditVariantNewPreviews((prev) => ({
-    ...prev,
-    [variantIndex]: [...(prev[variantIndex] || []), ...previews],
-  }));
-};
+    setEditVariantNewPreviews((prev) => ({
+      ...prev,
+      [variantIndex]: [...(prev[variantIndex] || []), ...previews],
+    }));
+  };
 
-const removeExistingVariantImage = (variantIndex: number, imgPath: string) => {
-  // remove from editVariants.images
-  setEditVariants((prev) => {
-    const copy = [...prev];
-    const v = copy[variantIndex];
-    copy[variantIndex] = { ...v, images: (v.images || []).filter((x) => x !== imgPath) };
-    return copy;
-  });
+  const removeExistingVariantImage = (variantIndex: number, imgPath: string) => {
+    // remove from editVariants.images
+    setEditVariants((prev) => {
+      const copy = [...prev];
+      const v = copy[variantIndex];
+      copy[variantIndex] = { ...v, images: (v.images || []).filter((x) => x !== imgPath) };
+      return copy;
+    });
 
-  // track removed
-  setEditVariantRemovedImages((prev) => ({
-    ...prev,
-    [variantIndex]: [...(prev[variantIndex] || []), imgPath],
-  }));
-};
+    // track removed
+    setEditVariantRemovedImages((prev) => ({
+      ...prev,
+      [variantIndex]: [...(prev[variantIndex] || []), imgPath],
+    }));
+  };
 
-const removeNewVariantImage = (variantIndex: number, fileIndex: number) => {
-  setEditVariantNewFiles((prev) => ({
-    ...prev,
-    [variantIndex]: (prev[variantIndex] || []).filter((_, i) => i !== fileIndex),
-  }));
+  const removeNewVariantImage = (variantIndex: number, fileIndex: number) => {
+    setEditVariantNewFiles((prev) => ({
+      ...prev,
+      [variantIndex]: (prev[variantIndex] || []).filter((_, i) => i !== fileIndex),
+    }));
 
-  setEditVariantNewPreviews((prev) => ({
-    ...prev,
-    [variantIndex]: (prev[variantIndex] || []).filter((_, i) => i !== fileIndex),
-  }));
-};
+    setEditVariantNewPreviews((prev) => ({
+      ...prev,
+      [variantIndex]: (prev[variantIndex] || []).filter((_, i) => i !== fileIndex),
+    }));
+  };
 
   const removeEditVariantRow = (index: number) => {
     setEditVariants((prev) => prev.filter((_, i) => i !== index));
@@ -583,30 +602,30 @@ const removeNewVariantImage = (variantIndex: number, fileIndex: number) => {
       }
 
       // 1️⃣ CLEAN VARIANTS
-const cleanVariants = editVariants
-  .filter(
-    (v) =>
-      v._id || // keep even if only image removal
-      v.label ||
-      v.size ||
-      v.weight ||
-      v.comboText ||
-      v.mrp.trim() !== "" ||
-      v.salePrice.trim() !== "" ||
-      v.quantity.trim() !== "" ||
-      (v.images && v.images.length >= 0) // images array always relevant
-  )
-  .map((v) => ({
-    _id: v._id, // ✅ MUST
-    label: v.label || undefined,
-    size: v.size || undefined,
-    weight: v.weight || undefined,
-    comboText: v.comboText || undefined,
-    mrp: Number(v.mrp || 0),
-    salePrice: Number(v.salePrice || 0),
-    quantity: Number(v.quantity || 0),
-    images: v.images || [], // ✅ this should reflect removed images already
-  }));
+      const cleanVariants = editVariants
+        .filter(
+          (v) =>
+            v._id || // keep even if only image removal
+            v.label ||
+            v.size ||
+            v.weight ||
+            v.comboText ||
+            v.mrp.trim() !== "" ||
+            v.salePrice.trim() !== "" ||
+            v.quantity.trim() !== "" ||
+            (v.images && v.images.length >= 0) // images array always relevant
+        )
+        .map((v) => ({
+          _id: v._id, // ✅ MUST
+          label: v.label || undefined,
+          size: v.size || undefined,
+          weight: v.weight || undefined,
+          comboText: v.comboText || undefined,
+          mrp: Number(v.mrp || 0),
+          salePrice: Number(v.salePrice || 0),
+          quantity: Number(v.quantity || 0),
+          images: v.images || [], // ✅ this should reflect removed images already
+        }));
 
       const hasAnyVariantDraft = editVariants.some(
         (v) =>
@@ -645,13 +664,19 @@ const cleanVariants = editVariants
       formData.append("features", editFeatures); // ✅ NEW
       formData.append("mrp", editMrp);
       formData.append("salePrice", editSalePrice);
+      // ✅ Shipping data
+if (editShipLengthCm.trim() !== "") formData.append("shipLengthCm", editShipLengthCm);
+if (editShipBreadthCm.trim() !== "") formData.append("shipBreadthCm", editShipBreadthCm);
+if (editShipHeightCm.trim() !== "") formData.append("shipHeightCm", editShipHeightCm);
+if (editShipWeightKg.trim() !== "") formData.append("shipWeightKg", editShipWeightKg);
+
       // feature image handling
-if (removeFeatureImage) {
-  formData.append("removeFeatureImage", "true");
-}
-if (editFeatureNewFile) {
-  formData.append("featureImage", editFeatureNewFile);
-}
+      if (removeFeatureImage) {
+        formData.append("removeFeatureImage", "true");
+      }
+      if (editFeatureNewFile) {
+        formData.append("featureImage", editFeatureNewFile);
+      }
       formData.append("isActive", editIsActive ? "true" : "false");
       formData.append("categoryId", editCategoryId);
 
@@ -682,20 +707,20 @@ if (editFeatureNewFile) {
       editGalleryNewFiles.forEach((file) => {
         formData.append("galleryImages", file);
       });
-// variant images uploads
-Object.entries(editVariantNewFiles).forEach(([k, files]) => {
-  const idx = Number(k);
-  (files || []).forEach((file) => {
-    formData.append(`variantImages[${idx}]`, file);
-  });
-});
+      // variant images uploads
+      Object.entries(editVariantNewFiles).forEach(([k, files]) => {
+        const idx = Number(k);
+        (files || []).forEach((file) => {
+          formData.append(`variantImages[${idx}]`, file);
+        });
+      });
 
-// variant removed images info
-const removedVariantImagesPayload = Object.entries(editVariantRemovedImages).map(([k, imgs]) => ({
-  variantId: editVariants[Number(k)]?._id, // ✅
-  images: imgs || [],
-}));
-formData.append("removedVariantImages", JSON.stringify(removedVariantImagesPayload));
+      // variant removed images info
+      const removedVariantImagesPayload = Object.entries(editVariantRemovedImages).map(([k, imgs]) => ({
+        variantId: editVariants[Number(k)]?._id, // ✅
+        images: imgs || [],
+      }));
+      formData.append("removedVariantImages", JSON.stringify(removedVariantImagesPayload));
 
       // stock logic
       if (hasVariants) {
@@ -930,7 +955,7 @@ formData.append("removedVariantImages", JSON.stringify(removedVariantImagesPaylo
                   <th className="px-4 py-2.5 text-left text-xs font-semibold text-slate-600 uppercase tracking-wide">
                     Created
                   </th>
-                                    <th className="px-4 py-2.5 text-left text-xs font-semibold text-slate-600 uppercase tracking-wide">
+                  <th className="px-4 py-2.5 text-left text-xs font-semibold text-slate-600 uppercase tracking-wide">
                     Actions
                   </th>
 
@@ -1263,6 +1288,66 @@ formData.append("removedVariantImages", JSON.stringify(removedVariantImagesPaylo
                   </div>
                 </div>
 
+{/* Shipping (cm/kg) */}
+<div className="space-y-2">
+  <label className="text-xs font-medium text-slate-700">Shipping / Courier Dimensions</label>
+
+  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+    <div className="space-y-1">
+      <label className="text-[11px] text-slate-600">Length (cm)</label>
+      <input
+        type="number"
+        min={0}
+        value={editShipLengthCm}
+        onChange={(e) => setEditShipLengthCm(e.target.value)}
+        className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm bg-white"
+        placeholder="e.g. 25"
+      />
+    </div>
+
+    <div className="space-y-1">
+      <label className="text-[11px] text-slate-600">Breadth (cm)</label>
+      <input
+        type="number"
+        min={0}
+        value={editShipBreadthCm}
+        onChange={(e) => setEditShipBreadthCm(e.target.value)}
+        className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm bg-white"
+        placeholder="e.g. 18"
+      />
+    </div>
+
+    <div className="space-y-1">
+      <label className="text-[11px] text-slate-600">Height (cm)</label>
+      <input
+        type="number"
+        min={0}
+        value={editShipHeightCm}
+        onChange={(e) => setEditShipHeightCm(e.target.value)}
+        className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm bg-white"
+        placeholder="e.g. 10"
+      />
+    </div>
+
+    <div className="space-y-1">
+      <label className="text-[11px] text-slate-600">Weight (kg)</label>
+      <input
+        type="number"
+        min={0}
+        step="0.01"
+        value={editShipWeightKg}
+        onChange={(e) => setEditShipWeightKg(e.target.value)}
+        className="w-full border border-gray-300 rounded-md px-3 py-2 text-sm bg-white"
+        placeholder="e.g. 0.75"
+      />
+    </div>
+  </div>
+
+  <p className="text-[11px] text-slate-500">
+    Used for courier/Shiprocket volumetric weight calculation.
+  </p>
+</div>
+
                 {/* Stock section (responsive) */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   {!hasVariants && (
@@ -1461,62 +1546,62 @@ formData.append("removedVariantImages", JSON.stringify(removedVariantImagesPaylo
                     Note: Color images are used for PDP gallery switching. Keep default color orderIndex = 0.
                   </p>
                 </div>
-{/* Feature Image */}
-<div className="space-y-2">
-  <label className="text-xs font-medium text-slate-700">Feature Image</label>
+                {/* Feature Image */}
+                <div className="space-y-2">
+                  <label className="text-xs font-medium text-slate-700">Feature Image</label>
 
-  {/* existing */}
-  {editFeatureExisting && !removeFeatureImage && (
-    <div className="flex items-center gap-3">
-      <div className="relative w-20 h-20 rounded-md overflow-hidden border border-slate-200 bg-slate-50">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={resolveImageUrl(editFeatureExisting)}
-          alt="Feature"
-          className="w-full h-full object-cover"
-        />
-        <button
-          type="button"
-          onClick={removeExistingFeatureImage}
-          className="absolute top-1 right-1 bg-white/90 rounded-full w-5 h-5 text-[12px] flex items-center justify-center text-red-600 shadow"
-          title="Remove"
-        >
-          ×
-        </button>
-      </div>
-      <p className="text-[11px] text-slate-500">
-        Removing existing feature image will clear it (unless you upload a new one).
-      </p>
-    </div>
-  )}
+                  {/* existing */}
+                  {editFeatureExisting && !removeFeatureImage && (
+                    <div className="flex items-center gap-3">
+                      <div className="relative w-20 h-20 rounded-md overflow-hidden border border-slate-200 bg-slate-50">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={resolveImageUrl(editFeatureExisting)}
+                          alt="Feature"
+                          className="w-full h-full object-cover"
+                        />
+                        <button
+                          type="button"
+                          onClick={removeExistingFeatureImage}
+                          className="absolute top-1 right-1 bg-white/90 rounded-full w-5 h-5 text-[12px] flex items-center justify-center text-red-600 shadow"
+                          title="Remove"
+                        >
+                          ×
+                        </button>
+                      </div>
+                      <p className="text-[11px] text-slate-500">
+                        Removing existing feature image will clear it (unless you upload a new one).
+                      </p>
+                    </div>
+                  )}
 
-  {/* new preview */}
-  {editFeatureNewPreview && (
-    <div className="relative w-20 h-20 rounded-md overflow-hidden border border-slate-200 bg-slate-50">
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img src={editFeatureNewPreview} alt="New Feature" className="w-full h-full object-cover" />
-      <button
-        type="button"
-        onClick={removeNewFeatureImage}
-        className="absolute top-1 right-1 bg-white/90 rounded-full w-5 h-5 text-[12px] flex items-center justify-center text-red-600 shadow"
-        title="Remove new"
-      >
-        ×
-      </button>
-    </div>
-  )}
+                  {/* new preview */}
+                  {editFeatureNewPreview && (
+                    <div className="relative w-20 h-20 rounded-md overflow-hidden border border-slate-200 bg-slate-50">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={editFeatureNewPreview} alt="New Feature" className="w-full h-full object-cover" />
+                      <button
+                        type="button"
+                        onClick={removeNewFeatureImage}
+                        className="absolute top-1 right-1 bg-white/90 rounded-full w-5 h-5 text-[12px] flex items-center justify-center text-red-600 shadow"
+                        title="Remove new"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  )}
 
-  {/* upload */}
-  <label className="inline-flex items-center justify-center px-3 py-1.5 border border-dashed border-slate-300 rounded-md text-[11px] text-slate-700 bg-slate-50 hover:bg-slate-100 cursor-pointer transition-colors">
-    <input
-      type="file"
-      accept="image/*"
-      className="hidden"
-      onChange={(e) => handleEditFeatureImageChange(e.target.files)}
-    />
-    Upload Feature Image
-  </label>
-</div>
+                  {/* upload */}
+                  <label className="inline-flex items-center justify-center px-3 py-1.5 border border-dashed border-slate-300 rounded-md text-[11px] text-slate-700 bg-slate-50 hover:bg-slate-100 cursor-pointer transition-colors">
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={(e) => handleEditFeatureImageChange(e.target.files)}
+                    />
+                    Upload Feature Image
+                  </label>
+                </div>
 
 
                 {/* Gallery edit */}
@@ -1671,7 +1756,7 @@ formData.append("removedVariantImages", JSON.stringify(removedVariantImagesPaylo
                               placeholder="Weight"
                               className="border border-gray-300 rounded-md px-2 py-1.5 text-[11px] outline-none focus:ring-1 focus:ring-slate-900 focus:border-slate-900 bg-white"
                             />
-                            
+
                             <input
                               type="text"
                               value={v.comboText}
@@ -1728,72 +1813,72 @@ formData.append("removedVariantImages", JSON.stringify(removedVariantImagesPaylo
                               className="border border-gray-300 rounded-md px-2 py-1.5 text-[11px] outline-none focus:ring-1 focus:ring-slate-900 focus:border-slate-900 bg-white"
                             />
                             {/* Variant Images */}
-<div className="space-y-2">
-  <div className="flex items-center justify-between">
-    <p className="text-[11px] font-semibold text-slate-700">Variant Images</p>
+                            <div className="space-y-2">
+                              <div className="flex items-center justify-between">
+                                <p className="text-[11px] font-semibold text-slate-700">Variant Images</p>
 
-    <label className="inline-flex items-center justify-center px-2 py-1 border border-dashed border-slate-300 rounded-md text-[11px] text-slate-700 bg-white hover:bg-slate-50 cursor-pointer transition-colors">
-      <input
-        type="file"
-        accept="image/*"
-        multiple
-        className="hidden"
-        onChange={(e) => handleEditVariantImageUpload(index, e.target.files)}
-      />
-      Upload
-    </label>
-  </div>
+                                <label className="inline-flex items-center justify-center px-2 py-1 border border-dashed border-slate-300 rounded-md text-[11px] text-slate-700 bg-white hover:bg-slate-50 cursor-pointer transition-colors">
+                                  <input
+                                    type="file"
+                                    accept="image/*"
+                                    multiple
+                                    className="hidden"
+                                    onChange={(e) => handleEditVariantImageUpload(index, e.target.files)}
+                                  />
+                                  Upload
+                                </label>
+                              </div>
 
-  {/* existing images */}
-  {(v.images || []).length > 0 && (
-    <div className="flex flex-wrap gap-1">
-      {(v.images || []).map((imgPath, imgIdx) => (
-        <div
-          key={`${imgPath}-${imgIdx}`}
-          className="relative w-10 h-10 rounded border border-slate-200 overflow-hidden bg-slate-50"
-        >
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={resolveImageUrl(imgPath)}
-            alt={`Variant ${index + 1}-${imgIdx + 1}`}
-            className="w-full h-full object-cover"
-          />
-          <button
-            type="button"
-            onClick={() => removeExistingVariantImage(index, imgPath)}
-            className="absolute top-0 right-0 bg-white/90 text-red-600 rounded-full w-4 h-4 text-[10px] flex items-center justify-center shadow"
-            title="Remove"
-          >
-            ×
-          </button>
-        </div>
-      ))}
-    </div>
-  )}
+                              {/* existing images */}
+                              {(v.images || []).length > 0 && (
+                                <div className="flex flex-wrap gap-1">
+                                  {(v.images || []).map((imgPath, imgIdx) => (
+                                    <div
+                                      key={`${imgPath}-${imgIdx}`}
+                                      className="relative w-10 h-10 rounded border border-slate-200 overflow-hidden bg-slate-50"
+                                    >
+                                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                                      <img
+                                        src={resolveImageUrl(imgPath)}
+                                        alt={`Variant ${index + 1}-${imgIdx + 1}`}
+                                        className="w-full h-full object-cover"
+                                      />
+                                      <button
+                                        type="button"
+                                        onClick={() => removeExistingVariantImage(index, imgPath)}
+                                        className="absolute top-0 right-0 bg-white/90 text-red-600 rounded-full w-4 h-4 text-[10px] flex items-center justify-center shadow"
+                                        title="Remove"
+                                      >
+                                        ×
+                                      </button>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
 
-  {/* new previews */}
-  {(editVariantNewPreviews[index] || []).length > 0 && (
-    <div className="flex flex-wrap gap-1">
-      {(editVariantNewPreviews[index] || []).map((src, imgIdx) => (
-        <div
-          key={`${src}-${imgIdx}`}
-          className="relative w-10 h-10 rounded border border-slate-200 overflow-hidden bg-slate-50"
-        >
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={src} alt={`New Variant ${index + 1}-${imgIdx + 1}`} className="w-full h-full object-cover" />
-          <button
-            type="button"
-            onClick={() => removeNewVariantImage(index, imgIdx)}
-            className="absolute top-0 right-0 bg-white/90 text-red-600 rounded-full w-4 h-4 text-[10px] flex items-center justify-center shadow"
-            title="Remove new"
-          >
-            ×
-          </button>
-        </div>
-      ))}
-    </div>
-  )}
-</div>
+                              {/* new previews */}
+                              {(editVariantNewPreviews[index] || []).length > 0 && (
+                                <div className="flex flex-wrap gap-1">
+                                  {(editVariantNewPreviews[index] || []).map((src, imgIdx) => (
+                                    <div
+                                      key={`${src}-${imgIdx}`}
+                                      className="relative w-10 h-10 rounded border border-slate-200 overflow-hidden bg-slate-50"
+                                    >
+                                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                                      <img src={src} alt={`New Variant ${index + 1}-${imgIdx + 1}`} className="w-full h-full object-cover" />
+                                      <button
+                                        type="button"
+                                        onClick={() => removeNewVariantImage(index, imgIdx)}
+                                        className="absolute top-0 right-0 bg-white/90 text-red-600 rounded-full w-4 h-4 text-[10px] flex items-center justify-center shadow"
+                                        title="Remove new"
+                                      >
+                                        ×
+                                      </button>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
 
                           </div>
 

@@ -17,6 +17,15 @@ export interface IOrderItem {
   image?: string | null;
   mrp: number;
   salePrice: number;
+
+  // ✅ optional (recommended for multi-vendor split)
+  ownerType?: "ADMIN" | "VENDOR";
+  vendorId?: Types.ObjectId | null;
+  soldBy?: string | null;
+
+  // ✅ optional (if you want to persist offer allocation per line)
+  offerDiscount?: number;     // line offer discount
+  finalLineTotal?: number;    // lineTotal after offer discount
 }
 
 /* =========================
@@ -99,6 +108,39 @@ export interface IOrderShipment {
 }
 
 /* =========================
+ * SubOrder (NEW)
+ * ========================= */
+export type SubOrderStatus =
+  | "PLACED"
+  | "CONFIRMED"
+  | "SHIPPED"
+  | "DELIVERED"
+  | "CANCELLED";
+
+export interface ISubOrder {
+  // vendor-wise split
+  ownerType: "ADMIN" | "VENDOR";
+  vendorId?: Types.ObjectId | null;
+  vendorName?: string | null; // snapshot
+
+  soldBy: string; // "Mechkart" or vendor company name snapshot
+
+  items: IOrderItem[];
+
+  subtotal: number; // items sum (after offer allocation if you store it)
+  shipping: number; // for now 0
+  total: number;    // subtotal + shipping
+
+  status: SubOrderStatus;
+
+  // shipment snapshot per subOrder (recommended)
+  shipment?: IOrderShipment | null;
+
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+/* =========================
  * RETURN & REFUND
  * ========================= */
 
@@ -122,13 +164,9 @@ export interface IOrderReturn {
   requestedAt: Date;
   reason: string;
 
-  // ✅ optional description (not mandatory)
   note?: string | null;
-
-  // ✅ user can upload up to 5 images (urls stored)
   images?: string[];
 
-  // ✅ COD refund needs bank details (captured at request time)
   bankDetails?: IReturnBankDetails | null;
 
   // optional: partial return
@@ -147,7 +185,6 @@ export interface IOrderReturn {
   rejectedAt?: Date | null;
   rejectReason?: string | null;
 
-  // optional: return shipment snapshot (future use)
   returnShipment?: IOrderShipment | null;
 }
 
@@ -175,7 +212,11 @@ export interface IOrder extends Document {
 
   parentOrderId?: Types.ObjectId | null;
 
+  // ✅ legacy flat items (keep for compatibility)
   items: IOrderItem[];
+
+  // ✅ NEW: multi-vendor split
+  subOrders?: ISubOrder[];
 
   totals: {
     subtotal: number;
@@ -198,19 +239,19 @@ export interface IOrder extends Document {
   contact: IOrderContact;
   address: IOrderAddress;
 
+  // ✅ keep existing
   paymentMethod: "COD" | "ONLINE";
-  paymentStatus: "PENDING" | "PAID" | "FAILED";
+  paymentStatus: "PENDING" | "PAID" | "FAILED" | "COD_PENDING_CONFIRMATION"; // ✅ added
 
-  // NOTE: keep original order flow status only
   status: "PLACED" | "CONFIRMED" | "SHIPPED" | "DELIVERED" | "CANCELLED";
 
   // Razorpay + COD snapshots
   pg?: any;
   cod?: any;
 
+  // ✅ legacy shipments (keep)
   shipments?: IOrderShipment[];
 
-  // ✅ Return & refund separate (does NOT change order.status)
   return?: IOrderReturn | null;
   refund?: IOrderRefund | null;
 
@@ -238,6 +279,15 @@ const OrderItemSchema = new Schema<IOrderItem>(
 
     mrp: { type: Number, required: true, min: 0 },
     salePrice: { type: Number, required: true, min: 0 },
+
+    // ✅ ownership snapshot (optional)
+    ownerType: { type: String, enum: ["ADMIN", "VENDOR"], default: "ADMIN" },
+    vendorId: { type: Schema.Types.ObjectId, ref: "Vendor", default: null },
+    soldBy: { type: String, default: null, trim: true },
+
+    // ✅ offer allocation (optional)
+    offerDiscount: { type: Number, default: 0, min: 0 },
+    finalLineTotal: { type: Number, default: 0, min: 0 },
   },
   { _id: false }
 );
@@ -301,7 +351,33 @@ const OrderShipmentSchema = new Schema<IOrderShipment>(
   { timestamps: true }
 );
 
-/** ✅ NEW: Bank details schema for COD returns */
+// ✅ SubOrder schema (NEW)
+const SubOrderSchema = new Schema<ISubOrder>(
+  {
+    ownerType: { type: String, enum: ["ADMIN", "VENDOR"], required: true },
+    vendorId: { type: Schema.Types.ObjectId, ref: "Vendor", default: null },
+    vendorName: { type: String, default: null, trim: true },
+
+    soldBy: { type: String, required: true, trim: true },
+
+    items: { type: [OrderItemSchema], default: [] },
+
+    subtotal: { type: Number, required: true, default: 0 },
+    shipping: { type: Number, required: true, default: 0 },
+    total: { type: Number, required: true, default: 0 },
+
+    status: {
+      type: String,
+      enum: ["PLACED", "CONFIRMED", "SHIPPED", "DELIVERED", "CANCELLED"],
+      default: "PLACED",
+    },
+
+    shipment: { type: OrderShipmentSchema, default: null },
+  },
+  { timestamps: true }
+);
+
+/** ✅ Bank details schema for COD returns */
 const ReturnBankDetailsSchema = new Schema<IReturnBankDetails>(
   {
     accountHolderName: { type: String, required: true, trim: true },
@@ -318,10 +394,8 @@ const OrderReturnSchema = new Schema<IOrderReturn>(
     requestedAt: { type: Date, default: Date.now },
     reason: { type: String, required: true, trim: true },
 
-    // optional description
     note: { type: String, default: null, trim: true },
 
-    // ✅ up to 5 images (urls)
     images: {
       type: [String],
       default: [],
@@ -334,7 +408,6 @@ const OrderReturnSchema = new Schema<IOrderReturn>(
       },
     },
 
-    // ✅ COD bank details snapshot
     bankDetails: { type: ReturnBankDetailsSchema, default: null },
 
     items: {
@@ -346,7 +419,7 @@ const OrderReturnSchema = new Schema<IOrderReturn>(
           colorKey: { type: String, default: null, trim: true },
         },
       ],
-      default: undefined, // optional
+      default: undefined,
     },
 
     status: {
@@ -389,7 +462,11 @@ const OrderSchema = new Schema<IOrder>(
 
     parentOrderId: { type: Schema.Types.ObjectId, ref: "Order", default: null, index: true },
 
-    items: { type: [OrderItemSchema], required: true },
+    // ✅ legacy
+    items: { type: [OrderItemSchema], required: true, default: [] },
+
+    // ✅ NEW
+    subOrders: { type: [SubOrderSchema], default: [] },
 
     totals: {
       type: {
@@ -428,7 +505,11 @@ const OrderSchema = new Schema<IOrder>(
     },
 
     paymentMethod: { type: String, enum: ["COD", "ONLINE"], required: true },
-    paymentStatus: { type: String, enum: ["PENDING", "PAID", "FAILED"], default: "PENDING" },
+    paymentStatus: {
+      type: String,
+      enum: ["PENDING", "PAID", "FAILED", "COD_PENDING_CONFIRMATION"],
+      default: "PENDING",
+    },
 
     status: {
       type: String,
@@ -439,9 +520,9 @@ const OrderSchema = new Schema<IOrder>(
     pg: { type: Schema.Types.Mixed, default: null },
     cod: { type: Schema.Types.Mixed, default: null },
 
+    // legacy shipments (keep)
     shipments: { type: [OrderShipmentSchema], default: [] },
 
-    // ✅ return & refund
     return: { type: OrderReturnSchema, default: null },
     refund: { type: OrderRefundSchema, default: null },
   },

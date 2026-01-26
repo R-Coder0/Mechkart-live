@@ -1,6 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 /* eslint-disable react-hooks/exhaustive-deps */
-// components/website/ProductCard.tsx
 "use client";
 
 import Link from "next/link";
@@ -28,15 +27,18 @@ export type ProductCardVariant = {
   label?: string;
   size?: string;
   weight?: string;
-  color?: string;
   comboText?: string;
   mrp?: number;
   salePrice?: number;
   quantity?: number;
-
   images?: string[];
   image?: string;
   featureImage?: string;
+};
+
+type PopulatedVendor = {
+  _id?: string;
+  company?: { name?: string };
 };
 
 export type ProductCardProduct = {
@@ -52,6 +54,19 @@ export type ProductCardProduct = {
   inStock?: boolean;
 
   variants?: ProductCardVariant[];
+
+  ownerType?: "ADMIN" | "VENDOR";
+
+  // ✅ IMPORTANT: Product model field is vendorId
+  vendorId?: string | PopulatedVendor | null;
+  // ✅ keep vendor object that UI uses
+  vendor?: {
+    company?: {
+      name?: string;
+    };
+  };
+  // optional if you later add
+  approvalStatus?: "PENDING" | "APPROVED" | "REJECTED";
 };
 
 function calcDiscountPercent(mrp?: number, sale?: number) {
@@ -65,7 +80,6 @@ function firstTruthy(...vals: Array<string | undefined | null>) {
   return vals.find((v) => typeof v === "string" && v.trim().length > 0)?.trim();
 }
 
-// ✅ treat invalid strings as empty
 function cleanImgPath(p?: any) {
   if (p === undefined || p === null) return "";
   const s = String(p).trim();
@@ -75,7 +89,6 @@ function cleanImgPath(p?: any) {
   return s;
 }
 
-// ✅ keep variant image selection in one place (sanitized)
 function getVariantFirstImage(v?: ProductCardVariant | null) {
   if (!v) return "";
   return (
@@ -85,9 +98,6 @@ function getVariantFirstImage(v?: ProductCardVariant | null) {
     ""
   );
 }
-
-// ❌ ProductCard se add-to-cart remove kar diya (as per your instruction)
-// async function addToCartApi(...) { ... }
 
 export default function ProductCard({ product }: { product: ProductCardProduct }) {
   const variants = product.variants || [];
@@ -101,6 +111,19 @@ export default function ProductCard({ product }: { product: ProductCardProduct }
     if (!hasVariants) return null;
     return variants.find((v) => v._id === selectedVariantId) || variants[0] || null;
   }, [hasVariants, variants, selectedVariantId]);
+
+  // ✅ sold by: supports populated vendorId object
+  const soldBy = useMemo(() => {
+    if (product.ownerType === "ADMIN") return "Mechkart";
+
+    const v = product.vendorId;
+    const name =
+      typeof v === "object" && v
+        ? v.company?.name?.trim()
+        : "";
+
+    return name || "Mechkart";
+  }, [product.ownerType, product.vendorId]);
 
   // stock
   const baseOut =
@@ -127,12 +150,11 @@ export default function ProductCard({ product }: { product: ProductCardProduct }
   const rawProductImg = cleanImgPath(product.featureImage);
   const img = resolveImageUrl(rawVariantImg || rawProductImg);
 
-  // ✅ chips me color remove (sirf label/combText/size/weight)
   const variantChips = useMemo(() => {
     return variants
       .map((v) => ({
         id: v._id,
-        text: firstTruthy(v.label, v.comboText, v.size, v.weight), // ✅ color removed
+        text: firstTruthy(v.label, v.comboText, v.size, v.weight),
         qty: Number(v.quantity ?? 0),
       }))
       .filter((x) => !!x.text);
@@ -145,10 +167,8 @@ export default function ProductCard({ product }: { product: ProductCardProduct }
     <div className="group">
       <Link href={`/product/${product.slug}`} className="block">
         <div className="relative overflow-hidden transition hover:shadow-xl p-4 border border-gray-200">
-          {/* Image */}
           <div className="relative aspect-square bg-gray-50">
             {img ? (
-              // eslint-disable-next-line @next/next/no-img-element
               <img
                 key={img}
                 src={img}
@@ -162,7 +182,6 @@ export default function ProductCard({ product }: { product: ProductCardProduct }
               </div>
             )}
 
-            {/* Badges */}
             <div className="absolute left-3 top-3 flex flex-col gap-2">
               {off > 0 && (
                 <span className="inline-flex w-fit items-center rounded-full bg-black/80 px-2.5 py-1 text-[11px] font-semibold text-white">
@@ -176,20 +195,18 @@ export default function ProductCard({ product }: { product: ProductCardProduct }
                 </span>
               )}
             </div>
-
-            {/* ✅ Add to cart button removed */}
           </div>
 
-          {/* Content */}
           <div className="mt-4">
-            <h3
-              className="text-[14px] font-semibold leading-snug text-gray-900"
-              title={product.title}
-            >
+            <h3 className="text-[14px] font-semibold leading-snug text-gray-900" title={product.title}>
               {titleShort}
             </h3>
 
-            {/* Price row */}
+            <div className="mt-1 text-[12px] text-gray-600">
+              <span className="text-gray-500">Sold by:</span>{" "}
+              <span className="font-semibold text-gray-800">{soldBy}</span>
+            </div>
+
             <div className="mt-3 flex items-end justify-between gap-3">
               <div className="flex items-end gap-2">
                 <div className="text-[16px] font-bold text-gray-900">
@@ -210,7 +227,6 @@ export default function ProductCard({ product }: { product: ProductCardProduct }
               )}
             </div>
 
-            {/* Variant chips */}
             <div className="min-h-[42px]">
               {hasVariants && variantChips.length > 0 ? (
                 <div className="flex flex-wrap gap-2">
@@ -229,11 +245,7 @@ export default function ProductCard({ product }: { product: ProductCardProduct }
                           if (v.id) setSelectedVariantId(v.id);
                         }}
                         className={`mt-2 rounded-full px-2.5 py-1 text-[11px] font-semibold ring-1 transition
-                          ${
-                            active
-                              ? "bg-gray-900 text-white ring-gray-900"
-                              : "bg-white text-gray-700 ring-gray-200 hover:ring-gray-300"
-                          }
+                          ${active ? "bg-gray-900 text-white ring-gray-900" : "bg-white text-gray-700 ring-gray-200 hover:ring-gray-300"}
                           ${disabled ? "opacity-50 cursor-not-allowed" : ""}`}
                         title={disabled ? "Out of stock" : v.text}
                       >
@@ -241,19 +253,12 @@ export default function ProductCard({ product }: { product: ProductCardProduct }
                       </button>
                     );
                   })}
-
-                  {variantChips.length > 4 && (
-                    <span className="text-[11px] text-gray-500 px-1 py-1 mt-2">
-                      +{variantChips.length - 4} more
-                    </span>
-                  )}
                 </div>
               ) : (
                 <div className="invisible text-[11px]">placeholder</div>
               )}
             </div>
 
-            {/* Stock microtext */}
             {hasVariants && selectedVariant && (
               <div className="mt-2 text-[12px] text-gray-500">
                 {Number(selectedVariant.quantity ?? 0) > 0 ? "In stock" : "Currently unavailable"}
@@ -266,8 +271,6 @@ export default function ProductCard({ product }: { product: ProductCardProduct }
               </div>
             )}
           </div>
-
-          <div className="pointer-events-none absolute inset-x-0 bottom-0 h-1 bg-linear-to-r from-transparent via-gray-200 to-transparent opacity-0 transition group-hover:opacity-100" />
         </div>
       </Link>
     </div>

@@ -189,8 +189,7 @@ const buildVariants = (
 
       quantity: typeof v.quantity === "number" ? v.quantity : Number(v.quantity || 0),
       mrp: typeof v.mrp === "number" ? v.mrp : Number(v.mrp || 0),
-      salePrice:
-        typeof v.salePrice === "number" ? v.salePrice : Number(v.salePrice || 0),
+      salePrice: typeof v.salePrice === "number" ? v.salePrice : Number(v.salePrice || 0),
 
       images: finalImages,
     };
@@ -257,40 +256,19 @@ const calcLowStockFlag = (totalStock: number, threshold: number) => {
 };
 
 /**
- * Generate next productId in format: MECH000001, MECH000002, ...
- */
-// const generateNextProductId = async (): Promise<string> => {
-//   const prefix = "MECH";
-
-//   const lastProduct = await Product.findOne({})
-//     .sort({ createdAt: -1 })
-//     .select("productId")
-//     .lean();
-
-//   let nextNumber = 1;
-
-//   if (lastProduct?.productId) {
-//     const current = parseInt(String(lastProduct.productId).replace(prefix, ""), 10);
-//     if (!Number.isNaN(current)) nextNumber = current + 1;
-//   }
-
-//   const padded = String(nextNumber).padStart(6, "0");
-//   return `${prefix}${padded}`;
-// };
-
-/**
- * ✅ Shipping defaults from env
+ * ✅ Shipping defaults from env (RETURN SHIP SHAPE)
  */
 const getShipDefaults = () => {
   const L = Number(process.env.SHIP_LENGTH_CM ?? 20);
   const B = Number(process.env.SHIP_BREADTH_CM ?? 15);
   const H = Number(process.env.SHIP_HEIGHT_CM ?? 10);
   const W = Number(process.env.SHIP_WEIGHT_KG ?? 0.5);
+
   return {
-    shipLengthCm: Number.isFinite(L) ? L : 20,
-    shipBreadthCm: Number.isFinite(B) ? B : 15,
-    shipHeightCm: Number.isFinite(H) ? H : 10,
-    shipWeightKg: Number.isFinite(W) ? W : 0.5,
+    lengthCm: Number.isFinite(L) ? L : 20,
+    breadthCm: Number.isFinite(B) ? B : 15,
+    heightCm: Number.isFinite(H) ? H : 10,
+    weightKg: Number.isFinite(W) ? W : 0.5,
   };
 };
 
@@ -311,13 +289,13 @@ export const createProduct = async (req: Request, res: Response, next: NextFunct
       categoryId,
       subCategoryId,
 
-      // ✅ NEW shipping inputs
+      // ✅ NEW shipping inputs (UI can send these)
       shipLengthCm,
       shipBreadthCm,
       shipHeightCm,
       shipWeightKg,
 
-      // ✅ multivendor safe additions (admin create => default)
+      // ✅ multivendor
       vendorId,
       ownerType,
       approvalStatus,
@@ -358,7 +336,6 @@ export const createProduct = async (req: Request, res: Response, next: NextFunct
     }
 
     const createdBy = (req as any).admin?._id || null;
-    // const productId = await generateNextProductId();
 
     // images from multer
     const { featureImagePath, galleryPaths } = extractImagePaths(req);
@@ -377,23 +354,24 @@ export const createProduct = async (req: Request, res: Response, next: NextFunct
     const totalStock = calcTotalStock(builtVariants, parsedBaseStock);
     const isLowStock = calcLowStockFlag(totalStock, parsedThreshold);
 
-    // ✅ shipping: body overrides env defaults
+    // ✅ ship object mapping (BODY OVERRIDES DEFAULTS)
     const shipDefaults = getShipDefaults();
-    const shipL = toNumber(shipLengthCm) ?? shipDefaults.shipLengthCm;
-    const shipB = toNumber(shipBreadthCm) ?? shipDefaults.shipBreadthCm;
-    const shipH = toNumber(shipHeightCm) ?? shipDefaults.shipHeightCm;
-    const shipW = toNumber(shipWeightKg) ?? shipDefaults.shipWeightKg;
+    const ship = {
+      lengthCm: toNumber(shipLengthCm) ?? shipDefaults.lengthCm,
+      breadthCm: toNumber(shipBreadthCm) ?? shipDefaults.breadthCm,
+      heightCm: toNumber(shipHeightCm) ?? shipDefaults.heightCm,
+      weightKg: toNumber(shipWeightKg) ?? shipDefaults.weightKg,
+    };
 
     // ✅ multivendor defaults for ADMIN create
-    const finalOwnerType = String(ownerType || "ADMIN").toUpperCase(); // ADMIN default
-    const finalApproval = String(approvalStatus || "APPROVED").toUpperCase(); // admin product is approved
+    const finalOwnerType = String(ownerType || "ADMIN").toUpperCase();
+    const finalApproval = String(approvalStatus || "APPROVED").toUpperCase();
     const finalVendorId =
       vendorId && Types.ObjectId.isValid(String(vendorId))
         ? new Types.ObjectId(String(vendorId))
-        : undefined;
+        : null;
 
     const product = await Product.create({
-      // productId,
       title,
       slug,
       description,
@@ -417,15 +395,11 @@ export const createProduct = async (req: Request, res: Response, next: NextFunct
       subCategory: subCatId,
       createdBy,
 
-      // ✅ shipping fields
-      shipLengthCm: shipL,
-      shipBreadthCm: shipB,
-      shipHeightCm: shipH,
-      shipWeightKg: shipW,
+      // ✅ correct schema field
+      ship,
 
-      // ✅ multivendor fields (if schema has them)
       ownerType: finalOwnerType,
-      vendor: finalVendorId,
+      vendorId: finalVendorId,         // ✅ FIXED
       approvalStatus: finalApproval,
     });
 
@@ -442,14 +416,20 @@ export const getProductBySlug = async (req: Request, res: Response, next: NextFu
   try {
     const { slug } = req.params;
 
-    const product = await Product.findOne({ slug })
+    const product = await Product.findOne({
+      slug,
+      approvalStatus: "APPROVED",
+      isActive: true,
+    })
       .populate("category", "name slug")
       .populate("subCategory", "name slug")
-      .sort({ createdAt: -1 });
+      .populate("vendorId", "company.name"); // ✅
 
-    if (!product) return res.status(404).json({ message: "Product not found" });
+    if (!product) {
+      return res.status(404).json({ message: "Product not found" });
+    }
 
-    return res.status(200).json({
+    return res.json({
       message: "Product fetched successfully",
       data: product,
     });
@@ -469,7 +449,7 @@ export const getAllProducts = async (req: Request, res: Response, next: NextFunc
       active,
       lowStock,
 
-      // ✅ NEW filters (multivendor/admin moderation)
+      // admin-side optional filters
       vendorId,
       ownerType,
       approvalStatus,
@@ -477,6 +457,7 @@ export const getAllProducts = async (req: Request, res: Response, next: NextFunc
 
     const filter: any = {};
 
+    // category filters
     if (categoryId && Types.ObjectId.isValid(String(categoryId))) {
       filter.category = categoryId;
     }
@@ -487,40 +468,38 @@ export const getAllProducts = async (req: Request, res: Response, next: NextFunc
 
     if (!filter.category && categorySlug) {
       const cat = await Category.findOne({ slug: String(categorySlug) }).select("_id");
-      if (cat) filter.category = cat._id;
-      else {
-        return res.status(200).json({ message: "Products fetched successfully", data: [] });
-      }
+      if (!cat) return res.json({ message: "Products fetched successfully", data: [] });
+      filter.category = cat._id;
     }
 
     if (!filter.subCategory && parentSlug && subSlug) {
       const parent = await Category.findOne({ slug: String(parentSlug) }).select("_id");
-      if (!parent) {
-        return res.status(200).json({ message: "Products fetched successfully", data: [] });
-      }
+      if (!parent) return res.json({ message: "Products fetched successfully", data: [] });
 
       const sub = await Category.findOne({
         slug: String(subSlug),
         parentCategory: parent._id,
       }).select("_id");
 
-      if (sub) filter.subCategory = sub._id;
-      else {
-        return res.status(200).json({ message: "Products fetched successfully", data: [] });
-      }
+      if (!sub) return res.json({ message: "Products fetched successfully", data: [] });
+      filter.subCategory = sub._id;
     }
 
+    // public rule
+    if (!approvalStatus) {
+      filter.approvalStatus = "APPROVED";
+      filter.isActive = true;
+    }
+
+    // admin filters
     if (typeof active !== "undefined") {
       filter.isActive = String(active) === "true";
     }
-
     if (typeof lowStock !== "undefined") {
       filter.isLowStock = String(lowStock) === "true";
     }
-
-    // ✅ NEW: vendor filters (safe, optional)
     if (vendorId && Types.ObjectId.isValid(String(vendorId))) {
-      filter.vendorId = new Types.ObjectId(String(vendorId));
+      filter.vendorId = new Types.ObjectId(String(vendorId)); // ✅
     }
     if (ownerType) {
       filter.ownerType = String(ownerType).toUpperCase();
@@ -532,9 +511,10 @@ export const getAllProducts = async (req: Request, res: Response, next: NextFunc
     const products = await Product.find(filter)
       .populate("category", "name slug")
       .populate("subCategory", "name slug")
+      .populate("vendorId", "company.name") // ✅
       .sort({ createdAt: -1 });
 
-    return res.status(200).json({
+    return res.json({
       message: "Products fetched successfully",
       data: products,
     });
@@ -549,11 +529,14 @@ export const getProductById = async (req: Request, res: Response, next: NextFunc
 
     const product = await Product.findById(id)
       .populate("category", "name slug")
-      .populate("subCategory", "name slug");
+      .populate("subCategory", "name slug")
+      .populate("vendorId", "company.name"); // ✅
 
-    if (!product) return res.status(404).json({ message: "Product not found" });
+    if (!product) {
+      return res.status(404).json({ message: "Product not found" });
+    }
 
-    return res.status(200).json({
+    return res.json({
       message: "Product fetched successfully",
       data: product,
     });
@@ -566,7 +549,7 @@ export const updateProduct = async (req: Request, res: Response, next: NextFunct
   try {
     const { id } = req.params;
 
-    const product = await Product.findById(id);
+    const product: any = await Product.findById(id);
     if (!product) return res.status(404).json({ message: "Product not found" });
 
     const {
@@ -592,21 +575,18 @@ export const updateProduct = async (req: Request, res: Response, next: NextFunct
       shipHeightCm,
       shipWeightKg,
 
-      // ✅ multivendor safe updates (admin can edit)
       approvalStatus,
+      vendorId,     // (optional, admin edit)
+      ownerType,    // (optional, admin edit)
     } = req.body as any;
 
-    // -------- BASIC FIELDS --------
     if (title) {
       product.title = title;
       product.slug = makeSlug(title);
     }
     if (typeof description !== "undefined") product.description = description;
-    if (typeof features !== "undefined") {
-      product.features = typeof features === "string" ? features : "";
-    }
+    if (typeof features !== "undefined") product.features = typeof features === "string" ? features : "";
 
-    // -------- IMAGES (MULTER) --------
     const { featureImagePath, galleryPaths } = extractImagePaths(req);
     const variantImagesMap = extractVariantImages(req);
     const colorImagesMap = extractColorImages(req);
@@ -614,25 +594,20 @@ export const updateProduct = async (req: Request, res: Response, next: NextFunct
     const removeFeature = removeFeatureImage === "true" || removeFeatureImage === true;
     if (removeFeature) product.featureImage = "";
 
-    if (featureImagePath) {
-      product.featureImage = featureImagePath;
-    } else if (typeof featureImage !== "undefined" && !removeFeature) {
-      product.featureImage = featureImage;
-    }
+    if (featureImagePath) product.featureImage = featureImagePath;
+    else if (typeof featureImage !== "undefined" && !removeFeature) product.featureImage = featureImage;
 
     if (typeof galleryImages !== "undefined" || galleryPaths.length > 0) {
       const bodyGallery = normalizeGalleryFromBody(galleryImages);
       product.galleryImages = [...bodyGallery, ...galleryPaths];
     }
 
-    // -------- PRICING --------
     const baseMrp = toNumber(mrp);
     if (baseMrp !== null) product.mrp = baseMrp;
 
     const baseSale = toNumber(salePrice);
     if (baseSale !== null) product.salePrice = baseSale;
 
-    // -------- VARIANTS + STOCK AUTO --------
     let updatedVariants: any[] = product.variants as any[];
 
     if (typeof variants !== "undefined") {
@@ -643,16 +618,14 @@ export const updateProduct = async (req: Request, res: Response, next: NextFunct
       product.variants = updatedVariants as any;
     }
 
-    // -------- COLORS --------
     if (typeof colors !== "undefined") {
-      const updatedColors = buildColors(colors, colorImagesMap, (product as any).colors || []);
-      (product as any).colors = updatedColors as any;
+      const updatedColors = buildColors(colors, colorImagesMap, product.colors || []);
+      product.colors = updatedColors as any;
     } else if (Object.keys(colorImagesMap).length > 0) {
-      const updatedColors = buildColors((product as any).colors || [], colorImagesMap, (product as any).colors || []);
-      (product as any).colors = updatedColors as any;
+      const updatedColors = buildColors(product.colors || [], colorImagesMap, product.colors || []);
+      product.colors = updatedColors as any;
     }
 
-    // -------- THRESHOLD + BASE STOCK --------
     const thresholdNum = toNumber(lowStockThreshold);
     if (thresholdNum !== null) product.lowStockThreshold = thresholdNum;
 
@@ -660,67 +633,68 @@ export const updateProduct = async (req: Request, res: Response, next: NextFunct
     if (baseStockNum !== null && (!updatedVariants || updatedVariants.length === 0)) {
       product.baseStock = baseStockNum;
     }
+    if (updatedVariants && updatedVariants.length > 0) product.baseStock = 0;
 
-    if (updatedVariants && updatedVariants.length > 0) {
-      product.baseStock = 0;
-    }
+    const finalTotalStock = calcTotalStock(updatedVariants || [], product.baseStock || 0);
+    product.totalStock = finalTotalStock;
+    const finalThreshold = product.lowStockThreshold ?? 5;
+    product.isLowStock = calcLowStockFlag(finalTotalStock, finalThreshold);
 
-    const finalTotalStock = calcTotalStock(updatedVariants || [], (product as any).baseStock || 0);
-    (product as any).totalStock = finalTotalStock;
-
-    const finalThreshold = (product as any).lowStockThreshold ?? 5;
-    (product as any).isLowStock = calcLowStockFlag(finalTotalStock, finalThreshold);
-
-    // -------- ACTIVE --------
     if (typeof isActive !== "undefined") {
-      (product as any).isActive = isActive === "true" || isActive === true;
+      product.isActive = isActive === "true" || isActive === true;
     }
 
-    // -------- CATEGORY / SUBCATEGORY --------
     if (categoryId) {
-      if (!Types.ObjectId.isValid(categoryId)) {
-        return res.status(400).json({ message: "Invalid category id" });
-      }
+      if (!Types.ObjectId.isValid(categoryId)) return res.status(400).json({ message: "Invalid category id" });
       const cat = await Category.findById(categoryId);
       if (!cat) return res.status(404).json({ message: "Category not found" });
-      (product as any).category = cat._id;
+      product.category = cat._id;
     }
 
     if (typeof subCategoryId !== "undefined") {
-      if (!subCategoryId) {
-        (product as any).subCategory = null;
-      } else {
-        if (!Types.ObjectId.isValid(subCategoryId)) {
-          return res.status(400).json({ message: "Invalid sub category id" });
-        }
+      if (!subCategoryId) product.subCategory = null;
+      else {
+        if (!Types.ObjectId.isValid(subCategoryId)) return res.status(400).json({ message: "Invalid sub category id" });
         const sub = await Category.findById(subCategoryId);
         if (!sub) return res.status(404).json({ message: "Sub category not found" });
-        (product as any).subCategory = sub._id;
+        product.subCategory = sub._id;
       }
     }
 
-    // ✅ Shipping update (if provided)
+    // ✅ Shipping update -> product.ship object
     const shipDefaults = getShipDefaults();
-    const shipL = toNumber(shipLengthCm);
-    const shipB = toNumber(shipBreadthCm);
-    const shipH = toNumber(shipHeightCm);
-    const shipW = toNumber(shipWeightKg);
+    if (!product.ship) product.ship = { ...shipDefaults };
 
-    if (shipL !== null) (product as any).shipLengthCm = shipL;
-    else if ((product as any).shipLengthCm == null) (product as any).shipLengthCm = shipDefaults.shipLengthCm;
+    const L = toNumber(shipLengthCm);
+    const B = toNumber(shipBreadthCm);
+    const H = toNumber(shipHeightCm);
+    const W = toNumber(shipWeightKg);
 
-    if (shipB !== null) (product as any).shipBreadthCm = shipB;
-    else if ((product as any).shipBreadthCm == null) (product as any).shipBreadthCm = shipDefaults.shipBreadthCm;
+    if (L !== null) product.ship.lengthCm = L;
+    else if (product.ship.lengthCm == null) product.ship.lengthCm = shipDefaults.lengthCm;
 
-    if (shipH !== null) (product as any).shipHeightCm = shipH;
-    else if ((product as any).shipHeightCm == null) (product as any).shipHeightCm = shipDefaults.shipHeightCm;
+    if (B !== null) product.ship.breadthCm = B;
+    else if (product.ship.breadthCm == null) product.ship.breadthCm = shipDefaults.breadthCm;
 
-    if (shipW !== null) (product as any).shipWeightKg = shipW;
-    else if ((product as any).shipWeightKg == null) (product as any).shipWeightKg = shipDefaults.shipWeightKg;
+    if (H !== null) product.ship.heightCm = H;
+    else if (product.ship.heightCm == null) product.ship.heightCm = shipDefaults.heightCm;
 
-    // ✅ approvalStatus update (admin moderation)
+    if (W !== null) product.ship.weightKg = W;
+    else if (product.ship.weightKg == null) product.ship.weightKg = shipDefaults.weightKg;
+
     if (typeof approvalStatus !== "undefined") {
-      (product as any).approvalStatus = String(approvalStatus).toUpperCase();
+      product.approvalStatus = String(approvalStatus).toUpperCase();
+    }
+
+    // optional admin edits
+    if (typeof ownerType !== "undefined") {
+      product.ownerType = String(ownerType).toUpperCase();
+    }
+    if (typeof vendorId !== "undefined") {
+      product.vendorId =
+        vendorId && Types.ObjectId.isValid(String(vendorId))
+          ? new Types.ObjectId(String(vendorId))
+          : null;
     }
 
     await product.save();

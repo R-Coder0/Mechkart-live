@@ -147,30 +147,30 @@ export default function CartPage() {
     }
   };
 
-const onProceed = async () => {
-  if (!selectedItems.length) {
-    setError("Please select at least 1 item to checkout.");
-    return;
-  }
-
-  setError(null);
-
-  try {
-    // ✅ same auth check that header uses
-    const me = await (await import("@/lib/userApi")).meUser();
-
-    if (!me) {
-      // ✅ open header login popup (NO new form)
-      window.dispatchEvent(new Event("auth:open-login"));
+  const onProceed = async () => {
+    if (!selectedItems.length) {
+      setError("Please select at least 1 item to checkout.");
       return;
     }
 
-    window.location.href = "/checkout";
-  } catch (e) {
-    // if API fails / unauthorized -> open login popup
-    window.dispatchEvent(new Event("auth:open-login"));
-  }
-};
+    setError(null);
+
+    try {
+      // ✅ same auth check that header uses
+      const me = await (await import("@/lib/userApi")).meUser();
+
+      if (!me) {
+        // ✅ open header login popup (NO new form)
+        window.dispatchEvent(new Event("auth:open-login"));
+        return;
+      }
+
+      window.location.href = "/checkout";
+    } catch (e) {
+      // if API fails / unauthorized -> open login popup
+      window.dispatchEvent(new Event("auth:open-login"));
+    }
+  };
 
 
   if (loading) {
@@ -224,8 +224,8 @@ const onProceed = async () => {
             {busyId === "SELECT_ALL"
               ? "Updating..."
               : allSelected
-              ? "Unselect all"
-              : "Select all"}
+                ? "Unselect all"
+                : "Select all"}
           </button>
 
           <button
@@ -249,6 +249,11 @@ const onProceed = async () => {
         <div className="lg:col-span-2 space-y-4">
           {items.map((it: any) => {
             const product = it.product || null;
+            const soldBy =
+  product?.ownerType === "VENDOR"
+    ? product?.vendorId?.company?.name || "Mechkart"
+    : "Mechkart";
+
 
             const imgPath = resolveCartItemImage(product, it.variantId, it.colorKey);
             const img = resolveImageUrl(imgPath);
@@ -297,6 +302,16 @@ const onProceed = async () => {
                         <div className="text-sm font-semibold text-gray-900">
                           {product?.title || it.title}
                         </div>
+                        {/* ✅ Sold by */}
+                        <div className="mt-0.5 text-[12px] text-gray-600">
+                          <span className="text-gray-500">Sold by:</span>{" "}
+                          <span className="font-semibold text-gray-900">{soldBy}</span>
+                          {product?.ownerType === "VENDOR" ? (
+                            <span className="ml-2 text-[10px] px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200">
+                              Verified Seller
+                            </span>
+                          ) : null}
+                        </div>
 
                         {/* Product Code */}
                         {it.productCode || product?.productId ? (
@@ -321,114 +336,113 @@ const onProceed = async () => {
                     </div>
 
                     {/* Variant / Color change */}
-{/* Variant / Color change */}
-{(variants.length > 0 || colors.length > 0) && (
-  <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
-    {/* Variant (only if variants exist) */}
-    {variants.length > 0 ? (
-      <div>
-        <div className="text-[11px] font-semibold text-gray-600 mb-1">
-          Change Variant
-        </div>
-        <select
-          value={String(it.variantId || "")}
-          disabled={busyId === it._id}
-          onChange={async (e) => {
-            try {
-              setBusyId(it._id);
-              setError(null);
+                    {/* Variant / Color change */}
+                    {(variants.length > 0 || colors.length > 0) && (
+                      <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        {/* Variant (only if variants exist) */}
+                        {variants.length > 0 ? (
+                          <div>
+                            <div className="text-[11px] font-semibold text-gray-600 mb-1">
+                              Change Variant
+                            </div>
+                            <select
+                              value={String(it.variantId || "")}
+                              disabled={busyId === it._id}
+                              onChange={async (e) => {
+                                try {
+                                  setBusyId(it._id);
+                                  setError(null);
 
-              const nextVariantId = e.target.value; // always exists here
-              const updated = await updateItemOptions(
-                it._id,
-                nextVariantId,
-                it.colorKey || null
-              );
-              setCart(updated);
-            } catch (err: any) {
-              setError(err?.message || "Variant update failed");
-            } finally {
-              setBusyId(null);
-            }
-          }}
-          className="h-10 w-full rounded-xl border border-gray-200 px-3 text-sm outline-none focus:border-gray-400 bg-white disabled:opacity-60"
-        >
-          {variants.map((v: any) => {
-            const name = v.label || v.comboText || v.size || v.weight || "Variant";
-            const out = Number(v.quantity ?? 0) <= 0;
-            return (
-              <option key={String(v._id)} value={String(v._id)} disabled={out}>
-                {name}
-                {out ? " (Out)" : ""}
-              </option>
-            );
-          })}
-        </select>
-      </div>
-    ) : (
-      // keep grid alignment when only colors exist
-      <div className="hidden sm:block" />
-    )}
+                                  const nextVariantId = e.target.value; // always exists here
+                                  const updated = await updateItemOptions(
+                                    it._id,
+                                    nextVariantId,
+                                    it.colorKey || null
+                                  );
+                                  setCart(updated);
+                                } catch (err: any) {
+                                  setError(err?.message || "Variant update failed");
+                                } finally {
+                                  setBusyId(null);
+                                }
+                              }}
+                              className="h-10 w-full rounded-xl border border-gray-200 px-3 text-sm outline-none focus:border-gray-400 bg-white disabled:opacity-60"
+                            >
+                              {variants.map((v: any) => {
+                                const name = v.label || v.comboText || v.size || v.weight || "Variant";
+                                const out = Number(v.quantity ?? 0) <= 0;
+                                return (
+                                  <option key={String(v._id)} value={String(v._id)} disabled={out}>
+                                    {name}
+                                    {out ? " (Out)" : ""}
+                                  </option>
+                                );
+                              })}
+                            </select>
+                          </div>
+                        ) : (
+                          // keep grid alignment when only colors exist
+                          <div className="hidden sm:block" />
+                        )}
 
-    {/* Color (show if colors exist, even if no variants) */}
-    {colors.length ? (
-      <div>
-        <div className="text-[11px] font-semibold text-gray-600 mb-1">
-          Change Color
-        </div>
+                        {/* Color (show if colors exist, even if no variants) */}
+                        {colors.length ? (
+                          <div>
+                            <div className="text-[11px] font-semibold text-gray-600 mb-1">
+                              Change Color
+                            </div>
 
-        <div className="flex flex-wrap gap-2">
-          {colors.map((c: any) => {
-            const active =
-              String(it.colorKey || "").toLowerCase() ===
-              String(c.name || "").toLowerCase();
-            const hasHex = !!(c.hex || "").trim();
+                            <div className="flex flex-wrap gap-2">
+                              {colors.map((c: any) => {
+                                const active =
+                                  String(it.colorKey || "").toLowerCase() ===
+                                  String(c.name || "").toLowerCase();
+                                const hasHex = !!(c.hex || "").trim();
 
-            return (
-              <button
-                key={c._id || c.name}
-                type="button"
-                disabled={busyId === it._id}
-                onClick={async () => {
-                  try {
-                    setBusyId(it._id);
-                    setError(null);
+                                return (
+                                  <button
+                                    key={c._id || c.name}
+                                    type="button"
+                                    disabled={busyId === it._id}
+                                    onClick={async () => {
+                                      try {
+                                        setBusyId(it._id);
+                                        setError(null);
 
-                    // ✅ if no variants, pass null
-                    const nextVariantId = variants.length > 0 ? String(it.variantId) : null;
+                                        // ✅ if no variants, pass null
+                                        const nextVariantId = variants.length > 0 ? String(it.variantId) : null;
 
-                    const updated = await updateItemOptions(
-                      it._id,
-                      nextVariantId,
-                      c.name
-                    );
-                    setCart(updated);
-                  } catch (err: any) {
-                    setError(err?.message || "Color update failed");
-                  } finally {
-                    setBusyId(null);
-                  }
-                }}
-                className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold transition disabled:opacity-60 ${
-                  active ? "border-blue-600" : "border-gray-200 hover:border-gray-300"
-                }`}
-                title={c.name}
-              >
-                <span
-                  className="h-4 w-4 border border-gray-300"
-                  style={hasHex ? { backgroundColor: c.hex } : undefined}
-                />
-                <span className="max-w-[90px] truncate">{c.name}</span>
-              </button>
-            );
-          })}
-        </div>
-      </div>
-    ) : (
-      <div className="text-xs text-gray-500">No colors</div>
-    )}
-  </div>
-)}
+                                        const updated = await updateItemOptions(
+                                          it._id,
+                                          nextVariantId,
+                                          c.name
+                                        );
+                                        setCart(updated);
+                                      } catch (err: any) {
+                                        setError(err?.message || "Color update failed");
+                                      } finally {
+                                        setBusyId(null);
+                                      }
+                                    }}
+                                    className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold transition disabled:opacity-60 ${active ? "border-blue-600" : "border-gray-200 hover:border-gray-300"
+                                      }`}
+                                    title={c.name}
+                                  >
+                                    <span
+                                      className="h-4 w-4 border border-gray-300"
+                                      style={hasHex ? { backgroundColor: c.hex } : undefined}
+                                    />
+                                    <span className="max-w-[90px] truncate">{c.name}</span>
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="text-xs text-gray-500">No colors</div>
+                        )}
+                      </div>
+                    )}
 
                     {/* Price + Qty */}
                     <div className="mt-3 flex flex-wrap items-center justify-between gap-3">

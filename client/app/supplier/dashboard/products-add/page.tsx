@@ -360,219 +360,245 @@ export default function AdminProductsPage() {
   };
 
   // ---- submit handler ----
-  const handleSubmit = async (e: FormEvent) => {
-    e.preventDefault();
-    setSubmitting(true);
-    setMessage(null);
-    setError(null);
+// ---- submit handler (UPDATED) ----
+const handleSubmit = async (e: FormEvent) => {
+  e.preventDefault();
+  setSubmitting(true);
+  setMessage(null);
+  setError(null);
 
-    if (!title.trim()) {
-      setError("Product title is required");
+  // basic validations
+  if (!title.trim()) {
+    setError("Product title is required");
+    setSubmitting(false);
+    return;
+  }
+
+  if (!parentCategoryId) {
+    setError("Please select a category");
+    setSubmitting(false);
+    return;
+  }
+
+  if (!baseMrp || !baseSalePrice) {
+    setError("Base MRP and Base Sale Price are required");
+    setSubmitting(false);
+    return;
+  }
+
+  try {
+    const token = getVendorToken();
+    if (!token) {
+      setError("Vendors token not found. Please login again.");
       setSubmitting(false);
       return;
     }
 
-    if (!parentCategoryId) {
-      setError("Please select a category");
+    type CleanVariant = {
+      label?: string;
+      size?: string;
+      weight?: string;
+      comboText?: string;
+      mrp: number;
+      salePrice: number;
+      quantity: number;
+    };
+
+    const cleanText = (s: string) => String(s || "").trim();
+
+    // ---- Clean Variants ----
+    const cleanVariants: CleanVariant[] = variants
+      .filter((v) => {
+        const hasIdentity = !!(v.label || v.size || v.weight || v.comboText);
+        const hasPriceOrStock =
+          v.mrp.trim() !== "" || v.salePrice.trim() !== "" || v.quantity.trim() !== "";
+        return hasIdentity && hasPriceOrStock;
+      })
+      .map((v) => ({
+        label: v.label ? cleanText(v.label) : undefined,
+        size: v.size ? cleanText(v.size) : undefined,
+        weight: v.weight ? cleanText(v.weight) : undefined,
+        comboText: v.comboText ? cleanText(v.comboText) : undefined,
+        mrp: Number(v.mrp || 0),
+        salePrice: Number(v.salePrice || 0),
+        quantity: Number(v.quantity || 0),
+      }));
+
+    const hasAnyVariant = cleanVariants.length > 0;
+
+    // if no variants, baseStock required
+    if (!hasAnyVariant && baseStock.trim() === "") {
+      setError("Base stock is required when no variants are added");
       setSubmitting(false);
       return;
     }
 
-    if (!baseMrp || !baseSalePrice) {
-      setError("Base MRP and Base Sale Price are required");
-      setSubmitting(false);
-      return;
+    // ---- Clean Colors ----
+    type CleanColor = {
+      name: string;
+      hex?: string;
+      orderIndex: number;
+    };
+
+    const cleanColors: CleanColor[] = colors
+      .map((c, idx) => ({
+        name: cleanText(c.name),
+        hex: cleanText(c.hex),
+        orderIndex: Number(c.orderIndex ?? idx),
+      }))
+      .filter((c) => c.name);
+
+    // ---- IMPORTANT: Shipping values should come from STATE (not DOM fd.get) ----
+    const shipPayload = {
+      shipLengthCm: cleanText(shipLengthCm) || "20",
+      shipBreadthCm: cleanText(shipBreadthCm) || "15",
+      shipHeightCm: cleanText(shipHeightCm) || "10",
+      shipWeightKg: cleanText(shipWeightKg) || "0.5",
+    };
+
+    console.log("Shipping (STATE) =>", shipPayload);
+
+    // ---- FormData (multipart/form-data) ----
+    const formData = new FormData();
+
+    // basic
+    formData.append("title", title);
+    formData.append("slug", slug);
+    formData.append("description", cleanText(description));
+    formData.append("features", cleanText(featuresText));
+
+    // pricing
+    formData.append("mrp", baseMrp);
+    formData.append("salePrice", baseSalePrice);
+
+    // category
+    formData.append("categoryId", parentCategoryId);
+    if (subCategoryId) formData.append("subCategoryId", subCategoryId);
+
+    // stock settings
+    formData.append("lowStockThreshold", lowStockThreshold || "5");
+    if (!hasAnyVariant) {
+      formData.append("baseStock", baseStock || "0");
     }
 
-    try {
-      const token = getVendorToken();
-      if (!token) {
-        setError("Vendors token not found. Please login again.");
-        setSubmitting(false);
-        return;
-      }
+    // ✅ shipping: SEND FLAT KEYS (backend create expects these)
+    formData.append("shipLengthCm", shipPayload.shipLengthCm);
+    formData.append("shipBreadthCm", shipPayload.shipBreadthCm);
+    formData.append("shipHeightCm", shipPayload.shipHeightCm);
+    formData.append("shipWeightKg", shipPayload.shipWeightKg);
 
-      type CleanVariant = {
-        label?: string;
-        size?: string;
-        weight?: string;
-        color?: string;
-        comboText?: string;
-        mrp: number;
-        salePrice: number;
-        quantity: number;
-      };
+    // (optional) extra compatibility: bracket keys too
+    // formData.append("ship[lengthCm]", shipPayload.shipLengthCm);
+    // formData.append("ship[breadthCm]", shipPayload.shipBreadthCm);
+    // formData.append("ship[heightCm]", shipPayload.shipHeightCm);
+    // formData.append("ship[weightKg]", shipPayload.shipWeightKg);
 
-      const cleanText = (s: string) => s.trim();
-
-      const cleanVariants: CleanVariant[] = variants
-        .filter((v) => {
-          const hasIdentity = !!(v.label || v.size || v.weight || v.comboText);
-          const hasPriceOrStock =
-            v.mrp.trim() !== "" || v.salePrice.trim() !== "" || v.quantity.trim() !== "";
-          return hasIdentity && hasPriceOrStock;
-        })
-        .map((v) => ({
-          label: v.label ? cleanText(v.label) : undefined,
-          size: v.size ? cleanText(v.size) : undefined,
-          weight: v.weight ? cleanText(v.weight) : undefined,
-          // color: v.color ? cleanText(v.color) : undefined,
-          comboText: v.comboText ? cleanText(v.comboText) : undefined,
-          mrp: Number(v.mrp || 0),
-          salePrice: Number(v.salePrice || 0),
-          quantity: Number(v.quantity || 0),
-        }));
-
-      const hasAnyVariant = cleanVariants.length > 0;
-
-
-      if (!hasAnyVariant && baseStock.trim() === "") {
-        setError("Base stock is required when no variants are added");
-        setSubmitting(false);
-        return;
-      }
-      // description me featuresText ko bhi append kar dete hain
-      type CleanColor = {
-        name: string;
-        hex?: string;
-        orderIndex: number;
-        images?: string[]; // keep for update page; create page can send empty
-      };
-
-      const cleanColors: CleanColor[] = colors
-        .map((c, idx) => ({
-          name: (c.name || "").trim(),
-          hex: (c.hex || "").trim(),
-          orderIndex: Number(c.orderIndex ?? idx),
-        }))
-        .filter((c) => c.name); // only keep named colors
-
-      // ✅ ensure default color exists if colors section used
-      // not required, but safe: if user leaves empty -> it won't send
-
-
-      // ---- FormData (multipart/form-data) ----
-      const formData = new FormData();
-      formData.append("title", title);
-      formData.append("slug", slug);
-      formData.append("description", description.trim());
-      formData.append("features", featuresText.trim()); // ✅ NEW
-
-      formData.append("mrp", baseMrp);
-      formData.append("salePrice", baseSalePrice);
-formData.append(
-  "ship",
-  JSON.stringify({
-    lengthCm: Number(shipLengthCm || 20),
-    breadthCm: Number(shipBreadthCm || 15),
-    heightCm: Number(shipHeightCm || 10),
-    weightKg: Number(shipWeightKg || 0.5),
-  })
-);
-
-      formData.append("categoryId", parentCategoryId);
-      formData.append("lowStockThreshold", lowStockThreshold || "5"); // NEW
-      if (subCategoryId) {
-        formData.append("subCategoryId", subCategoryId);
-      }
-      // formData.append("isActive", "true");
-
-      // variants as JSON string (backend normalizeVariants handle karega)
-      if (cleanVariants.length > 0) {
-        formData.append("variants", JSON.stringify(cleanVariants));
-      }
-      // color append
-      if (cleanColors.length > 0) {
-        formData.append("colors", JSON.stringify(cleanColors));
-      }
-
-
-      // Feature image file
-      if (featureImageFile) {
-        formData.append("featureImage", featureImageFile);
-      }
-      // send baseStock only if no variants
-      if (cleanVariants.length === 0) {
-        formData.append("baseStock", baseStock || "0"); // NEW
-      }
-      // Gallery images
-      galleryFiles.forEach((file) => {
-        formData.append("galleryImages", file);
-      });
-
-      // Variant images (per variant index)
-      Object.keys(variantImages).forEach((variantIndex) => {
-        variantImages[Number(variantIndex)].forEach((file) => {
-          formData.append(`variantImages[${variantIndex}]`, file);
-        });
-      });
-      Object.keys(colorImages).forEach((colorIndex) => {
-        colorImages[Number(colorIndex)].forEach((file) => {
-          formData.append(`colorImages[${colorIndex}]`, file);
-        });
-      });
-
-      const res = await fetch(`${API_BASE}/vendors/products`, {
-        method: "POST",
-        headers: {
-          // IMPORTANT: Content-Type mat set karo, browser khud boundary set karega
-          Authorization: `Bearer ${token}`,
-        },
-        body: formData,
-      });
-
-      const data = await res.json();
-
-      if (!res.ok) {
-        throw new Error(data?.message || "Failed to create product");
-      }
-
-      setMessage("Product created successfully.");
-
-      // reset form
-      setTitle("");
-      setSlug("");
-      setDescription("");
-      // setFeatures("");
-      setFeaturesText("");
-      setBaseMrp("");
-      setBaseSalePrice("");
-      setShipLengthCm("20");
-      setShipBreadthCm("15");
-      setShipHeightCm("10");
-      setShipWeightKg("0.5");
-      setBaseStock("");                 // NEW
-      setLowStockThreshold("5");        // NEW
-      setParentCategoryId("");
-      setSubCategoryId("");
-      setVariants([
-        {
-          label: "",
-          size: "",
-          weight: "",
-          // color: "",
-          comboText: "",
-          mrp: "",
-          salePrice: "",
-          quantity: "",
-        },
-      ]);
-      setColors([{ name: "", hex: "", orderIndex: "0" }]);
-      setColorImages({});
-      setColorImagePreviews({});
-
-      clearFeatureImage();
-      setGalleryFiles([]);
-      setGalleryPreviews([]);
-      setVariantImages({});
-      setVariantImagePreviews({});
-    } catch (err: any) {
-      console.error("Create product error:", err);
-      setError(err.message || "Something went wrong");
-    } finally {
-      setSubmitting(false);
+    // variants (json)
+    if (cleanVariants.length > 0) {
+      formData.append("variants", JSON.stringify(cleanVariants));
     }
-  };
+
+    // colors (json)
+    if (cleanColors.length > 0) {
+      formData.append("colors", JSON.stringify(cleanColors));
+    }
+
+    // Feature image file
+    if (featureImageFile) {
+      formData.append("featureImage", featureImageFile);
+    }
+
+    // Gallery images
+    galleryFiles.forEach((file) => {
+      formData.append("galleryImages", file);
+    });
+
+    // Variant images (per variant index)
+    Object.keys(variantImages).forEach((variantIndex) => {
+      variantImages[Number(variantIndex)].forEach((file) => {
+        formData.append(`variantImages[${variantIndex}]`, file);
+      });
+    });
+
+    // Color images (per color index)
+    Object.keys(colorImages).forEach((colorIndex) => {
+      colorImages[Number(colorIndex)].forEach((file) => {
+        formData.append(`colorImages[${colorIndex}]`, file);
+      });
+    });
+
+    // debug outgoing shipping keys
+    console.log("Outgoing FormData ship fields:");
+    for (const [k, v] of formData.entries()) {
+      if (String(k).toLowerCase().includes("ship")) {
+        console.log(k, v);
+      }
+    }
+
+    const res = await fetch(`${API_BASE}/vendors/products`, {
+      method: "POST",
+      headers: {
+        // IMPORTANT: Content-Type mat set karo; browser boundary set karega
+        Authorization: `Bearer ${token}`,
+      },
+      body: formData,
+    });
+
+    const data = await res.json();
+
+    if (!res.ok) {
+      throw new Error(data?.message || "Failed to create product");
+    }
+
+    setMessage("Product created successfully.");
+
+    // ---- reset form ----
+    setTitle("");
+    setSlug("");
+    setDescription("");
+    setFeaturesText("");
+    setBaseMrp("");
+    setBaseSalePrice("");
+
+    setShipLengthCm("20");
+    setShipBreadthCm("15");
+    setShipHeightCm("10");
+    setShipWeightKg("0.5");
+
+    setBaseStock("");
+    setLowStockThreshold("5");
+    setParentCategoryId("");
+    setSubCategoryId("");
+
+    setVariants([
+      {
+        label: "",
+        size: "",
+        weight: "",
+        comboText: "",
+        mrp: "",
+        salePrice: "",
+        quantity: "",
+      },
+    ]);
+
+    setColors([{ name: "", hex: "", orderIndex: "0" }]);
+    setColorImages({});
+    setColorImagePreviews({});
+
+    clearFeatureImage();
+    setGalleryFiles([]);
+    setGalleryPreviews([]);
+    setVariantImages({});
+    setVariantImagePreviews({});
+  } catch (err: any) {
+    console.error("Create product error:", err);
+    setError(err.message || "Something went wrong");
+  } finally {
+    setSubmitting(false);
+  }
+};
+
 
   // ---- UI ----
   return (
@@ -978,6 +1004,7 @@ formData.append(
                 <div className="space-y-2">
                   <label className="text-sm font-medium text-slate-700">Length (cm)</label>
                   <input
+                    name="shipLengthCm"
                     type="number"
                     min={0}
                     value={shipLengthCm}
@@ -989,6 +1016,7 @@ formData.append(
                 <div className="space-y-2">
                   <label className="text-sm font-medium text-slate-700">Breadth (cm)</label>
                   <input
+                    name="shipBreadthCm"
                     type="number"
                     min={0}
                     value={shipBreadthCm}
@@ -1000,6 +1028,7 @@ formData.append(
                 <div className="space-y-2">
                   <label className="text-sm font-medium text-slate-700">Height (cm)</label>
                   <input
+                    name="shipHeightCm"
                     type="number"
                     min={0}
                     value={shipHeightCm}
@@ -1011,6 +1040,7 @@ formData.append(
                 <div className="space-y-2">
                   <label className="text-sm font-medium text-slate-700">Weight (kg)</label>
                   <input
+                    name="shipWeightKg"
                     type="number"
                     min={0}
                     step="0.01"

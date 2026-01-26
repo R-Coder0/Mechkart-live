@@ -66,6 +66,12 @@ type ApiProduct = {
 
   // ✅ NEW: product-level colors (from backend)
   colors?: ApiColor[];
+  ownerType?: "ADMIN" | "VENDOR";
+  vendorId?: {
+    company?: {
+      name?: string;
+    };
+  };
 };
 
 function calcDiscountPercent(mrp?: number, sale?: number) {
@@ -108,9 +114,9 @@ async function addToCartApi(args: {
       variantId,
       colorKey: colorKey || null,
       qty,
-       // ✅ new flags
-  selectOnAdd: Boolean(args.selectOnAdd),
-  clearOthers: Boolean(args.clearOthers),
+      // ✅ new flags
+      selectOnAdd: Boolean(args.selectOnAdd),
+      clearOthers: Boolean(args.clearOthers),
     }),
   });
 
@@ -352,7 +358,12 @@ export default function ProductDetailsClient({ product }: { product: ApiProduct 
   const hasVariants = variants.length > 0;
 
   const threshold = Number(product.lowStockThreshold ?? 5);
-
+  const soldBy = useMemo(() => {
+    if (product.ownerType === "VENDOR") {
+      return product.vendorId?.company?.name?.trim() || "Mechkart";
+    }
+    return "Mechkart";
+  }, [product.ownerType, product.vendorId]);
   /** ✅ COLORS (product.colors preferred, else derive from variants.color) */
   const colors: ApiColor[] = useMemo(() => {
     const fromProduct = (product.colors || [])
@@ -514,9 +525,9 @@ export default function ProductDetailsClient({ product }: { product: ApiProduct 
         qty,
         variantId: hasVariants ? String(selectedVariant?._id) : undefined,
         colorKey: selectedColorName ? selectedColorName.trim().toLowerCase() : null,
-          // ✅ Add-to-cart does not disturb other selections
-  selectOnAdd: false,
-  clearOthers: false,
+        // ✅ Add-to-cart does not disturb other selections
+        selectOnAdd: false,
+        clearOthers: false,
       });
       setAddedOnce(true);
       setTimeout(() => setAddedOnce(false), 1500);
@@ -546,8 +557,8 @@ export default function ProductDetailsClient({ product }: { product: ApiProduct 
         variantId: hasVariants ? String(selectedVariant?._id) : undefined,
         colorKey: selectedColorName ? selectedColorName.trim().toLowerCase() : null,
         // ✅ Buy-now: only this item selected
-  selectOnAdd: true,
-  clearOthers: true,
+        selectOnAdd: true,
+        clearOthers: true,
       });
 
       // ✅ redirect to cart/checkout as per your flow
@@ -737,6 +748,19 @@ export default function ProductDetailsClient({ product }: { product: ApiProduct 
                   4.6★
                 </span>
                 <span>Ratings & Reviews</span>
+              </div>
+              {/* ✅ Sold By */}
+              <div className="mt-2 text-sm text-gray-600">
+                <span className="text-gray-500">Sold by:</span>{" "}
+                <span className="font-semibold text-gray-900">
+                  {soldBy}
+                </span>
+
+                {product.ownerType === "VENDOR" && (
+                  <span className="ml-2 text-[11px] px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200">
+                    Verified Seller
+                  </span>
+                )}
               </div>
 
               <div className="mt-4 flex flex-wrap items-end gap-3">

@@ -70,6 +70,7 @@ export default function VendorDashboardLayout({
     () => [
       { label: "Dashboard", href: "/supplier/dashboard" },
       { label: "Products", href: "/supplier/dashboard/products-add" },
+      { label: "Inventory", href: "/supplier/dashboard/products" },
       { label: "Orders", href: "/supplier/dashboard/orders" },
       { label: "Shipments", href: "/supplier/dashboard/shipments" },
       { label: "Returns", href: "/supplier/dashboard/returns" },

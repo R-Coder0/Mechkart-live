@@ -1,5 +1,6 @@
+export const dynamic = "force-dynamic";
+
 /* eslint-disable @typescript-eslint/no-explicit-any */
-// app/website/product/[slug]/page.tsx
 import RelatedProducts from "@/components/website/RelatedProducts";
 import ProductDetailsClient from "./product-details-client";
 import Link from "next/link";
@@ -13,7 +14,6 @@ type ApiVariant = {
   label?: string;
   size?: string;
   weight?: string;
-  color?: string;
   comboText?: string;
   mrp?: number;
   salePrice?: number;
@@ -34,7 +34,7 @@ type ApiProduct = {
   title: string;
   slug: string;
   description?: string;
-  features?: any; // ✅ allow string | array | object (as in ProductDetailsClient)
+  features?: any;
 
   featureImage?: string;
   galleryImages?: string[];
@@ -43,15 +43,24 @@ type ApiProduct = {
   salePrice?: number;
 
   baseStock?: number;
-  lowStockThreshold?: number;
+  totalStock?: number;
 
   category?: ApiCategory;
   subCategory?: ApiCategory;
 
   variants?: ApiVariant[];
-
-  // ✅ NEW: for color option + gallery switching
   colors?: ApiColor[];
+
+  // ✅ SELLER INFO
+  ownerType?: "ADMIN" | "VENDOR";
+  vendorId?: {
+    company?: {
+      name?: string;
+    };
+  };
+
+  approvalStatus?: "PENDING" | "APPROVED" | "REJECTED";
+  isActive?: boolean;
 };
 
 async function fetchProductBySlug(slug: string): Promise<ApiProduct | null> {
@@ -59,6 +68,7 @@ async function fetchProductBySlug(slug: string): Promise<ApiProduct | null> {
 
   const res = await fetch(`${API_BASE}/admin/products/slug/${slug}`, {
     cache: "no-store",
+    next: { revalidate: 0 },
   });
 
   if (!res.ok) return null;
@@ -75,9 +85,14 @@ export default async function ProductPage({
 
   const product = await fetchProductBySlug(slug);
 
-  if (!product) {
+  // ✅ safety guard
+  if (
+    !product ||
+    product.approvalStatus !== "APPROVED" ||
+    product.isActive === false
+  ) {
     return (
-      <div className="max-w-7xl mx-auto px-4 py-10 overflow-x-hidden">
+      <div className="max-w-7xl mx-auto px-4 py-10">
         <h1 className="text-xl font-semibold text-gray-900">Product not found</h1>
         <p className="mt-2 text-sm text-gray-600">
           The product you are looking for does not exist or is not available.
@@ -95,31 +110,34 @@ export default async function ProductPage({
         </Link>
         <span>/</span>
 
-        {product.category?.slug ? (
+        {product.category?.slug && (
           <>
-            <a className="hover:underline" href={`/category/${product.category.slug}`}>
+            <Link
+              className="hover:underline"
+              href={`/category/${product.category.slug}`}
+            >
               {product.category.name}
-            </a>
+            </Link>
             <span>/</span>
           </>
-        ) : null}
+        )}
 
-        {product.subCategory?.slug && product.category?.slug ? (
+        {product.subCategory?.slug && product.category?.slug && (
           <>
-            <a
+            <Link
               className="hover:underline"
               href={`/category/${product.category.slug}/${product.subCategory.slug}`}
             >
               {product.subCategory.name}
-            </a>
+            </Link>
             <span>/</span>
           </>
-        ) : null}
+        )}
 
         <span className="text-gray-900 font-medium">{product.title}</span>
       </div>
 
-      {/* ✅ ProductDetailsClient now expects colors + flexible features */}
+      {/* 🔥 PASS COMPLETE PRODUCT (vendor included) */}
       <ProductDetailsClient product={product} />
 
       <RelatedProducts

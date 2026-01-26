@@ -246,12 +246,38 @@ const getShipDefaults = () => {
 /**
  * VENDOR: CREATE PRODUCT
  * POST /api/vendors/products
+ *
+ * Updated (fixed) create logic:
+ * - Proper debug logs placement
+ * - Robust shipping field extraction (supports flat keys + bracket keys + ship object)
+ * - Same variant/color/image logic retained
  */
-export const vendorCreateProduct = async (req: Request, res: Response, next: NextFunction) => {
+export const vendorCreateProduct = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
   try {
     const vendorId = (req as any)?.vendor?._id;
     if (!vendorId) return res.status(401).json({ message: "Unauthorized" });
 
+    // ---- DEBUG (TEMP) ----
+    console.log("CREATE req.body keys:", Object.keys(req.body || {}));
+    console.log("CREATE req.body.ship:", (req.body as any)?.ship);
+    console.log("CREATE ship flat:", {
+      shipLengthCm: (req.body as any)?.shipLengthCm,
+      shipBreadthCm: (req.body as any)?.shipBreadthCm,
+      shipHeightCm: (req.body as any)?.shipHeightCm,
+      shipWeightKg: (req.body as any)?.shipWeightKg,
+    });
+    console.log("CREATE ship bracket:", {
+      L: (req.body as any)?.["ship[lengthCm]"],
+      B: (req.body as any)?.["ship[breadthCm]"],
+      H: (req.body as any)?.["ship[heightCm]"],
+      W: (req.body as any)?.["ship[weightKg]"],
+    });
+
+    // ---- read body (keep destructuring for other fields) ----
     const {
       title,
       description,
@@ -266,13 +292,9 @@ export const vendorCreateProduct = async (req: Request, res: Response, next: Nex
       lowStockThreshold,
       categoryId,
       subCategoryId,
-
-      shipLengthCm,
-      shipBreadthCm,
-      shipHeightCm,
-      shipWeightKg,
     } = req.body as any;
 
+    // ---- validation ----
     const baseMrp = toNumber(mrp);
     const baseSale = toNumber(salePrice);
 
@@ -300,13 +322,12 @@ export const vendorCreateProduct = async (req: Request, res: Response, next: Nex
       subCatId = subCat._id;
     }
 
+    // ---- slug ----
     const slug = makeSlug(title);
-
-    // NOTE: to avoid collisions among vendors, we add vendorId suffix if slug exists
     const existing = await Product.findOne({ slug });
     const finalSlug = existing ? `${slug}-${String(vendorId).slice(-6)}` : slug;
 
-    // images from multer
+    // ---- images from multer ----
     const { featureImagePath, galleryPaths } = extractImagePaths(req);
     const variantImagesMap = extractVariantImages(req);
     const colorImagesMap = extractColorImages(req);
@@ -314,21 +335,61 @@ export const vendorCreateProduct = async (req: Request, res: Response, next: Nex
     const bodyGallery = normalizeGalleryFromBody(galleryImages);
     const finalGallery = [...bodyGallery, ...galleryPaths];
 
+    // ---- build variants & colors ----
     const builtVariants = buildVariants(variants, variantImagesMap);
     const builtColors = buildColors(colors, colorImagesMap);
 
+    // ---- stock ----
     const parsedBaseStock = toNumber(baseStock) ?? 0;
     const parsedThreshold = toNumber(lowStockThreshold) ?? 5;
 
     const totalStock = calcTotalStock(builtVariants, parsedBaseStock);
     const isLowStock = calcLowStockFlag(totalStock, parsedThreshold);
 
+    // ---- SHIPPING (robust extraction) ----
     const shipDefaults = getShipDefaults();
-    const shipL = toNumber(shipLengthCm) ?? shipDefaults.shipLengthCm;
-    const shipB = toNumber(shipBreadthCm) ?? shipDefaults.shipBreadthCm;
-    const shipH = toNumber(shipHeightCm) ?? shipDefaults.shipHeightCm;
-    const shipW = toNumber(shipWeightKg) ?? shipDefaults.shipWeightKg;
 
+    const rawShipLength =
+      (req.body as any)?.shipLengthCm ??
+      (req.body as any)?.["shipLengthCm"] ??
+      (req.body as any)?.["ship[lengthCm]"] ??
+      (req.body as any)?.ship?.lengthCm;
+
+    const rawShipBreadth =
+      (req.body as any)?.shipBreadthCm ??
+      (req.body as any)?.["shipBreadthCm"] ??
+      (req.body as any)?.["ship[breadthCm]"] ??
+      (req.body as any)?.ship?.breadthCm;
+
+    const rawShipHeight =
+      (req.body as any)?.shipHeightCm ??
+      (req.body as any)?.["shipHeightCm"] ??
+      (req.body as any)?.["ship[heightCm]"] ??
+      (req.body as any)?.ship?.heightCm;
+
+    const rawShipWeight =
+      (req.body as any)?.shipWeightKg ??
+      (req.body as any)?.["shipWeightKg"] ??
+      (req.body as any)?.["ship[weightKg]"] ??
+      (req.body as any)?.ship?.weightKg;
+
+    const shipL = toNumber(rawShipLength) ?? shipDefaults.shipLengthCm;
+    const shipB = toNumber(rawShipBreadth) ?? shipDefaults.shipBreadthCm;
+    const shipH = toNumber(rawShipHeight) ?? shipDefaults.shipHeightCm;
+    const shipW = toNumber(rawShipWeight) ?? shipDefaults.shipWeightKg;
+
+    console.log("CREATE ship parsed:", {
+      rawShipLength,
+      rawShipBreadth,
+      rawShipHeight,
+      rawShipWeight,
+      shipL,
+      shipB,
+      shipH,
+      shipW,
+    });
+
+    // ---- create ----
     const product = await Product.create({
       title,
       slug: finalSlug,
@@ -351,15 +412,16 @@ export const vendorCreateProduct = async (req: Request, res: Response, next: Nex
       category: category._id,
       subCategory: subCatId,
 
-   ownerType: "VENDOR",
-vendorId: vendorId,
+      ownerType: "VENDOR",
+      vendorId: vendorId,
       approvalStatus: "PENDING",
 
-      // ✅ shipping fields
-      shipLengthCm: shipL,
-      shipBreadthCm: shipB,
-      shipHeightCm: shipH,
-      shipWeightKg: shipW,
+      ship: {
+        lengthCm: shipL,
+        breadthCm: shipB,
+        heightCm: shipH,
+        weightKg: shipW,
+      },
     });
 
     return res.status(201).json({
@@ -370,6 +432,7 @@ vendorId: vendorId,
     next(err);
   }
 };
+
 
 /**
  * VENDOR: LIST MY PRODUCTS
@@ -384,7 +447,7 @@ export const vendorListMyProducts = async (req: Request, res: Response, next: Ne
 
     const filter: any = {
       ownerType: "VENDOR",
-      vendor: vendorId,
+      vendorId: vendorId,
     };
 
     if (approvalStatus) filter.approvalStatus = String(approvalStatus).toUpperCase();
@@ -422,7 +485,7 @@ export const vendorGetMyProductById = async (req: Request, res: Response, next: 
     const product = await Product.findOne({
       _id: id,
       ownerType: "VENDOR",
-      vendor: vendorId,
+      vendorId: vendorId,
     })
       .populate("category", "name slug")
       .populate("subCategory", "name slug");
@@ -452,7 +515,7 @@ export const vendorUpdateMyProduct = async (req: Request, res: Response, next: N
     const product = await Product.findOne({
       _id: id,
       ownerType: "VENDOR",
-      vendor: vendorId,
+      vendorId: vendorId,
     });
 
     if (!product) return res.status(404).json({ message: "Product not found" });
@@ -574,23 +637,29 @@ export const vendorUpdateMyProduct = async (req: Request, res: Response, next: N
     }
 
     // SHIPPING
-    const shipDefaults = getShipDefaults();
-    const shipL = toNumber(shipLengthCm);
-    const shipB = toNumber(shipBreadthCm);
-    const shipH = toNumber(shipHeightCm);
-    const shipW = toNumber(shipWeightKg);
+// SHIPPING (schema has `ship.{lengthCm,breadthCm,heightCm,weightKg}`)
+const shipDefaults = getShipDefaults();
 
-    if (shipL !== null) (product as any).shipLengthCm = shipL;
-    else if ((product as any).shipLengthCm == null) (product as any).shipLengthCm = shipDefaults.shipLengthCm;
+const shipL = toNumber(shipLengthCm);
+const shipB = toNumber(shipBreadthCm);
+const shipH = toNumber(shipHeightCm);
+const shipW = toNumber(shipWeightKg);
 
-    if (shipB !== null) (product as any).shipBreadthCm = shipB;
-    else if ((product as any).shipBreadthCm == null) (product as any).shipBreadthCm = shipDefaults.shipBreadthCm;
+// ensure ship object exists
+if (!(product as any).ship) {
+  (product as any).ship = {
+    lengthCm: shipDefaults.shipLengthCm,
+    breadthCm: shipDefaults.shipBreadthCm,
+    heightCm: shipDefaults.shipHeightCm,
+    weightKg: shipDefaults.shipWeightKg,
+  };
+}
 
-    if (shipH !== null) (product as any).shipHeightCm = shipH;
-    else if ((product as any).shipHeightCm == null) (product as any).shipHeightCm = shipDefaults.shipHeightCm;
+if (shipL !== null) (product as any).ship.lengthCm = shipL;
+if (shipB !== null) (product as any).ship.breadthCm = shipB;
+if (shipH !== null) (product as any).ship.heightCm = shipH;
+if (shipW !== null) (product as any).ship.weightKg = shipW;
 
-    if (shipW !== null) (product as any).shipWeightKg = shipW;
-    else if ((product as any).shipWeightKg == null) (product as any).shipWeightKg = shipDefaults.shipWeightKg;
 
     // ✅ IMPORTANT: vendor edit => needs re-approval
     (product as any).approvalStatus = "PENDING";

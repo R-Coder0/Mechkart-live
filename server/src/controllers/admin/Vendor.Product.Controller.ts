@@ -33,10 +33,10 @@ export const adminListVendorProducts = async (
     }
 
     const products = await Product.find(filter)
-      .populate("vendorId", "companyName email phone")
-      .populate("category", "name slug")
-      .populate("subCategory", "name slug")
-      .sort({ createdAt: -1 });
+  .populate("vendorId", "company.name company.email email phone status name")
+  .populate("category", "name slug")
+  .populate("subCategory", "name slug")
+  .sort({ createdAt: -1 });
 
     return res.json({ data: products });
   } catch (err) {
@@ -132,9 +132,9 @@ export const adminGetVendorProductById = async (req, res, next) => {
     }
 
     const product = await Product.findOne({ _id: id, ownerType: "VENDOR" })
-      .populate("vendorId", "companyName email phone status")
-      .populate("category", "name slug")
-      .populate("subCategory", "name slug");
+  .populate("vendorId", "company.name company.email email phone status name")
+  .populate("category", "name slug")
+  .populate("subCategory", "name slug");
 
     if (!product) return res.status(404).json({ message: "Product not found" });
 

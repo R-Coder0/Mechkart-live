@@ -204,7 +204,7 @@ export default function CheckoutPage() {
 
         await loadSummary();
         await refreshAddresses();
-                // preload Razorpay script (non-blocking)
+        // preload Razorpay script (non-blocking)
         loadRazorpayScript();
 
       } catch (e: any) {
@@ -219,7 +219,7 @@ export default function CheckoutPage() {
         setLoading(false);
       }
     })();
-     
+
   }, []);
 
   const canPlace = useMemo(() => {
@@ -316,6 +316,67 @@ export default function CheckoutPage() {
       };
     });
   }, [items, totals.subtotal, totals.discount]);
+  const groups = useMemo(() => {
+    const gs = Array.isArray(summary?.groups) ? summary.groups : [];
+
+    // If backend groups exist, map group items to your computedItems (so your UI price calc remains same)
+    // We'll match by productId + variantId + colorKey (good enough for checkout).
+    if (gs.length) {
+      const index = new Map<string, any>();
+
+      for (const it of computedItems) {
+        const k = `${String(it.productId)}|${String(it.variantId || "")}|${String(it.colorKey || "")}`;
+        // if duplicates exist (same key repeated), this map keeps last; usually not an issue in cart.
+        index.set(k, it);
+      }
+
+      return gs.map((g: any) => {
+        const mappedItems = (g.items || []).map((raw: any) => {
+          const k = `${String(raw.productId)}|${String(raw.variantId || "")}|${String(raw.colorKey || "")}`;
+          return index.get(k) || raw; // fallback
+        });
+
+        const subtotal = mappedItems.reduce((s: number, it: any) => {
+          const finalLine = toNum(it?.__ui?.finalLine ?? it.finalLineTotal ?? it.lineTotal, 0);
+          return s + finalLine;
+        }, 0);
+
+        return {
+          ...g,
+          items: mappedItems,
+          subtotal,
+        };
+      });
+    }
+
+    // fallback grouping (if backend groups not present)
+    const map = new Map<string, any>();
+    for (const it of computedItems) {
+      const ownerType = String(it.ownerType || it?.product?.ownerType || "ADMIN");
+      const vendorId = ownerType === "VENDOR" ? String(it.vendorId || it?.product?.vendorId || "") : "";
+      const key = ownerType === "ADMIN" ? "ADMIN" : `VENDOR:${vendorId}`;
+
+      if (!map.has(key)) {
+        map.set(key, {
+          ownerType,
+          vendorId: ownerType === "VENDOR" ? (vendorId || null) : null,
+          soldBy: it.soldBy || (ownerType === "ADMIN" ? "Mechkart" : "Vendor"),
+          items: [],
+          subtotal: 0,
+        });
+      }
+
+      const g = map.get(key);
+      g.items.push(it);
+
+      const finalLine = toNum(it?.__ui?.finalLine ?? it.finalLineTotal ?? it.lineTotal, 0);
+      g.subtotal += finalLine;
+    }
+
+    const arr = Array.from(map.values());
+    arr.sort((a, b) => (a.ownerType === "ADMIN" ? 1 : 0) - (b.ownerType === "ADMIN" ? 1 : 0));
+    return arr;
+  }, [summary?.groups, computedItems]);
 
   const onSaveAddress = async () => {
     try {
@@ -397,7 +458,7 @@ export default function CheckoutPage() {
       setBusy(null);
     }
   };
-    const onPayOnline = async () => {
+  const onPayOnline = async () => {
     if (!canPlace) {
       setError("Please select a delivery address.");
       return;
@@ -547,101 +608,91 @@ export default function CheckoutPage() {
           <div className="rounded-3xl border bg-white p-5">
             <div className="text-lg font-bold text-gray-900">Items</div>
             <div className="mt-4 space-y-4">
-              {computedItems.map((it: any, idx: number) => {
-                const product = it.product || null;
-                const imgPath = resolveCheckoutItemImage(product, it.variantId, it.colorKey);
-                const img = resolveImageUrl(imgPath);
-                const vText = getVariantText(product, it.variantId);
-
-                const u = it.__ui || {};
-                const qty = Math.max(1, toNum(u.qty ?? it.qty, 1));
-
-                // per-item numbers (all UI only)
-                const mrpEach = toNum(u.mrpEach ?? it.mrp, 0);
-                const saleEach = toNum(u.saleEach ?? it.salePrice, 0);
-
-                const mrpLine = toNum(u.mrpLine, mrpEach * qty);
-                const saleLine = toNum(u.saleLine, saleEach * qty);
-
-                const offerLine = toNum(u.offerLine, 0);
-
-                const finalLine = toNum(u.finalLine, Math.max(0, saleLine - offerLine));
-                const finalEach = qty ? Math.round(finalLine / qty) : finalLine;
-
-                const baseSaved = toNum(u.baseSaved, Math.max(0, mrpLine - saleLine)); // MRP -> sale
-                const offerSaved = toNum(u.offerSaved, Math.max(0, saleLine - finalLine)); // sale -> final
-                const totalSaved = toNum(u.totalSaved, Math.max(0, mrpLine - finalLine)); // MRP -> final
-
-                return (
-                  <div key={idx} className="flex gap-4 border-b pb-4 last:border-b-0 last:pb-0">
-                    <div className="h-20 w-20 shrink-0 overflow-hidden rounded-2xl bg-gray-50">
-                      <img src={img} alt={it.title} className="h-full w-full object-cover" />
+              {groups.map((g: any, gi: number) => (
+                <div key={gi} className="rounded-2xl border bg-gray-50/40 p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-sm font-bold text-gray-900">
+                      Sold by: <span className="font-extrabold">{g.soldBy || "Mechkart"}</span>
                     </div>
-
-                    <div className="flex-1">
-                      <div className="text-sm font-semibold text-gray-900">
-                        {product?.title || it.title}
-                      </div>
-
-                      {it.productCode ? (
-                        <div className="mt-0.5 text-[11px] font-semibold text-gray-500">
-                          Code: {it.productCode}
-                        </div>
-                      ) : null}
-
-                      <div className="mt-1 text-xs text-gray-500">
-                        Variant: {vText}
-                        {it.colorKey ? ` • Color: ${it.colorKey}` : ""}
-                        {" • "}Qty: {qty}
-                      </div>
-
-                      {/* ✅ Price presentation:
-              MRP (strike) → Sale price → Final price (after offer) */}
-                      <div className="mt-2 flex items-start justify-between gap-3">
-                        <div className="text-xs text-gray-500">
-                          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                            <span className="line-through">{money(mrpEach)}</span>
-
-                            {/* show sale only if different from mrp */}
-                            {/* {saleEach !== mrpEach ? (
-                  <span className="text-gray-700">{money(saleEach)}</span>
-                ) : null} */}
-
-                            {/* show arrow/final only if offer made it lower */}
-                            {finalEach !== saleEach ? (
-                              <>
-                                {/* <span className="text-gray-400">→</span> */}
-                                <span className="font-semibold text-gray-900">{money(finalEach)}</span>
-                              </>
-                            )
-                              : (
-                                <span className="font-semibold text-gray-900">{money(finalEach)}</span>
-                              )}
-
-                            {/* <span className="text-gray-400">({money(finalEach)} each)</span> */}
-                          </div>
-
-                          {/* ✅ Saved message as per your formula:
-                  (MRP - sale) + (sale - discounted) */}
-                          {totalSaved > 0 ? (
-                            <div className="mt-1 text-[11px] font-semibold text-emerald-700">
-                              Saved: {money(totalSaved)}{" "}
-                              {/* <span className="font-normal text-gray-400">
-                    (MRP→Sale {money(baseSaved)} + Offer {money(offerSaved)})
-                  </span> */}
-                            </div>
-                          ) : null}
-                        </div>
-
-                        <div className="text-right">
-                          <div className="font-semibold text-gray-900">{money(finalLine)}</div>
-                        </div>
-                      </div>
+                    <div className="text-sm font-semibold text-gray-900">
+                      Subtotal: {money(Math.round(Number(g.subtotal || 0)))}
                     </div>
                   </div>
-                );
-              })}
+
+                  <div className="mt-4 space-y-4">
+                    {Array.isArray(g.items) && g.items.map((it: any, idx: number) => {
+                      const product = it.product || null;
+                      const imgPath = resolveCheckoutItemImage(product, it.variantId, it.colorKey);
+                      const img = resolveImageUrl(imgPath);
+                      const vText = getVariantText(product, it.variantId);
+
+                      const u = it.__ui || {};
+                      const qty = Math.max(1, toNum(u.qty ?? it.qty, 1));
+
+                      const mrpEach = toNum(u.mrpEach ?? it.mrp, 0);
+                      const saleEach = toNum(u.saleEach ?? it.salePrice, 0);
+
+                      const mrpLine = toNum(u.mrpLine, mrpEach * qty);
+                      const saleLine = toNum(u.saleLine, saleEach * qty);
+
+                      const offerLine = toNum(u.offerLine, 0);
+
+                      const finalLine = toNum(u.finalLine, Math.max(0, saleLine - offerLine));
+                      const finalEach = qty ? Math.round(finalLine / qty) : finalLine;
+
+                      const totalSaved = toNum(u.totalSaved, Math.max(0, mrpLine - finalLine));
+
+                      return (
+                        <div key={`${gi}-${idx}`} className="flex gap-4 border-b pb-4 last:border-b-0 last:pb-0">
+                          <div className="h-20 w-20 shrink-0 overflow-hidden rounded-2xl bg-gray-50">
+                            <img src={img} alt={it.title} className="h-full w-full object-cover" />
+                          </div>
+
+                          <div className="flex-1">
+                            <div className="text-sm font-semibold text-gray-900">
+                              {product?.title || it.title}
+                            </div>
+
+                            {it.productCode ? (
+                              <div className="mt-0.5 text-[11px] font-semibold text-gray-500">
+                                Code: {it.productCode}
+                              </div>
+                            ) : null}
+
+                            <div className="mt-1 text-xs text-gray-500">
+                              Variant: {vText}
+                              {it.colorKey ? ` • Color: ${it.colorKey}` : ""}
+                              {" • "}Qty: {qty}
+                            </div>
+
+                            <div className="mt-2 flex items-start justify-between gap-3">
+                              <div className="text-xs text-gray-500">
+                                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                                  <span className="line-through">{money(mrpEach)}</span>
+
+                                  <span className="font-semibold text-gray-900">{money(finalEach)}</span>
+                                </div>
+
+                                {totalSaved > 0 ? (
+                                  <div className="mt-1 text-[11px] font-semibold text-emerald-700">
+                                    Saved: {money(totalSaved)}
+                                  </div>
+                                ) : null}
+                              </div>
+
+                              <div className="text-right">
+                                <div className="font-semibold text-gray-900">{money(finalLine)}</div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
             </div>
+
 
           </div>
 
@@ -891,17 +942,17 @@ export default function CheckoutPage() {
                   {/* ✅ Show sale subtotal so it doesn't look fake */}
                   <div className="flex justify-between">
                     <span className="text-gray-600">Sale Price Total</span>
-  <span className="font-bold text-gray-900">{money(payable)}</span>
+                    <span className="font-bold text-gray-900">{money(payable)}</span>
                   </div>
                   {/* ✅ Show sale subtotal so it doesn't look fake */}
                   <div className="flex justify-between">
                     <span className="text-gray-600">GST</span>
-  <span className="font-bold text-gray-900">₹ 0</span>
+                    <span className="font-bold text-gray-900">₹ 0</span>
                   </div>
                   {/* ✅ Show sale subtotal so it doesn't look fake */}
                   <div className="flex justify-between">
                     <span className="text-gray-600">Shipping : </span>
-  <span className="font-bold text-gray-900">Free</span>
+                    <span className="font-bold text-gray-900">Free</span>
                   </div>
 
                   {/* ✅ Shown discount from MRP (your requirement) */}
@@ -982,20 +1033,20 @@ export default function CheckoutPage() {
             </div>
 
             <button
-  onClick={onPlaceOrder}
-  disabled={!canPlace || busy === "PLACE_ORDER" || busy === "PAY_ONLINE" || busy === "VERIFY_PAY"}
-  className="mt-6 w-full rounded-2xl bg-gray-900 px-4 py-3 text-sm font-semibold text-white hover:bg-black disabled:opacity-60"
->
-  {busy === "PLACE_ORDER" ? "Placing order..." : "Place Order (COD)"}
-</button>
+              onClick={onPlaceOrder}
+              disabled={!canPlace || busy === "PLACE_ORDER" || busy === "PAY_ONLINE" || busy === "VERIFY_PAY"}
+              className="mt-6 w-full rounded-2xl bg-gray-900 px-4 py-3 text-sm font-semibold text-white hover:bg-black disabled:opacity-60"
+            >
+              {busy === "PLACE_ORDER" ? "Placing order..." : "Place Order (COD)"}
+            </button>
 
-<button
-  onClick={onPayOnline}
-  disabled={!canPlace || busy === "PAY_ONLINE" || busy === "VERIFY_PAY" || busy === "PLACE_ORDER"}
-  className="mt-3 w-full rounded-2xl border border-gray-900 bg-white px-4 py-3 text-sm font-semibold text-gray-900 hover:bg-gray-50 disabled:opacity-60"
->
-  {busy === "PAY_ONLINE" ? "Opening payment..." : busy === "VERIFY_PAY" ? "Verifying..." : "Pay Online"}
-</button>
+            <button
+              onClick={onPayOnline}
+              disabled={!canPlace || busy === "PAY_ONLINE" || busy === "VERIFY_PAY" || busy === "PLACE_ORDER"}
+              className="mt-3 w-full rounded-2xl border border-gray-900 bg-white px-4 py-3 text-sm font-semibold text-gray-900 hover:bg-gray-50 disabled:opacity-60"
+            >
+              {busy === "PAY_ONLINE" ? "Opening payment..." : busy === "VERIFY_PAY" ? "Verifying..." : "Pay Online"}
+            </button>
 
           </div>
         </div>
