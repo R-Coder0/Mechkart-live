@@ -47,6 +47,62 @@ function resolveImageUrl(path?: string) {
   const host = (API_BASE || "").replace(/\/api\/?$/, "");
   return path.startsWith("/") ? `${host}${path}` : `${host}/${path}`;
 }
+function normalizeSubOrders(order: any) {
+  const subs = Array.isArray(order?.subOrders) ? order.subOrders : [];
+  if (subs.length) {
+    return subs.map((so: any) => ({
+      _id: String(so?._id || ""),
+      ownerType: so?.ownerType || (so?.vendorId ? "VENDOR" : "ADMIN"),
+      vendorId: so?.vendorId ? String(so.vendorId) : "",
+      soldBy:
+        String(so?.soldBy || "").trim() ||
+        String(so?.vendorName || "").trim() ||
+        (so?.vendorId ? "Vendor" : "Mechkart"),
+      vendorName: String(so?.vendorName || "").trim(),
+      status: String(so?.status || order?.status || "PLACED").toUpperCase(),
+      items: Array.isArray(so?.items) ? so.items : [],
+      shipment: so?.shipment || null, // subOrder shipment (preferred)
+    }));
+  }
+
+  // fallback legacy
+  const legacyItems = Array.isArray(order?.items) ? order.items : [];
+  return [
+    {
+      _id: "LEGACY",
+      ownerType: "ADMIN",
+      vendorId: "",
+      soldBy: "Mechkart",
+      vendorName: "",
+      status: String(order?.status || "PLACED").toUpperCase(),
+      items: legacyItems,
+      shipment: null,
+    },
+  ];
+}
+
+function pickShipmentForSubOrder(subOrder: any, tracking: any) {
+  // Priority: subOrder.shipment (freshest) -> tracking.shipments match -> null
+  const direct = subOrder?.shipment;
+  if (direct) return direct;
+
+  const ts = Array.isArray(tracking?.shipments) ? tracking.shipments : [];
+  if (!ts.length) return null;
+
+  // match by subOrderId if backend returns it
+  const bySub = ts.find((x: any) => String(x?.subOrderId || "") === String(subOrder?._id || ""));
+  if (bySub) return bySub;
+
+  // match by vendorId if backend returns vendorId
+  const byVendor =
+    subOrder?.vendorId ? ts.find((x: any) => String(x?.vendorId || "") === String(subOrder.vendorId)) : null;
+  if (byVendor) return byVendor;
+
+  // if only one shipment, return it
+  if (ts.length === 1) return ts[0];
+
+  return null;
+}
 
 const norm = (v: any) => String(v ?? "").trim();
 const normKey = (v: any) => norm(v).toLowerCase();
@@ -852,60 +908,60 @@ export default function WebsiteUserOrderDetailsPage() {
               </div>
 
               {/* ✅ Images (max 5) */}
-<div>
-  <div className="flex items-center justify-between mb-1">
-    <div className="text-xs font-semibold text-gray-700">
-      Upload images (optional)
-    </div>
-    <div className="text-[11px] text-gray-500">Max 5</div>
-  </div>
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <div className="text-xs font-semibold text-gray-700">
+                    Upload images (optional)
+                  </div>
+                  <div className="text-[11px] text-gray-500">Max 5</div>
+                </div>
 
-  {/* Hidden input */}
-  <input
-    id="rr-upload"
-    type="file"
-    accept="image/*"
-    multiple
-    className="hidden"
-    onChange={(e) => {
-      const next = Array.from(e.target.files || []);
-      setRrFiles((prev) => [...prev, ...next].slice(0, 5));
-      e.currentTarget.value = "";
-    }}
-  />
+                {/* Hidden input */}
+                <input
+                  id="rr-upload"
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => {
+                    const next = Array.from(e.target.files || []);
+                    setRrFiles((prev) => [...prev, ...next].slice(0, 5));
+                    e.currentTarget.value = "";
+                  }}
+                />
 
-  {/* Visible upload box */}
-  <label
-    htmlFor="rr-upload"
-    className="flex items-center justify-center gap-2 h-14 w-full cursor-pointer rounded-xl border-2 border-dashed border-gray-300 text-sm text-gray-600 hover:border-gray-400 hover:bg-gray-50"
-  >
-    <span className="font-semibold">Click to upload</span>
-    <span className="text-xs text-gray-400">(JPG, PNG)</span>
-  </label>
+                {/* Visible upload box */}
+                <label
+                  htmlFor="rr-upload"
+                  className="flex items-center justify-center gap-2 h-14 w-full cursor-pointer rounded-xl border-2 border-dashed border-gray-300 text-sm text-gray-600 hover:border-gray-400 hover:bg-gray-50"
+                >
+                  <span className="font-semibold">Click to upload</span>
+                  <span className="text-xs text-gray-400">(JPG, PNG)</span>
+                </label>
 
-  {/* Preview */}
-  {rrFiles.length > 0 && (
-    <div className="mt-3 grid grid-cols-5 gap-2">
-      {rrFiles.map((file, i) => {
-        const url = URL.createObjectURL(file);
-        return (
-          <div key={i} className="relative h-16 w-16 rounded-lg border overflow-hidden">
-            <img src={url} alt={`upload-${i}`} className="h-full w-full object-cover" />
-            <button
-              type="button"
-              onClick={() =>
-                setRrFiles((prev) => prev.filter((_, idx) => idx !== i))
-              }
-              className="absolute top-1 right-1 h-5 w-5 rounded-full bg-white border text-[10px] font-bold"
-            >
-              ×
-            </button>
-          </div>
-        );
-      })}
-    </div>
-  )}
-</div>
+                {/* Preview */}
+                {rrFiles.length > 0 && (
+                  <div className="mt-3 grid grid-cols-5 gap-2">
+                    {rrFiles.map((file, i) => {
+                      const url = URL.createObjectURL(file);
+                      return (
+                        <div key={i} className="relative h-16 w-16 rounded-lg border overflow-hidden">
+                          <img src={url} alt={`upload-${i}`} className="h-full w-full object-cover" />
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setRrFiles((prev) => prev.filter((_, idx) => idx !== i))
+                            }
+                            className="absolute top-1 right-1 h-5 w-5 rounded-full bg-white border text-[10px] font-bold"
+                          >
+                            ×
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
 
 
               {/* ✅ COD bank details */}
@@ -1086,9 +1142,8 @@ function Step({
     <div className="flex gap-3">
       <div className="flex flex-col items-center">
         <div
-          className={`h-5 w-5 rounded-full flex items-center justify-center border ${
-            done ? (danger ? "bg-red-500 border-red-500" : "bg-emerald-600 border-emerald-600") : "bg-white border-gray-300"
-          }`}
+          className={`h-5 w-5 rounded-full flex items-center justify-center border ${done ? (danger ? "bg-red-500 border-red-500" : "bg-emerald-600 border-emerald-600") : "bg-white border-gray-300"
+            }`}
         >
           {done ? <div className="h-2 w-2 rounded-full bg-white" /> : null}
         </div>

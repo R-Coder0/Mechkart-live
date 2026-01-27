@@ -61,6 +61,41 @@ function getVariantText(product?: any, variantId?: string) {
   return String(v.label || v.comboText || v.size || v.weight || "").trim();
 }
 
+function normalizeSubOrders(order: any) {
+  const subs = Array.isArray(order?.subOrders) ? order.subOrders : [];
+
+  if (subs.length > 0) {
+    return subs.map((so: any) => ({
+      _id: String(so?._id || ""),
+      ownerType: so?.ownerType || (so?.vendorId ? "VENDOR" : "ADMIN"),
+      vendorId: so?.vendorId ? String(so.vendorId) : "",
+      soldBy:
+        String(so?.soldBy || "").trim() ||
+        String(so?.vendorName || "").trim() ||
+        (so?.vendorId ? "Vendor" : "Mechkart"),
+      vendorName: String(so?.vendorName || "").trim(),
+      status: String(so?.status || "").trim() || String(order?.status || "PLACED"),
+      items: Array.isArray(so?.items) ? so.items : [],
+      shipment: so?.shipment || null,
+    }));
+  }
+
+  // fallback: legacy flat items
+  const legacyItems = Array.isArray(order?.items) ? order.items : [];
+  return [
+    {
+      _id: "LEGACY",
+      ownerType: "ADMIN",
+      vendorId: "",
+      soldBy: "Mechkart",
+      vendorName: "",
+      status: String(order?.status || "PLACED"),
+      items: legacyItems,
+      shipment: null,
+    },
+  ];
+}
+
 export default function OrderSuccessPage() {
   const sp = useSearchParams();
 
@@ -147,9 +182,9 @@ export default function OrderSuccessPage() {
     return Math.max(0, toNum(totals?.savings, NaN) || (mrpTotal ? mrpTotal - payable : 0));
   }, [totals, mrpTotal, payable]);
 
-  const items = useMemo(() => {
-    return Array.isArray(order?.items) ? order.items : [];
-  }, [order?.items]);
+  // const items = useMemo(() => {
+  //   return Array.isArray(order?.items) ? order.items : [];
+  // }, [order?.items]);
 
   // ✅ ONLINE pending?
   const isOnlinePending = useMemo(() => {
@@ -157,89 +192,73 @@ export default function OrderSuccessPage() {
     const ps = String(order?.paymentStatus || "").toUpperCase();
     return pm === "ONLINE" && ps !== "PAID";
   }, [order?.paymentMethod, order?.paymentStatus]);
+const subOrdersNormalized = useMemo(() => normalizeSubOrders(order), [order]);
 
-  const computedItems = useMemo(() => {
-    if (!items.length) return [];
+const computedSubOrders = useMemo(() => {
+  // Build UI-ready items per subOrder (no need to allocate payable across items here)
+  return subOrdersNormalized.map((so: any) => {
+    const rawItems = Array.isArray(so.items) ? so.items : [];
 
-    const raw = items.map((it: any) => {
+    const uiItems = rawItems.map((it: any) => {
       const qty = Math.max(1, toNum(it?.qty, 1));
-      const product = it?.productId || null;
 
-      const variant = (product?.variants || []).find((v: any) => String(v._id) === String(it?.variantId));
+      // product might be populated or snapshot-only
+      const product = it?.productId || it?.product || null;
 
+      const variantText = getVariantText(product, it?.variantId);
+
+      // Prefer line pricing from subOrder item snapshot if present
       const saleEach =
         toNum(it?.finalPrice, NaN) ||
         toNum(it?.salePrice, NaN) ||
         toNum(it?.price, NaN) ||
         toNum(it?.unitPrice, NaN) ||
-        toNum(it?.lineUnitPrice, NaN) ||
-        toNum(variant?.salePrice, NaN) ||
-        toNum(product?.salePrice, NaN) ||
         0;
 
       const mrpEach =
         toNum(it?.mrp, NaN) ||
         toNum(it?.mrpPrice, NaN) ||
         toNum(it?.listPrice, NaN) ||
-        toNum(variant?.mrp, NaN) ||
-        toNum(product?.mrp, NaN) ||
         0;
 
       const saleLine = Math.max(0, saleEach * qty);
       const mrpLine = Math.max(0, mrpEach * qty);
+      const saved = mrpLine > 0 ? Math.max(0, mrpLine - saleLine) : 0;
 
       const title = String(it?.title || product?.title || "Product");
-      const code = String(it?.productCode || "NA");
-      const image = String(it?.image || "");
-
-      return { it, qty, product, saleLine, mrpLine, title, code, image };
-    });
-
-    const sumSaleLine = raw.reduce((s: any, x: { saleLine: any }) => s + x.saleLine, 0);
-    const sumQty = raw.reduce((s: any, x: { qty: any }) => s + x.qty, 0);
-
-    let remaining = Math.max(0, Math.round(payable));
-
-    const out = raw.map((x: any, idx: number) => {
-      let allocatedLine = 0;
-
-      if (sumSaleLine > 0) {
-        if (idx === raw.length - 1) allocatedLine = remaining;
-        else {
-          allocatedLine = Math.round((x.saleLine / sumSaleLine) * payable);
-          allocatedLine = Math.min(allocatedLine, remaining);
-        }
-      } else {
-        if (idx === raw.length - 1) allocatedLine = remaining;
-        else {
-          allocatedLine = Math.round((x.qty / Math.max(1, sumQty)) * payable);
-          allocatedLine = Math.min(allocatedLine, remaining);
-        }
-      }
-
-      remaining = Math.max(0, remaining - allocatedLine);
-
-      const each = Math.round(allocatedLine / Math.max(1, x.qty));
-      const variantText = getVariantText(x.product, x.it?.variantId);
+      const code = String(it?.productCode || product?.productCode || "NA");
+      const image = String(it?.image || product?.thumbnail || product?.image || "");
 
       return {
-        ...x.it,
+        ...it,
         __ui: {
-          title: x.title,
-          code: x.code,
-          qty: x.qty,
-          product: x.product,
+          title,
+          code,
+          qty,
           variantText,
-          image: x.image,
-          payableLine: allocatedLine,
-          payableEach: each,
-          mrpLine: x.mrpLine,
+          image,
+          saleEach,
+          saleLine,
+          mrpLine,
+          saved,
         },
       };
     });
 
-    return out;
-  }, [items, payable]);
+    const soSubtotal =
+      toNum(so?.subtotal, NaN) ||
+      uiItems.reduce((s: number, x: any) => s + toNum(x?.__ui?.saleLine, 0), 0);
+
+    return {
+      ...so,
+      __ui: {
+        items: uiItems,
+        subtotal: soSubtotal,
+      },
+    };
+  });
+}, [subOrdersNormalized]);
+
 
   const ship = useMemo(() => {
     return order?.address || order?.addressSnapshot || order?.shippingAddress || null;
@@ -469,70 +488,115 @@ export default function OrderSuccessPage() {
       </div>
 
       {/* Items */}
-      <div className="mt-6 rounded-3xl border bg-white p-6">
-        <div className="text-lg font-bold text-gray-900">Items</div>
+{/* Vendor-wise Items (subOrders) */}
+<div className="mt-6 rounded-3xl border bg-white p-6">
+  <div className="text-lg font-bold text-gray-900">Items</div>
 
-        <div className="mt-4 space-y-4">
-          {computedItems.map((it: any, idx: number) => {
-            const ui = it.__ui || {};
-            const title = ui.title || "Product";
-            const code = ui.code || "NA";
-            const qty = ui.qty || 1;
+  {/* COD info banner */}
+  {String(order?.paymentMethod || "").toUpperCase() === "COD" &&
+  String(order?.status || "").toUpperCase() !== "CONFIRMED" ? (
+    <div className="mt-3 rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3 text-sm text-gray-700">
+      Shipments will be created after confirmation.
+    </div>
+  ) : null}
 
-            const variantText = ui.variantText || "";
-            const img = resolveImageUrl(ui.image || it?.image || "");
+  <div className="mt-4 space-y-6">
+    {computedSubOrders.map((so: any) => {
+      const soldBy = so?.soldBy || "Mechkart";
+      const soStatus = so?.status || order?.status || "PLACED";
+      const soItems = so?.__ui?.items || [];
 
-            const lineTotal = toNum(ui.payableLine, 0);
-            const each = toNum(ui.payableEach, 0);
-            const mrpLine = toNum(ui.mrpLine, 0);
+      return (
+        <div key={so?._id} className="rounded-2xl border p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="text-sm font-bold text-gray-900">
+              Sold by: <span className="font-extrabold">{soldBy}</span>
+              {so?.vendorName ? (
+                <span className="ml-2 text-xs font-semibold text-gray-500">({so.vendorName})</span>
+              ) : null}
+            </div>
 
-            const saved = mrpLine > 0 ? Math.max(0, mrpLine - lineTotal) : 0;
+            <div className="text-xs font-semibold text-gray-600">
+              Sub-order status: <span className="text-gray-900">{soStatus}</span>
+            </div>
+          </div>
 
-            return (
-              <div key={idx} className="flex gap-4 border-b pb-4 last:border-b-0 last:pb-0">
-                <div className="h-20 w-20 shrink-0 overflow-hidden rounded-2xl bg-gray-50">
-                  <img src={img} alt={title} className="h-full w-full object-cover" />
-                </div>
+          <div className="mt-4 space-y-4">
+            {soItems.map((it: any, idx: number) => {
+              const ui = it.__ui || {};
+              const title = ui.title || "Product";
+              const code = ui.code || "NA";
+              const qty = ui.qty || 1;
+              const variantText = ui.variantText || "";
+              const img = resolveImageUrl(ui.image || "");
 
-                <div className="flex-1">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <div className="text-sm font-semibold text-gray-900">{title}</div>
-                      <div className="mt-0.5 text-[11px] font-semibold text-gray-500">Product Code: {code}</div>
+              const lineTotal = toNum(ui.saleLine, 0);
+              const each = toNum(ui.saleEach, 0);
+              const mrpLine = toNum(ui.mrpLine, 0);
+              const saved = toNum(ui.saved, 0);
 
-                      <div className="mt-1 text-xs text-gray-500">
-                        Qty: {qty}
-                        {it?.colorKey ? ` • Color: ${it.colorKey}` : ""}
-                        {variantText ? ` • Variant: ${variantText}` : ""}
+              return (
+                <div key={`${so?._id}-${idx}`} className="flex gap-4 border-b pb-4 last:border-b-0 last:pb-0">
+                  <div className="h-20 w-20 shrink-0 overflow-hidden rounded-2xl bg-gray-50">
+                    <img src={img} alt={title} className="h-full w-full object-cover" />
+                  </div>
+
+                  <div className="flex-1">
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <div className="text-sm font-semibold text-gray-900">{title}</div>
+                        <div className="mt-0.5 text-[11px] font-semibold text-gray-500">Product Code: {code}</div>
+
+                        <div className="mt-1 text-xs text-gray-500">
+                          Qty: {qty}
+                          {it?.colorKey ? ` • Color: ${it.colorKey}` : ""}
+                          {variantText ? ` • Variant: ${variantText}` : ""}
+                        </div>
+
+                        {mrpLine > 0 ? (
+                          <div className="mt-1 text-xs text-gray-500">
+                            <span className="line-through">{money(mrpLine)}</span>
+                            {saved > 0 ? (
+                              <span className="ml-2 text-emerald-700 font-semibold">Saved {money(saved)}</span>
+                            ) : null}
+                          </div>
+                        ) : null}
                       </div>
 
-                      {mrpLine > 0 ? (
-                        <div className="mt-1 text-xs text-gray-500">
-                          <span className="line-through">{money(mrpLine)}</span>
-                          {saved > 0 ? (
-                            <span className="ml-2 text-emerald-700 font-semibold">Saved {money(saved)}</span>
-                          ) : null}
+                      <div className="text-right">
+                        <div className="text-sm font-semibold text-gray-900">{money(lineTotal)}</div>
+                        <div className="mt-0.5 text-xs text-gray-500">
+                          {money(each)} × {qty}
                         </div>
-                      ) : null}
-                    </div>
-
-                    <div className="text-right">
-                      <div className="text-sm font-semibold text-gray-900">{money(lineTotal)}</div>
-                      <div className="mt-0.5 text-xs text-gray-500">
-                        {money(each)} × {qty}
                       </div>
                     </div>
                   </div>
                 </div>
-              </div>
-            );
-          })}
+              );
+            })}
 
-          {!computedItems.length ? (
-            <div className="rounded-2xl border bg-gray-50 p-4 text-sm text-gray-700">No items found in this order.</div>
-          ) : null}
+            {!soItems.length ? (
+              <div className="rounded-2xl border bg-gray-50 p-4 text-sm text-gray-700">
+                No items found in this sub-order.
+              </div>
+            ) : null}
+          </div>
+
+          {/* Optional: Sub-order subtotal line */}
+          <div className="mt-4 flex justify-between text-sm">
+            <span className="text-gray-600">Sub-order subtotal</span>
+            <span className="font-semibold text-gray-900">{money(toNum(so?.__ui?.subtotal, 0))}</span>
+          </div>
         </div>
-      </div>
+      );
+    })}
+
+    {!computedSubOrders.length ? (
+      <div className="rounded-2xl border bg-gray-50 p-4 text-sm text-gray-700">No items found in this order.</div>
+    ) : null}
+  </div>
+</div>
+
 
       {/* Contact + Address */}
       <div className="mt-6 grid grid-cols-1 gap-6 sm:grid-cols-2">

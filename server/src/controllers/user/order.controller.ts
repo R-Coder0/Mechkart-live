@@ -21,6 +21,9 @@ import {
   sendOrderPlacedOwnerEmail,
 } from "../../services/email.service";
 
+// ✅ NEW: Vendor model (must exist)
+import { Vendor } from "../../models/Vendor.model";
+
 const getUserId = (req: Request) => (req as any).user?._id;
 const toStr = (v: any) => String(v ?? "").trim();
 
@@ -57,6 +60,53 @@ const computeVariantText = (p: any, variantId: any) => {
     ""
   );
 };
+const safeText = (v: any) => (typeof v === "string" ? v.trim() : "");
+
+export function getVendorCompanyName(v: any) {
+  return safeText(v?.company?.name) || "Vendor";
+}
+
+export function getVendorSoldBy(v: any) {
+  // you want company name in UI
+  return getVendorCompanyName(v);
+}
+// -----------------------------
+// ✅ NEW: Admin pickup snapshot (from env)
+// -----------------------------
+function getAdminPickupSnapshot() {
+  return {
+    name: toStr(process.env.SHIP_PICKUP_NAME),
+    phone: toStr(process.env.SHIP_PICKUP_PHONE),
+    pincode: toStr(process.env.SHIP_PICKUP_PINCODE),
+    state: toStr(process.env.SHIP_PICKUP_STATE),
+    city: toStr(process.env.SHIP_PICKUP_CITY),
+    addressLine1: toStr(process.env.SHIP_PICKUP_ADDRESS),
+    addressLine2: "",
+  };
+}
+
+// -----------------------------
+// ✅ NEW: Vendor pickup snapshot (from vendor doc)
+// Adjust field names here if your Vendor schema differs.
+// -----------------------------
+function getVendorPickupSnapshot(v: any) {
+  const companyName = getVendorCompanyName(v); // ✅ company.name
+
+  const p = v?.pickupAddress || {};
+
+  return {
+    // ✅ requirement: vendor shipment "name" should show company name
+    name: companyName,
+    phone: toStr(p?.phone || v?.phone),
+    pincode: toStr(p?.pincode),
+    state: toStr(p?.state),
+    city: toStr(p?.city),
+
+    // ✅ your Vendor model uses "address" (single line)
+    addressLine1: toStr(p?.address),
+    addressLine2: "",
+  };
+}
 
 /**
  * ✅ Create order with atomic unique orderCode (no duplicates)
@@ -90,7 +140,7 @@ async function createOrderWithUniqueCode(createDoc: any) {
 
 /**
  * ✅ Shared: build orderItems + totals + offerResult from selected cart
- * Used for COD + ONLINE
+ * + ✅ NEW: subOrders[] (vendor-wise split) + pickup snapshot per vendor
  */
 async function buildCheckoutSnapshot(req: Request, userId: any) {
   const contact = req.body?.contact || {};
@@ -151,7 +201,10 @@ async function buildCheckoutSnapshot(req: Request, userId: any) {
     _id: { $in: productIds },
     isActive: true,
   })
-    .select("title productId variants colors galleryImages featureImage isActive mrp salePrice baseStock stock quantity")
+    // ✅ IMPORTANT: select vendorId (or your ownership field)
+    .select(
+      "title productId variants colors galleryImages featureImage isActive mrp salePrice baseStock stock quantity vendorId vendorName ownerType ship"
+    )
     .lean();
 
   const productMap = new Map(products.map((p: any) => [String(p._id), p]));
@@ -210,7 +263,24 @@ async function buildCheckoutSnapshot(req: Request, userId: any) {
     }
   }
 
-  // Build order items snapshot
+  // ✅ Preload vendor docs for pickup + soldBy snapshot
+  const vendorIds = Array.from(
+    new Set(
+      products
+        .map((p: any) => (p?.vendorId ? String(p.vendorId) : ""))
+        .filter(Boolean)
+    )
+  );
+
+  const vendors = vendorIds.length
+    ? await Vendor.find({ _id: { $in: vendorIds } })
+      .select("name company pickupAddress phone")
+      .lean()
+    : [];
+
+  const vendorMap = new Map(vendors.map((v: any) => [String(v._id), v]));
+
+  // Build order items snapshot (flat)
   const orderItems = selectedItems.map((it: any) => {
     const p: any = productMap.get(String(it.productId));
 
@@ -240,22 +310,57 @@ async function buildCheckoutSnapshot(req: Request, userId: any) {
       variantText = "";
     }
 
+    // ✅ Ownership snapshot (adjust if your Product uses different field)
+    const vendorId = p?.vendorId ? String(p.vendorId) : null;
+    const ownerType: "ADMIN" | "VENDOR" = vendorId ? "VENDOR" : "ADMIN";
+    const vdoc: any = vendorId ? vendorMap.get(String(vendorId)) : null;
+    const soldBy =
+      ownerType === "VENDOR"
+        ? getVendorSoldBy(vdoc) // ✅ company name
+        : "Mechkart";
+
+    const qty = Number(it.qty || 1);
+    const shipSnap = p?.ship
+  ? {
+      lengthCm: Number(p.ship.lengthCm ?? 0) || null,
+      breadthCm: Number(p.ship.breadthCm ?? 0) || null,
+      heightCm: Number(p.ship.heightCm ?? 0) || null,
+      weightKg: Number(p.ship.weightKg ?? 0) || null,
+    }
+  : null;
+    const lineTotal = Number(salePrice) * qty;
+
     return {
       productId: new Types.ObjectId(it.productId),
       productCode,
       variantId: finalVariantId,
       variantText: variantText || null,
       colorKey: it.colorKey ?? null,
-      qty: Number(it.qty || 1),
+      qty,
       title: toStr(it.title) || toStr(p?.title) || "Product",
       image: it.image ?? null,
       mrp,
       salePrice,
+
+      ownerType,
+      ship: shipSnap,
+      vendorId: vendorId ? new Types.ObjectId(vendorId) : null,
+      soldBy,
+
+      // default allocation (will be overwritten below)
+      offerDiscount: 0,
+      finalLineTotal: lineTotal,
     };
   });
 
-  const subtotal = orderItems.reduce((sum, it: any) => sum + Number(it.salePrice) * Number(it.qty), 0);
-  const mrpTotal = orderItems.reduce((sum, it: any) => sum + Number(it.mrp) * Number(it.qty), 0);
+  const subtotal = orderItems.reduce(
+    (sum, it: any) => sum + Number(it.salePrice) * Number(it.qty),
+    0
+  );
+  const mrpTotal = orderItems.reduce(
+    (sum, it: any) => sum + Number(it.mrp) * Number(it.qty),
+    0
+  );
   const savings = Math.max(0, mrpTotal - subtotal);
 
   // Offer apply
@@ -278,8 +383,99 @@ async function buildCheckoutSnapshot(req: Request, userId: any) {
     throw e;
   }
 
-  const discount = Math.min(Number(offerResult.discount || 0), subtotal);
-  const grandTotal = Math.max(0, subtotal - discount);
+  const discountTotal = Math.min(Number(offerResult.discount || 0), subtotal);
+  const grandTotal = Math.max(0, subtotal - discountTotal);
+
+  // ✅ Allocate discount per item proportionally (store on items)
+  // This matters for vendor-wise subOrders totals.
+  if (discountTotal > 0 && subtotal > 0 && orderItems.length) {
+    let remaining = Math.round(discountTotal);
+
+    for (let i = 0; i < orderItems.length; i++) {
+      const it: any = orderItems[i];
+      const line = Math.round(Number(it.salePrice) * Number(it.qty));
+
+      let alloc = 0;
+      if (i === orderItems.length - 1) {
+        alloc = remaining;
+      } else {
+        alloc = Math.round((line / subtotal) * discountTotal);
+        if (alloc > remaining) alloc = remaining;
+      }
+
+      remaining = Math.max(0, remaining - alloc);
+
+      it.offerDiscount = alloc;
+      it.finalLineTotal = Math.max(0, line - alloc);
+    }
+  }
+
+  // ✅ Build subOrders (vendor-wise)
+  type GroupKey = string; // "ADMIN" or vendorId
+  const groups = new Map<GroupKey, any>();
+
+  for (const it of orderItems as any[]) {
+    const key: GroupKey = it.ownerType === "VENDOR" && it.vendorId ? String(it.vendorId) : "ADMIN";
+
+    if (!groups.has(key)) {
+      const isVendor = key !== "ADMIN";
+      const vdoc: any = isVendor ? vendorMap.get(String(key)) : null;
+
+      const soldBy = isVendor ? getVendorSoldBy(vdoc) : "Mechkart";
+
+      const pickup = isVendor ? getVendorPickupSnapshot(vdoc) : getAdminPickupSnapshot();
+
+
+      groups.set(key, {
+        ownerType: isVendor ? "VENDOR" : "ADMIN",
+        vendorId: isVendor ? new Types.ObjectId(String(key)) : null,
+
+        // ✅ requirement: vendorName should be company name
+        vendorName: isVendor ? getVendorCompanyName(vdoc) : null,
+
+        soldBy,
+        items: [],
+        // shipment snapshot will be placed here
+        shipment: {
+          provider: "SHIPROCKET",
+          vendorId: isVendor ? new Types.ObjectId(String(key)) : null,
+          items: [],
+          pickup,
+          status: "CREATED",
+        },
+      });
+    }
+
+    const g = groups.get(key);
+    g.items.push(it);
+
+    // shipment item refs
+    g.shipment.items.push({
+      productId: it.productId,
+      qty: it.qty,
+      variantId: it.variantId ?? null,
+      colorKey: it.colorKey ?? null,
+    });
+  }
+
+  const subOrders = Array.from(groups.values()).map((g: any) => {
+    const subTotal = g.items.reduce((sum: number, it: any) => sum + Number(it.finalLineTotal || 0), 0);
+    const shipping = 0;
+    const total = Math.max(0, subTotal + shipping);
+
+    return {
+      ownerType: g.ownerType,
+      vendorId: g.vendorId,
+      vendorName: g.vendorName,
+      soldBy: g.soldBy,
+      items: g.items,
+      subtotal: subTotal,
+      shipping,
+      total,
+      status: "PLACED",
+      shipment: g.shipment,
+    };
+  });
 
   return {
     user,
@@ -290,15 +486,15 @@ async function buildCheckoutSnapshot(req: Request, userId: any) {
     contactName,
     contactPhone,
     contactEmail,
-    orderItems,
-    totals: { subtotal, mrpTotal, savings, discount, grandTotal },
+    orderItems, // flat
+    subOrders,  // split
+    totals: { subtotal, mrpTotal, savings, discount: discountTotal, grandTotal },
     offerResult,
   };
 }
 
 /**
  * ✅ CREATE COD ORDER
- * Route: POST /users/orders (or /users/orders/cod)
  */
 export const createCodOrder = async (req: Request, res: Response) => {
   try {
@@ -309,19 +505,25 @@ export const createCodOrder = async (req: Request, res: Response) => {
 
     const createDoc = {
       userId: new Types.ObjectId(userId),
+
+      // ✅ keep legacy flat items
       items: snap.orderItems,
+
+      // ✅ NEW split
+      subOrders: snap.subOrders,
+
       totals: snap.totals,
 
       appliedOffer: snap.offerResult.appliedOffer
         ? {
-            offerId: snap.offerResult.appliedOffer._id,
-            name: snap.offerResult.appliedOffer.name,
-            mode: snap.offerResult.appliedOffer.mode,
-            couponCode: snap.offerResult.appliedOffer.couponCode || null,
-            offerType: snap.offerResult.appliedOffer.type,
-            value: snap.offerResult.appliedOffer.value,
-            discountAmount: snap.totals.discount,
-          }
+          offerId: snap.offerResult.appliedOffer._id,
+          name: snap.offerResult.appliedOffer.name,
+          mode: snap.offerResult.appliedOffer.mode,
+          couponCode: snap.offerResult.appliedOffer.couponCode || null,
+          offerType: snap.offerResult.appliedOffer.type,
+          value: snap.offerResult.appliedOffer.value,
+          discountAmount: snap.totals.discount,
+        }
         : null,
 
       contact: {
@@ -346,7 +548,6 @@ export const createCodOrder = async (req: Request, res: Response) => {
       status: "PLACED",
     };
 
-    // ✅ Atomic unique orderCode + retry
     const order = await createOrderWithUniqueCode(createDoc);
 
     // ✅ Offer redemption record (COD immediately)
@@ -375,7 +576,9 @@ export const createCodOrder = async (req: Request, res: Response) => {
 
     // ✅ Remove selected cart lines
     const selectedIds = new Set(snap.selectedItems.map((it: any) => String(it._id)));
-    snap.cart.items = (snap.cart.items as any[]).filter((it: any) => !selectedIds.has(String(it._id))) as any;
+    snap.cart.items = (snap.cart.items as any[]).filter(
+      (it: any) => !selectedIds.has(String(it._id))
+    ) as any;
     await snap.cart.save();
 
     return res.status(201).json({
@@ -385,6 +588,7 @@ export const createCodOrder = async (req: Request, res: Response) => {
         orderCode: order.orderCode,
         status: order.status,
         totals: order.totals,
+        subOrdersCount: (order as any).subOrders?.length || 0,
       },
     });
   } catch (err: any) {
@@ -399,7 +603,6 @@ export const createCodOrder = async (req: Request, res: Response) => {
 
 /**
  * ✅ STEP-1: CREATE ONLINE ORDER + RAZORPAY ORDER
- * Route: POST /users/orders/razorpay/create
  */
 export const createRazorpayOrder = async (req: Request, res: Response) => {
   try {
@@ -417,19 +620,22 @@ export const createRazorpayOrder = async (req: Request, res: Response) => {
 
     const createDoc = {
       userId: new Types.ObjectId(userId),
+
       items: snap.orderItems,
+      subOrders: snap.subOrders,
+
       totals: snap.totals,
 
       appliedOffer: snap.offerResult.appliedOffer
         ? {
-            offerId: snap.offerResult.appliedOffer._id,
-            name: snap.offerResult.appliedOffer.name,
-            mode: snap.offerResult.appliedOffer.mode,
-            couponCode: snap.offerResult.appliedOffer.couponCode || null,
-            offerType: snap.offerResult.appliedOffer.type,
-            value: snap.offerResult.appliedOffer.value,
-            discountAmount: snap.totals.discount,
-          }
+          offerId: snap.offerResult.appliedOffer._id,
+          name: snap.offerResult.appliedOffer.name,
+          mode: snap.offerResult.appliedOffer.mode,
+          couponCode: snap.offerResult.appliedOffer.couponCode || null,
+          offerType: snap.offerResult.appliedOffer.type,
+          value: snap.offerResult.appliedOffer.value,
+          discountAmount: snap.totals.discount,
+        }
         : null,
 
       contact: {
@@ -465,10 +671,8 @@ export const createRazorpayOrder = async (req: Request, res: Response) => {
       },
     };
 
-    // ✅ Atomic unique orderCode + retry
     const order = await createOrderWithUniqueCode(createDoc);
 
-    // ✅ Create Razorpay order_id
     const rpOrder = await razorpay!.orders.create({
       amount: amountPaise,
       currency: "INR",
@@ -480,7 +684,6 @@ export const createRazorpayOrder = async (req: Request, res: Response) => {
       },
     });
 
-    // ✅ Save razorpay_order_id in our order
     await Order.updateOne(
       { _id: order._id },
       {
@@ -517,7 +720,6 @@ export const createRazorpayOrder = async (req: Request, res: Response) => {
 
 /**
  * ✅ VERIFY ONLINE PAYMENT
- * Route: POST /users/orders/razorpay/verify
  */
 export const verifyRazorpayPayment = async (req: Request, res: Response) => {
   try {
@@ -550,7 +752,6 @@ export const verifyRazorpayPayment = async (req: Request, res: Response) => {
       return res.status(400).json({ message: "Razorpay order mismatch" });
     }
 
-    // signature = HMAC_SHA256(order_id|payment_id, secret)
     const body = `${razorpay_order_id}|${razorpay_payment_id}`;
     const expected = crypto
       .createHmac("sha256", RAZORPAY_KEY_SECRET)
@@ -576,7 +777,6 @@ export const verifyRazorpayPayment = async (req: Request, res: Response) => {
       return res.status(400).json({ message: "Payment verification failed" });
     }
 
-    // ✅ Mark paid + confirm
     await Order.updateOne(
       { _id: order._id },
       {
@@ -591,7 +791,6 @@ export const verifyRazorpayPayment = async (req: Request, res: Response) => {
       }
     );
 
-    // ✅ Record offer redemption AFTER payment success
     if ((order as any)?.appliedOffer?.offerId && Number((order as any)?.totals?.discount || 0) > 0) {
       try {
         await recordOfferRedemption({
@@ -606,7 +805,6 @@ export const verifyRazorpayPayment = async (req: Request, res: Response) => {
       }
     }
 
-    // ✅ Emails on payment success
     try {
       const fresh = await Order.findById(order._id);
       if (fresh) {
@@ -635,6 +833,7 @@ export const verifyRazorpayPayment = async (req: Request, res: Response) => {
   }
 };
 
+
 /**
  * ✅ GET ORDER BY ID (DETAIL)
  * Route: GET /users/orders/:orderId
@@ -648,10 +847,8 @@ export const getOrderById = async (req: Request, res: Response) => {
     if (!Types.ObjectId.isValid(orderId)) return res.status(400).json({ message: "Invalid orderId" });
 
     const order = await Order.findOne({ _id: orderId, userId })
-      .populate({
-        path: "items.productId",
-        select: "title variants colors galleryImages featureImage",
-      })
+.populate({ path: "subOrders.items.productId", select: "title variants colors galleryImages featureImage" })
+
       .lean();
 
     if (!order) return res.status(404).json({ message: "Order not found" });
@@ -686,10 +883,8 @@ export const getMyOrders = async (req: Request, res: Response) => {
 
     const orders = await Order.find(query)
       .sort({ createdAt: -1 })
-      .populate({
-        path: "items.productId",
-        select: "title variants colors galleryImages featureImage",
-      })
+.populate({ path: "subOrders.items.productId", select: "title variants colors galleryImages featureImage" })
+
       .lean();
 
     return res.json({
@@ -742,7 +937,7 @@ export const downloadInvoicePdf = async (req: Request, res: Response) => {
       2
     )}-${String(order._id).slice(-6).toUpperCase()}`;
 
-    const ship = order.addressSnapshot || order.shippingAddress || order.address || null;
+const ship = order.address || null;
     const placeOfSupply = String(ship?.state || "").trim().toUpperCase() || "NA";
 
     const CGST_RATE = 0;
@@ -799,7 +994,7 @@ export const downloadInvoicePdf = async (req: Request, res: Response) => {
         includetext: false,
       });
       doc.image(png, pageRight - 210, 34, { width: 180 });
-    } catch {}
+    } catch { }
 
     hr();
     doc.moveDown(0.2);
@@ -821,8 +1016,7 @@ export const downloadInvoicePdf = async (req: Request, res: Response) => {
       leftY = doc.y;
 
       doc.font("Helvetica").text(
-        `${ship.addressLine1 || ""}${ship.addressLine2 ? ", " + ship.addressLine2 : ""}${
-          ship.landmark ? ", " + ship.landmark : ""
+        `${ship.addressLine1 || ""}${ship.addressLine2 ? ", " + ship.addressLine2 : ""}${ship.landmark ? ", " + ship.landmark : ""
         }`,
         leftX,
         leftY,
@@ -873,7 +1067,7 @@ export const downloadInvoicePdf = async (req: Request, res: Response) => {
       const buf = Buffer.from(base64, "base64");
 
       doc.image(buf, pageRight - 110, startY + 6, { width: 90, height: 90 });
-    } catch {}
+    } catch { }
 
     const columnsBottom = Math.max(leftY, rightY);
     doc.y = columnsBottom + 10;

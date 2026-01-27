@@ -340,3 +340,65 @@ export function shiprocketFormatOrderDate(d: Date) {
   const mi = pad(d.getMinutes());
   return `${yyyy}-${mm}-${dd} ${hh}:${mi}`;
 }
+/**
+ * List pickup locations (Shiprocket)
+ */
+export async function shiprocketListPickupLocations() {
+  const headers = await shiprocketAuthHeaders();
+
+  try {
+    return await srFetch("/external/settings/company/pickup", {
+      method: "GET",
+      headers,
+    });
+  } catch (e: any) {
+    if (isBlockedLoginError(e)) throw e;
+
+    if (e?.status === 401) {
+      const token = await shiprocketGetToken(true);
+      return await srFetch("/external/settings/company/pickup", {
+        method: "GET",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+    }
+    throw e;
+  }
+}
+/**
+ * Create/Add pickup location (Shiprocket)
+ * NOTE: pickup "pickup_location" should be UNIQUE name/alias in Shiprocket dashboard.
+ */
+export async function shiprocketCreatePickupLocation(pickup: {
+  pickup_location: string; // alias name in shiprocket
+  name: string;
+  email?: string;
+  phone: string;
+  address: string;
+  address_2?: string;
+  city: string;
+  state: string;
+  country?: string; // usually "India"
+  pin_code: string;
+}) {
+  const headers = await shiprocketAuthHeaders();
+
+  try {
+    return await srFetch("/external/settings/company/addpickup", {
+      method: "POST",
+      headers,
+      body: JSON.stringify(pickup),
+    });
+  } catch (e: any) {
+    if (isBlockedLoginError(e)) throw e;
+
+    if (e?.status === 401) {
+      const token = await shiprocketGetToken(true);
+      return await srFetch("/external/settings/company/addpickup", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: JSON.stringify(pickup),
+      });
+    }
+    throw e;
+  }
+}

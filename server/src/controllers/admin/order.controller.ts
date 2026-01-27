@@ -6,9 +6,24 @@ import { Order } from "../../models/Order.model";
 const toStr = (v: any) => String(v ?? "").trim();
 
 const allowedStatuses = ["PLACED", "CONFIRMED", "SHIPPED", "DELIVERED", "CANCELLED"] as const;
-const allowedPaymentMethods = ["COD", "ONLINE"] as const;
-const allowedPaymentStatuses = ["PENDING", "PAID", "FAILED"] as const;
+const allowedSubOrderStatuses = ["PLACED", "CONFIRMED", "SHIPPED", "DELIVERED", "CANCELLED"] as const;
 
+const allowedPaymentMethods = ["COD", "ONLINE"] as const;
+
+// ✅ include COD_PENDING_CONFIRMATION (as per Order.model)
+const allowedPaymentStatuses = ["PENDING", "PAID", "FAILED", "COD_PENDING_CONFIRMATION"] as const;
+
+function isValidObjectId(id: any) {
+  return Types.ObjectId.isValid(String(id || ""));
+}
+
+function upper(v: any) {
+  return String(v || "").toUpperCase();
+}
+
+// ----------------------------------------------------
+// GET ADMIN ORDERS (Paginated + Filters)
+// ----------------------------------------------------
 export const adminGetOrders = async (req: Request, res: Response) => {
   try {
     const q = toStr(req.query.q);
@@ -28,7 +43,7 @@ export const adminGetOrders = async (req: Request, res: Response) => {
       filter.paymentMethod = paymentMethod;
     }
 
-    if (paymentStatus && (allowedPaymentStatuses as any).includes(paymentStatus)) {
+    if (paymentStatus && (allowedPaymentStatuses as any).includes(paymentStatus as any)) {
       filter.paymentStatus = paymentStatus;
     }
 
@@ -39,6 +54,9 @@ export const adminGetOrders = async (req: Request, res: Response) => {
         { "contact.name": { $regex: q, $options: "i" } },
         { "pg.orderId": { $regex: q, $options: "i" } },
         { "pg.paymentId": { $regex: q, $options: "i" } },
+        // optional: match vendorName / soldBy quickly
+        { "subOrders.vendorName": { $regex: q, $options: "i" } },
+        { "subOrders.soldBy": { $regex: q, $options: "i" } },
       ];
     }
 
@@ -46,11 +64,31 @@ export const adminGetOrders = async (req: Request, res: Response) => {
       Order.find(filter)
         .populate({
           path: "items.productId",
-          select: "title variants colors galleryImages featureImage",
+          select: "title variants colors galleryImages featureImage ship",
         })
-        // ✅ FIX: include `shipments` so refresh ke baad shipment details rahein
+        // NOTE: subOrders items also contain productId; if you want populate there too,
+        // you can do it in a separate admin detail endpoint. Keep list lightweight.
         .select(
-          "orderCode userId items totals appliedOffer contact address paymentMethod paymentStatus status pg cod shipments  return refund createdAt updatedAt"
+          [
+            "orderCode",
+            "userId",
+            "items",
+            "subOrders",
+            "totals",
+            "appliedOffer",
+            "contact",
+            "address",
+            "paymentMethod",
+            "paymentStatus",
+            "status",
+            "pg",
+            "cod",
+            "shipments",
+            "return",
+            "refund",
+            "createdAt",
+            "updatedAt",
+          ].join(" ")
         )
         .sort({ createdAt: -1 })
         .skip(skip)
@@ -72,12 +110,21 @@ export const adminGetOrders = async (req: Request, res: Response) => {
   }
 };
 
+// ----------------------------------------------------
+// UPDATE STATUS (Parent OR SubOrder)
+// Body options:
+// - { status: "SHIPPED" } -> updates parent order
+// - { status: "SHIPPED", subOrderId: "..." } -> updates that subOrder only
+// ----------------------------------------------------
 export const adminUpdateOrderStatus = async (req: Request, res: Response) => {
   try {
     const { orderId } = req.params;
-    if (!Types.ObjectId.isValid(orderId)) return res.status(400).json({ message: "Invalid orderId" });
+    if (!isValidObjectId(orderId)) return res.status(400).json({ message: "Invalid orderId" });
 
-    const nextStatus = toStr(req.body?.status);
+    const nextStatus = upper(req.body?.status);
+    const subOrderId = toStr(req.body?.subOrderId);
+
+    // validate status
     if (!allowedStatuses.includes(nextStatus as any)) {
       return res.status(400).json({ message: "Invalid status" });
     }
@@ -85,46 +132,110 @@ export const adminUpdateOrderStatus = async (req: Request, res: Response) => {
     const order: any = await Order.findById(orderId);
     if (!order) return res.status(404).json({ message: "Order not found" });
 
-    const pm = String(order.paymentMethod || "COD").toUpperCase();
-    const ps = String(order.paymentStatus || "PENDING").toUpperCase();
-    const cur = String(order.status || "PLACED").toUpperCase();
+    const pm = upper(order.paymentMethod || "COD");
+    const ps = upper(order.paymentStatus || "PENDING");
+    const cur = upper(order.status || "PLACED");
 
-    // ✅ Guardrails
-    // 1) ONLINE must be PAID before SHIPPED/DELIVERED
-    if (pm === "ONLINE" && ps !== "PAID") {
-      if (["SHIPPED", "DELIVERED"].includes(nextStatus)) {
-        return res.status(400).json({
-          message: "Cannot mark as SHIPPED/DELIVERED until ONLINE payment is PAID",
-        });
-      }
+    // -----------------
+    // Shared guardrails
+    // -----------------
+
+    // ONLINE must be PAID before SHIPPED/DELIVERED (parent or suborder)
+    if (pm === "ONLINE" && ps !== "PAID" && ["SHIPPED", "DELIVERED"].includes(nextStatus)) {
+      return res.status(400).json({
+        message: "Cannot mark as SHIPPED/DELIVERED until ONLINE payment is PAID",
+      });
     }
 
-    // 2) COD must be CONFIRMED before SHIPPED/DELIVERED
-    if (pm === "COD" && cur === "PLACED") {
-      if (["SHIPPED", "DELIVERED"].includes(nextStatus)) {
+    // COD must be CONFIRMED before SHIPPED/DELIVERED
+    // (Parent must be CONFIRMED; for subOrder also require parent CONFIRMED)
+    if (pm === "COD") {
+      const parentIsConfirmed = cur === "CONFIRMED";
+      if (!parentIsConfirmed && ["SHIPPED", "DELIVERED"].includes(nextStatus)) {
         return res.status(400).json({
           message: "Cannot mark SHIPPED/DELIVERED until COD is CONFIRMED",
         });
       }
-      // COD confirm dropdown se block (must use confirm-cod)
-      if (nextStatus === "CONFIRMED") {
+      // enforce COD confirm via button
+      if (nextStatus === "CONFIRMED" && cur === "PLACED") {
         return res.status(400).json({ message: "Use Confirm COD button to confirm COD orders." });
       }
     }
 
-    // 3) DELIVERED/CANCELLED lock
-    if (cur === "DELIVERED" && nextStatus !== "DELIVERED") {
-      return res.status(400).json({ message: "Delivered order status cannot be changed" });
-    }
-    if (cur === "CANCELLED" && nextStatus !== "CANCELLED") {
-      return res.status(400).json({ message: "Cancelled order status cannot be changed" });
+    // DELIVERED/CANCELLED lock at parent level
+    if (!subOrderId) {
+      if (cur === "DELIVERED" && nextStatus !== "DELIVERED") {
+        return res.status(400).json({ message: "Delivered order status cannot be changed" });
+      }
+      if (cur === "CANCELLED" && nextStatus !== "CANCELLED") {
+        return res.status(400).json({ message: "Cancelled order status cannot be changed" });
+      }
     }
 
-    // ✅ Apply status
+    // -----------------
+    // SubOrder update
+    // -----------------
+    if (subOrderId) {
+      if (!isValidObjectId(subOrderId)) {
+        return res.status(400).json({ message: "Invalid subOrderId" });
+      }
+
+      const subOrders = Array.isArray(order.subOrders) ? order.subOrders : [];
+      const so = subOrders.find((x: any) => String(x._id) === String(subOrderId));
+
+      if (!so) return res.status(404).json({ message: "SubOrder not found" });
+
+      const soCur = upper(so.status || "PLACED");
+
+      // lock suborder if delivered/cancelled
+      if (soCur === "DELIVERED" && nextStatus !== "DELIVERED") {
+        return res.status(400).json({ message: "Delivered subOrder status cannot be changed" });
+      }
+      if (soCur === "CANCELLED" && nextStatus !== "CANCELLED") {
+        return res.status(400).json({ message: "Cancelled subOrder status cannot be changed" });
+      }
+
+      // Update the subOrder
+      so.status = nextStatus;
+
+      // If suborder delivered and COD => mark payment paid (only when ALL delivered, we set parent too)
+      // We'll compute parent after save.
+      await order.save();
+
+      // Update parent status derived (optional but recommended)
+      const fresh: any = await Order.findById(orderId).lean();
+      const soArr = Array.isArray(fresh?.subOrders) ? fresh.subOrders : [];
+
+      const allCancelled = soArr.length > 0 && soArr.every((x: any) => upper(x.status) === "CANCELLED");
+      const allDelivered = soArr.length > 0 && soArr.every((x: any) => upper(x.status) === "DELIVERED");
+      const anyShipped = soArr.some((x: any) => upper(x.status) === "SHIPPED");
+      const anyConfirmed = soArr.some((x: any) => upper(x.status) === "CONFIRMED");
+
+      const parentUpdate: any = {};
+
+      if (allCancelled) parentUpdate.status = "CANCELLED";
+      else if (allDelivered) parentUpdate.status = "DELIVERED";
+      else if (anyShipped) parentUpdate.status = "SHIPPED";
+      else if (anyConfirmed) parentUpdate.status = "CONFIRMED";
+      else parentUpdate.status = "PLACED";
+
+      // COD delivered => PAID (only when full order delivered)
+      if (pm === "COD" && parentUpdate.status === "DELIVERED") {
+        parentUpdate.paymentStatus = "PAID";
+      }
+
+      await Order.updateOne({ _id: new Types.ObjectId(orderId) }, { $set: parentUpdate });
+
+      const updated = await Order.findById(orderId).lean();
+      return res.json({ message: "SubOrder status updated", data: updated });
+    }
+
+    // -----------------
+    // Parent update
+    // -----------------
     order.status = nextStatus as any;
 
-    // ✅ IMPORTANT FIX:
-    // COD order delivered ⇒ mark paymentStatus as PAID
+    // COD delivered => PAID
     if (pm === "COD" && nextStatus === "DELIVERED") {
       order.paymentStatus = "PAID";
     }
@@ -141,20 +252,23 @@ export const adminUpdateOrderStatus = async (req: Request, res: Response) => {
   }
 };
 
-// ✅ NEW: Confirm COD Order
+// ----------------------------------------------------
+// CONFIRM COD ORDER (Parent + SubOrders)
+// ----------------------------------------------------
 export const adminConfirmCodOrder = async (req: Request, res: Response) => {
   try {
     const { orderId } = req.params;
-    if (!Types.ObjectId.isValid(orderId)) return res.status(400).json({ message: "Invalid orderId" });
+    if (!isValidObjectId(orderId)) return res.status(400).json({ message: "Invalid orderId" });
 
     const order: any = await Order.findById(orderId);
     if (!order) return res.status(404).json({ message: "Order not found" });
 
-    if (String(order.paymentMethod) !== "COD") {
+    if (upper(order.paymentMethod) !== "COD") {
       return res.status(400).json({ message: "Only COD orders can be confirmed here" });
     }
 
-    if (String(order.status) !== "PLACED") {
+    const cur = upper(order.status);
+    if (cur !== "PLACED") {
       return res.status(400).json({
         message: `COD order can be confirmed only from PLACED (current: ${order.status})`,
       });
@@ -163,7 +277,23 @@ export const adminConfirmCodOrder = async (req: Request, res: Response) => {
     const adminId = (req as any)?.admin?._id ? new Types.ObjectId(String((req as any).admin._id)) : null;
 
     order.status = "CONFIRMED";
-    order.cod = { confirmedAt: new Date(), confirmedBy: adminId };
+    // ✅ recommended: mark COD pending confirmation explicitly
+    order.paymentStatus = "COD_PENDING_CONFIRMATION";
+
+    order.cod = {
+      ...(order.cod || {}),
+      confirmedAt: new Date(),
+      confirmedBy: adminId,
+    };
+
+    // ✅ also confirm subOrders if present (skip cancelled)
+    if (Array.isArray(order.subOrders) && order.subOrders.length) {
+      for (const so of order.subOrders) {
+        const soCur = upper(so.status);
+        if (soCur === "CANCELLED" || soCur === "DELIVERED") continue;
+        so.status = "CONFIRMED";
+      }
+    }
 
     await order.save();
 

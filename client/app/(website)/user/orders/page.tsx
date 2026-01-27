@@ -71,6 +71,88 @@ function pickStatusDate(o: any) {
   return iso ? new Date(iso) : null;
 }
 
+function pickOrderTotal(order: any, subOrder?: any) {
+  // Prefer subOrder total if present, else order totals
+  const n =
+    Number(subOrder?.total ?? NaN) ||
+    Number(subOrder?.grandTotal ?? NaN) ||
+    Number(subOrder?.subtotal ?? NaN) ||
+    Number(order?.totals?.grandTotal ?? NaN) ||
+    Number(order?.totals?.total ?? NaN) ||
+    Number(order?.totals?.subtotal ?? NaN) ||
+    Number(order?.totalAmount ?? 0);
+
+  return Number.isFinite(n) ? n : 0;
+}
+
+function normalizeSubOrdersForList(order: any) {
+  const subs = Array.isArray(order?.subOrders) ? order.subOrders : [];
+
+  if (subs.length > 0) {
+    return subs.map((so: any) => ({
+      _id: String(so?._id || ""),
+      soldBy:
+        String(so?.soldBy || "").trim() ||
+        String(so?.vendorName || "").trim() ||
+        (so?.vendorId ? "Vendor" : "Mechkart"),
+      vendorName: String(so?.vendorName || "").trim(),
+      ownerType: so?.ownerType || (so?.vendorId ? "VENDOR" : "ADMIN"),
+      vendorId: so?.vendorId ? String(so.vendorId) : "",
+      status: String(so?.status || order?.status || "PLACED").toUpperCase(),
+      items: Array.isArray(so?.items) ? so.items : [],
+      shipment: so?.shipment || null,
+    }));
+  }
+
+  // Fallback: legacy items[] treated as single seller (Mechkart)
+  const legacyItems = Array.isArray(order?.items) ? order.items : [];
+  return [
+    {
+      _id: "LEGACY",
+      soldBy: "Mechkart",
+      vendorName: "",
+      ownerType: "ADMIN",
+      vendorId: "",
+      status: String(order?.status || "PLACED").toUpperCase(),
+      items: legacyItems,
+      shipment: null,
+    },
+  ];
+}
+
+function buildOrderRows(orders: any[]) {
+  // If only 1 seller => one card
+  // If multiple sellers => separate cards per subOrder
+  const rows: any[] = [];
+
+  (orders || []).forEach((o) => {
+    const subs = normalizeSubOrdersForList(o);
+
+    if (subs.length <= 1) {
+      rows.push({
+        rowId: `${String(o?._id)}::single`,
+        orderId: String(o?._id),
+        order: o,
+        subOrder: subs[0] || null,
+        mode: "SINGLE",
+      });
+      return;
+    }
+
+    subs.forEach((so: any) => {
+      rows.push({
+        rowId: `${String(o?._id)}::${String(so?._id)}`,
+        orderId: String(o?._id),
+        order: o,
+        subOrder: so,
+        mode: "SPLIT",
+      });
+    });
+  });
+
+  return rows;
+}
+
 export default function WebsiteUserOrdersPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -98,7 +180,6 @@ export default function WebsiteUserOrdersPage() {
       if (!res.ok) throw new Error(json?.message || "Failed to load orders");
 
       const data = json?.data ?? json;
-
       const list = Array.isArray(data) ? data : Array.isArray(data?.items) ? data.items : [];
       setOrders(list);
     } catch (e: any) {
@@ -113,16 +194,30 @@ export default function WebsiteUserOrdersPage() {
     load("");
   }, []);
 
+  const rows = useMemo(() => buildOrderRows(orders), [orders]);
+
   const filtered = useMemo(() => {
-    if (!search.trim()) return orders;
+    if (!search.trim()) return rows;
+
     const s = search.trim().toLowerCase();
-    return (orders || []).filter((o: any) => {
+
+    return (rows || []).filter((r: any) => {
+      const o = r.order;
+      const so = r.subOrder;
+
       const code = String(o?.orderCode || "").toLowerCase();
       const id = String(o?._id || "").toLowerCase();
-      const firstTitle = String(o?.items?.[0]?.title || o?.items?.[0]?.productId?.title || "").toLowerCase();
-      return code.includes(s) || id.includes(s) || firstTitle.includes(s);
+
+      const firstItem = so?.items?.[0] || o?.items?.[0] || null;
+      const firstTitle = String(
+        firstItem?.title || firstItem?.productId?.title || firstItem?.product?.title || ""
+      ).toLowerCase();
+
+      const soldBy = String(so?.soldBy || "").toLowerCase();
+
+      return code.includes(s) || id.includes(s) || firstTitle.includes(s) || soldBy.includes(s);
     });
-  }, [orders, search]);
+  }, [rows, search]);
 
   const onSearch = () => {
     setSearch(q);
@@ -133,18 +228,18 @@ export default function WebsiteUserOrdersPage() {
   return (
     <div className="w-full">
       {/* Search bar */}
-      <div className=" border bg-white p-4">
+      <div className="border bg-white p-4">
         <div className="flex flex-col gap-3 sm:flex-row">
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
             placeholder="Search your orders here"
-            className="h-12 flex-1  border px-4 text-sm outline-none focus:border-gray-400"
+            className="h-12 flex-1 border px-4 text-sm outline-none focus:border-gray-400"
           />
           <button
             type="button"
             onClick={onSearch}
-            className="h-12  bg-blue-600 px-6 text-sm font-semibold text-white hover:bg-blue-700"
+            className="h-12 bg-blue-600 px-6 text-sm font-semibold text-white hover:bg-blue-700"
           >
             Search Orders
           </button>
@@ -152,7 +247,7 @@ export default function WebsiteUserOrdersPage() {
       </div>
 
       {error ? (
-        <div className="mt-4  border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+        <div className="mt-4 border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
           {error}
         </div>
       ) : null}
@@ -162,30 +257,27 @@ export default function WebsiteUserOrdersPage() {
         {loading ? (
           <>
             {Array.from({ length: 4 }).map((_, i) => (
-              <div key={i} className=" border bg-white p-5">
+              <div key={i} className="border bg-white p-5">
                 <div className="h-5 w-64 rounded bg-gray-200 animate-pulse" />
                 <div className="mt-4 h-20 rounded bg-gray-100 animate-pulse" />
               </div>
             ))}
           </>
         ) : filtered.length ? (
-          filtered.map((o: any) => {
-            const status = String(o?.status || "PLACED").toUpperCase();
+          filtered.map((r: any) => {
+            const o = r.order;
+            const so = r.subOrder;
+
+            // if split card -> use subOrder status; else order status
+            const status = String(so?.status || o?.status || "PLACED").toUpperCase();
             const createdAt = o?.createdAt ? new Date(o.createdAt) : new Date();
 
-            const items = Array.isArray(o?.items) ? o.items : [];
+            const items = Array.isArray(so?.items) && so.items.length ? so.items : Array.isArray(o?.items) ? o.items : [];
             const previewItems = items.slice(0, 2);
             const moreCount = Math.max(0, items.length - previewItems.length);
 
-            // ✅ Payable total (grandTotal preferred)
-            const total = Number(
-              o?.totals?.grandTotal ??
-                o?.totals?.subtotal ??
-                o?.totalAmount ??
-                0
-            );
+            const total = pickOrderTotal(o, so);
 
-            // right side text (expected/delivered/cancelled)
             const statusDate = pickStatusDate(o);
             const expected = addDays(createdAt, 7);
 
@@ -211,11 +303,14 @@ export default function WebsiteUserOrdersPage() {
                 ? "bg-green-600"
                 : "bg-green-600";
 
+            const sellerLabel =
+              r.mode === "SPLIT" ? `Sold by: ${String(so?.soldBy || "Mechkart")}` : "";
+
             return (
               <Link
-                key={String(o?._id)}
-                href={`/user/orders/${String(o._id)}`}
-                className="block  border bg-white p-5 hover:bg-gray-50 transition"
+                key={r.rowId}
+                href={`/user/orders/${String(o._id)}${r.mode === "SPLIT" ? `?subOrderId=${encodeURIComponent(String(so?._id || ""))}` : ""}`}
+                className="block border bg-white p-5 hover:bg-gray-50 transition"
               >
                 <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
                   {/* Left: thumbnails + titles */}
@@ -224,16 +319,11 @@ export default function WebsiteUserOrdersPage() {
                     <div className="flex gap-2">
                       {previewItems.map((it: any, idx: number) => {
                         const product = it?.productId || it?.product || null;
-                        const imgPath = resolveOrderItemImage(
-                          product,
-                          it?.variantId,
-                          it?.colorKey,
-                          it?.image
-                        );
+                        const imgPath = resolveOrderItemImage(product, it?.variantId, it?.colorKey, it?.image);
                         const img = resolveImageUrl(imgPath);
 
                         return (
-                          <div key={idx} className="h-20 w-20 shrink-0 overflow-hidden  bg-gray-100">
+                          <div key={idx} className="h-20 w-20 shrink-0 overflow-hidden bg-gray-100">
                             {img ? (
                               <img src={img} alt={it?.title || "Product"} className="h-full w-full object-cover" />
                             ) : (
@@ -246,6 +336,10 @@ export default function WebsiteUserOrdersPage() {
 
                     {/* Titles */}
                     <div className="min-w-0">
+                      {sellerLabel ? (
+                        <div className="text-xs font-bold text-gray-800">{sellerLabel}</div>
+                      ) : null}
+
                       {previewItems.map((it: any, idx: number) => {
                         const product = it?.productId || it?.product || null;
                         const title = String(product?.title || it?.title || "Product");
@@ -254,7 +348,7 @@ export default function WebsiteUserOrdersPage() {
                         const qty = it?.qty ? Number(it.qty) : 1;
 
                         return (
-                          <div key={idx} className={idx ? "mt-2" : ""}>
+                          <div key={idx} className={idx ? "mt-2" : "mt-1"}>
                             <div className="text-sm font-semibold text-gray-900 line-clamp-2">{title}</div>
 
                             {(color || variantText || qty) ? (
@@ -300,7 +394,7 @@ export default function WebsiteUserOrdersPage() {
             );
           })
         ) : (
-          <div className=" border bg-white p-8 text-sm text-gray-700">No orders found.</div>
+          <div className="border bg-white p-8 text-sm text-gray-700">No orders found.</div>
         )}
       </div>
     </div>
