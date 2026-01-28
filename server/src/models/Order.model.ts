@@ -23,11 +23,11 @@ export interface IOrderItem {
   vendorId?: Types.ObjectId | null;
   soldBy?: string | null;
   ship?: {
-  lengthCm?: number | null;
-  breadthCm?: number | null;
-  heightCm?: number | null;
-  weightKg?: number | null;
-} | null;
+    lengthCm?: number | null;
+    breadthCm?: number | null;
+    heightCm?: number | null;
+    weightKg?: number | null;
+  } | null;
 
   // ✅ optional (if you want to persist offer allocation per line)
   offerDiscount?: number;     // line offer discount
@@ -292,14 +292,14 @@ const OrderItemSchema = new Schema<IOrderItem>(
     soldBy: { type: String, default: null, trim: true },
 
     ship: {
-  type: {
-    lengthCm: { type: Number, default: null },
-    breadthCm: { type: Number, default: null },
-    heightCm: { type: Number, default: null },
-    weightKg: { type: Number, default: null },
-  },
-  default: null,
-},
+      type: {
+        lengthCm: { type: Number, default: null },
+        breadthCm: { type: Number, default: null },
+        heightCm: { type: Number, default: null },
+        weightKg: { type: Number, default: null },
+      },
+      default: null,
+    },
     // ✅ offer allocation (optional)
     offerDiscount: { type: Number, default: 0, min: 0 },
     finalLineTotal: { type: Number, default: 0, min: 0 },
