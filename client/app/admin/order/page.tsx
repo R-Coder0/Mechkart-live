@@ -735,36 +735,36 @@ export default function AdminOrdersPage() {
                                   </div>
                                 </div>
 
-                                  <div className="space-y-2">
-    {(o.items || []).slice(0, 2).map((it: any, idx: number) => {
-      const vText = getVariantTextFromItem(it);
-      const colorText = it?.colorKey ? String(it.colorKey) : "";
+                                <div className="space-y-2">
+                                  {(o.items || []).slice(0, 2).map((it: any, idx: number) => {
+                                    const vText = getVariantTextFromItem(it);
+                                    const colorText = it?.colorKey ? String(it.colorKey) : "";
 
-      return (
-        <div key={idx} className="text-[12px] text-gray-800">
-          <div className="font-semibold">{it.title}</div>
+                                    return (
+                                      <div key={idx} className="text-[12px] text-gray-800">
+                                        <div className="font-semibold">{it.title}</div>
 
-          {it.productCode ? (
-            <div className="mt-0.5 text-[11px] font-semibold text-gray-500">
-              Code: {it.productCode}
-            </div>
-          ) : null}
+                                        {it.productCode ? (
+                                          <div className="mt-0.5 text-[11px] font-semibold text-gray-500">
+                                            Code: {it.productCode}
+                                          </div>
+                                        ) : null}
 
-          <div className="mt-1 text-xs text-gray-500">
-            {vText ? `Variant: ${vText}` : ""}
-            {colorText ? `${vText ? " • " : ""}Color: ${colorText}` : ""}
-            {(vText || colorText) ? " • " : ""}Qty: {it.qty}
-          </div>
-        </div>
-      );
-    })}
+                                        <div className="mt-1 text-xs text-gray-500">
+                                          {vText ? `Variant: ${vText}` : ""}
+                                          {colorText ? `${vText ? " • " : ""}Color: ${colorText}` : ""}
+                                          {(vText || colorText) ? " • " : ""}Qty: {it.qty}
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
 
-    {(o.items || []).length > 2 ? (
-      <div className="text-[11px] text-gray-500">
-        +{o.items.length - 2} more item(s)
-      </div>
-    ) : null}
-  </div>
+                                  {(o.items || []).length > 2 ? (
+                                    <div className="text-[11px] text-gray-500">
+                                      +{o.items.length - 2} more item(s)
+                                    </div>
+                                  ) : null}
+                                </div>
                               </div>
                             );
                           })}
@@ -890,10 +890,10 @@ export default function AdminOrdersPage() {
                                 {st !== "CONFIRMED"
                                   ? "Confirm order first"
                                   : pm === "ONLINE" && ps !== "PAID"
-                                  ? "Online payment must be PAID"
-                                  : pm === "COD" && !codIsConfirmed
-                                  ? "Confirm COD first"
-                                  : "—"}
+                                    ? "Online payment must be PAID"
+                                    : pm === "COD" && !codIsConfirmed
+                                      ? "Confirm COD first"
+                                      : "—"}
                               </div>
                             ) : null}
                           </div>
