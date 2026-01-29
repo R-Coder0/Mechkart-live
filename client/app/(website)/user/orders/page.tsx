@@ -71,19 +71,60 @@ function pickStatusDate(o: any) {
   return iso ? new Date(iso) : null;
 }
 
-function pickOrderTotal(order: any, subOrder?: any) {
-  // Prefer subOrder total if present, else order totals
-  const n =
-    Number(subOrder?.total ?? NaN) ||
-    Number(subOrder?.grandTotal ?? NaN) ||
-    Number(subOrder?.subtotal ?? NaN) ||
+function calcItemsTotal(items: any[]) {
+  const arr = Array.isArray(items) ? items : [];
+  return arr.reduce((sum, it) => {
+    const qty = Math.max(1, Number(it?.qty || 1));
+
+    // try best known line totals first
+    const line =
+      Number(it?.finalLineTotal ?? NaN) ||
+      Number(it?.lineTotal ?? NaN) ||
+      Number(it?.total ?? NaN) ||
+      Number(it?.amount ?? NaN);
+
+    if (Number.isFinite(line) && line > 0) return sum + line;
+
+    // else compute from unit price
+    const unit =
+      Number(it?.finalPrice ?? NaN) ||
+      Number(it?.salePrice ?? NaN) ||
+      Number(it?.price ?? NaN) ||
+      Number(it?.unitPrice ?? NaN);
+
+    if (Number.isFinite(unit) && unit > 0) return sum + unit * qty;
+
+    return sum;
+  }, 0);
+}
+
+function pickOrderTotal(order: any, subOrder?: any, mode?: "SINGLE" | "SPLIT") {
+  // ✅ SPLIT: prefer subOrder.total, else compute from subOrder.items
+  if (mode === "SPLIT") {
+    const direct =
+      Number(subOrder?.total ?? NaN) ||
+      Number(subOrder?.grandTotal ?? NaN) ||
+      Number(subOrder?.subtotal ?? NaN);
+
+    if (Number.isFinite(direct) && direct > 0) return direct;
+
+    const computed = calcItemsTotal(subOrder?.items || []);
+    if (computed > 0) return computed;
+
+    // last fallback (still show something, not 0)
+    return 0;
+  }
+
+  // ✅ SINGLE: whole order total
+  return (
     Number(order?.totals?.grandTotal ?? NaN) ||
     Number(order?.totals?.total ?? NaN) ||
     Number(order?.totals?.subtotal ?? NaN) ||
-    Number(order?.totalAmount ?? 0);
-
-  return Number.isFinite(n) ? n : 0;
+    Number(order?.totalAmount ?? 0) ||
+    calcItemsTotal(order?.items || [])
+  );
 }
+
 
 function normalizeSubOrdersForList(order: any) {
   const subs = Array.isArray(order?.subOrders) ? order.subOrders : [];
@@ -276,7 +317,7 @@ export default function WebsiteUserOrdersPage() {
             const previewItems = items.slice(0, 2);
             const moreCount = Math.max(0, items.length - previewItems.length);
 
-            const total = pickOrderTotal(o, so);
+            const total = pickOrderTotal(o, so, r.mode);
 
             const statusDate = pickStatusDate(o);
             const expected = addDays(createdAt, 7);

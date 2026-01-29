@@ -47,6 +47,142 @@ function resolveImageUrl(path?: string) {
 const STATUS_OPTIONS = ["PLACED", "CONFIRMED", "SHIPPED", "DELIVERED", "CANCELLED"] as const;
 const PAYMENT_STATUS_OPTIONS = ["PENDING", "PAID", "FAILED"] as const;
 
+function toNum(v: any, fb = 0) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fb;
+}
+
+// ✅ compute subOrder total if backend doesn't send so.total
+function calcItemsTotal(items: any[]) {
+  const arr = Array.isArray(items) ? items : [];
+  return arr.reduce((sum, it) => {
+    const qty = Math.max(1, Number(it?.qty || 1));
+
+    const line =
+      Number(it?.finalLineTotal ?? NaN) ||
+      Number(it?.lineTotal ?? NaN) ||
+      Number(it?.total ?? NaN) ||
+      Number(it?.amount ?? NaN);
+
+    if (Number.isFinite(line) && line > 0) return sum + line;
+
+    const unit =
+      Number(it?.finalPrice ?? NaN) ||
+      Number(it?.salePrice ?? NaN) ||
+      Number(it?.price ?? NaN) ||
+      Number(it?.unitPrice ?? NaN);
+
+    if (Number.isFinite(unit) && unit > 0) return sum + unit * qty;
+
+    return sum;
+  }, 0);
+}
+
+function pickSubOrderTotal(order: any, so: any) {
+  const direct =
+    toNum(so?.total, NaN) ||
+    toNum(so?.grandTotal, NaN) ||
+    (toNum(so?.subtotal, NaN) + toNum(so?.shipping, 0));
+
+  if (Number.isFinite(direct) && direct > 0) return direct;
+
+  const computed = calcItemsTotal(so?.items || []);
+  if (computed > 0) return computed;
+
+  // legacy fallback
+  const totals = order?.totals || {};
+  return (
+    toNum(totals?.grandTotal, NaN) ||
+    toNum(totals?.total, NaN) ||
+    toNum(totals?.subtotal, NaN) ||
+    toNum(order?.totalAmount, 0)
+  );
+}
+
+function normalizeSubOrders(order: any) {
+  const subs = Array.isArray(order?.subOrders) ? order.subOrders : [];
+  if (subs.length) {
+    return subs.map((so: any) => ({
+      _id: String(so?._id || ""),
+      ownerType: so?.ownerType || (so?.vendorId ? "VENDOR" : "ADMIN"),
+      vendorId: so?.vendorId ? String(so.vendorId) : "",
+      soldBy:
+        String(so?.soldBy || "").trim() ||
+        String(so?.vendorName || "").trim() ||
+        (so?.vendorId ? "Vendor" : "Mechkart"),
+      vendorName: String(so?.vendorName || "").trim(),
+      status: String(so?.status || order?.status || "PLACED").toUpperCase(),
+      items: Array.isArray(so?.items) ? so.items : [],
+      shipment: so?.shipment || null,
+      subtotal: so?.subtotal,
+      shipping: so?.shipping,
+      total: so?.total,
+      // ✅ support subOrder-level return in future
+      return: so?.return || null,
+      refund: so?.refund || null,
+    }));
+  }
+
+  const legacyItems = Array.isArray(order?.items) ? order.items : [];
+  return [
+    {
+      _id: "LEGACY",
+      ownerType: "ADMIN",
+      vendorId: "",
+      soldBy: "Mechkart",
+      vendorName: "",
+      status: String(order?.status || "PLACED").toUpperCase(),
+      items: legacyItems,
+      shipment: null,
+      subtotal: order?.totals?.subtotal,
+      shipping: order?.totals?.shipping,
+      total: order?.totals?.grandTotal ?? order?.totals?.total ?? order?.totalAmount,
+      return: order?.return || null,
+      refund: order?.refund || null,
+    },
+  ];
+}
+
+function pickVariantId(it: any) {
+  // supports: string | ObjectId | populated object
+  return (
+    it?.variantId?._id ||
+    it?.variantId ||
+    it?.variant?._id ||
+    it?.variant ||
+    null
+  );
+}
+
+function getVariantTextFromItem(it: any) {
+  const vid = pickVariantId(it);
+  if (!vid) return ""; // ✅ no variant => don't show anything
+
+  // ✅ if backend stores snapshot/label directly (best)
+  const direct =
+    it?.variantLabel ||
+    it?.variantName ||
+    it?.variantText ||
+    it?.variantSnapshot?.label ||
+    it?.variantSnapshot?.comboText ||
+    it?.variantSnapshot?.size ||
+    it?.variantSnapshot?.weight;
+
+  if (direct) return String(direct).trim();
+
+  // ✅ try product populated in different keys
+  const product =
+    (it?.productId && typeof it.productId === "object" ? it.productId : null) ||
+    (it?.product && typeof it.product === "object" ? it.product : null);
+
+  const variants = Array.isArray(product?.variants) ? product.variants : [];
+  const v = variants.find((x: any) => String(x?._id) === String(vid));
+
+  const text = v?.label || v?.comboText || v?.size || v?.weight || "";
+  return String(text || "").trim();
+}
+
+
 export default function AdminOrdersPage() {
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -70,12 +206,6 @@ export default function AdminOrdersPage() {
 
   const items = data?.items || [];
   const totalPages = Number(data?.totalPages || 1);
-
-  function getVariantText(product?: any, variantId?: string) {
-    const v = (product?.variants || []).find((x: any) => String(x._id) === String(variantId));
-    if (!v) return "Variant";
-    return v.label || v.comboText || v.size || v.weight || "Variant";
-  }
 
   const load = async (nextPage = 1) => {
     try {
@@ -110,18 +240,14 @@ export default function AdminOrdersPage() {
   const patchLocalOrder = (orderId: string, patch: any) => {
     setData((prev: any) => ({
       ...prev,
-      items: (prev.items || []).map((o: any) =>
-        String(o._id) === String(orderId) ? { ...o, ...patch } : o
-      ),
+      items: (prev.items || []).map((o: any) => (String(o._id) === String(orderId) ? { ...o, ...patch } : o)),
     }));
   };
 
   const replaceLocalOrder = (orderId: string, next: any) => {
     setData((prev: any) => ({
       ...prev,
-      items: (prev.items || []).map((o: any) =>
-        String(o._id) === String(orderId) ? next : o
-      ),
+      items: (prev.items || []).map((o: any) => (String(o._id) === String(orderId) ? next : o)),
     }));
   };
 
@@ -131,7 +257,6 @@ export default function AdminOrdersPage() {
       setError(null);
 
       patchLocalOrder(orderId, { status: nextStatus });
-
       const updated = await adminUpdateOrderStatus(orderId, nextStatus as any);
       replaceLocalOrder(orderId, updated);
     } catch (e: any) {
@@ -169,6 +294,7 @@ export default function AdminOrdersPage() {
 
       patchLocalOrder(orderId, { status: "SHIPPED" });
 
+      // ✅ your backend should create shipments for all subOrders if split
       const updated = await adminCreateShiprocketShipment(orderId);
       replaceLocalOrder(orderId, updated);
     } catch (e: any) {
@@ -179,7 +305,7 @@ export default function AdminOrdersPage() {
     }
   };
 
-  // ✅ Return Actions
+  // ✅ Return Actions (still orderId-based; later we can add subOrderId param)
   const onApproveReturn = async (orderId: string) => {
     try {
       setBusyId(orderId);
@@ -213,13 +339,11 @@ export default function AdminOrdersPage() {
     }
   };
 
-  // ✅ Refund (optional partial amount in rupees)
   const onProcessRefund = async (orderId: string) => {
     try {
       const ok = confirm("Process refund now?");
       if (!ok) return;
 
-      // optional amount prompt
       const raw = prompt("Refund amount in RUPEES? (Leave blank for full refund)") || "";
       const amt = raw.trim() ? Number(raw.trim()) : undefined;
       const amount = Number.isFinite(amt as any) && (amt as number) > 0 ? (amt as number) : undefined;
@@ -245,15 +369,159 @@ export default function AdminOrdersPage() {
   const hasShiprocketShipment = (o: any) =>
     Array.isArray(o?.shipments) && o.shipments.some((s: any) => s?.provider === "SHIPROCKET");
 
-  const latestShiprocketShipment = (o: any) => {
+  const shiprocketShipments = (o: any) => {
     const list = Array.isArray(o?.shipments) ? o.shipments.filter((s: any) => s?.provider === "SHIPROCKET") : [];
-    if (!list.length) return null;
-    const sorted = [...list].sort((a: any, b: any) => {
+    // latest first
+    return [...list].sort((a: any, b: any) => {
       const ta = a?.createdAt ? new Date(a.createdAt).getTime() : 0;
       const tb = b?.createdAt ? new Date(b.createdAt).getTime() : 0;
       return tb - ta;
     });
-    return sorted[0] || list[list.length - 1];
+  };
+
+  // ✅ small renderer for "return cell" per subOrder (currently same functions)
+  const ReturnBlock = ({
+    orderId,
+    sub,
+    isBusy,
+  }: {
+    orderId: string;
+    sub: any;
+    isBusy: boolean;
+  }) => {
+    // try sub.return, else fallback to order-level return when only one sub
+    const ret = sub?.return || null;
+    const retStatus = String(ret?.status || "").toUpperCase();
+    const refund = sub?.refund || null;
+    const refundStatus = String(refund?.status || "").toUpperCase();
+
+    const canApproveReject = retStatus === "REQUESTED";
+    const canRefund = ["APPROVED", "RECEIVED"].includes(retStatus);
+    const refundProcessed = refundStatus === "PROCESSED" || retStatus === "REFUNDED";
+    const refundButtonDisabled = !canRefund || refundProcessed || isBusy;
+
+    const bank = ret?.bankDetails || null;
+    const imgs = Array.isArray(ret?.images) ? ret.images : [];
+
+    if (!retStatus) return <div className="text-[11px] text-gray-500">—</div>;
+
+    return (
+      <div className="space-y-2">
+        <div className="text-[12px] font-semibold text-gray-900">
+          <span className="font-mono">{retStatus}</span>
+        </div>
+
+        {ret?.requestedAt ? (
+          <div className="text-[11px] text-gray-600">Requested: {fmtDateTime(ret.requestedAt)}</div>
+        ) : null}
+
+        {ret?.reason ? (
+          <div className="text-[11px] text-gray-600">
+            Reason: <span className="font-semibold text-gray-800">{String(ret.reason)}</span>
+          </div>
+        ) : null}
+
+        {ret?.note ? (
+          <div className="text-[11px] text-gray-600">
+            Note: <span className="font-semibold text-gray-800">{String(ret.note)}</span>
+          </div>
+        ) : null}
+
+        {retStatus === "REJECTED" && ret?.rejectReason ? (
+          <div className="text-[11px] text-red-700">Reject: {String(ret.rejectReason)}</div>
+        ) : null}
+
+        {bank ? (
+          <div className="border p-2 text-[11px] text-gray-700">
+            <div className="font-semibold text-gray-900 mb-1">Bank (COD)</div>
+            <div>
+              <span className="font-semibold">Holder:</span> {bank?.accountHolderName || "—"}
+            </div>
+            <div>
+              <span className="font-semibold">A/C:</span> {bank?.accountNumber || "—"}
+            </div>
+            <div>
+              <span className="font-semibold">IFSC:</span> {bank?.ifsc || "—"}
+            </div>
+            {bank?.bankName ? (
+              <div>
+                <span className="font-semibold">Bank:</span> {bank.bankName}
+              </div>
+            ) : null}
+            {bank?.upiId ? (
+              <div>
+                <span className="font-semibold">UPI:</span> {bank.upiId}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+
+        {imgs.length ? (
+          <div>
+            <div className="text-[11px] font-semibold text-gray-700 mb-1">Images</div>
+            <div className="flex flex-wrap gap-2">
+              {imgs.slice(0, 5).map((p: string, i: number) => {
+                const src = resolveImageUrl(p);
+                return (
+                  <a
+                    key={i}
+                    href={src || "#"}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="h-10 w-10 border bg-gray-50 overflow-hidden"
+                    title="Open"
+                  >
+                    {src ? <img src={src} alt={`ret-${i}`} className="h-full w-full object-cover" /> : null}
+                  </a>
+                );
+              })}
+            </div>
+          </div>
+        ) : null}
+
+        {canApproveReject ? (
+          <div className="flex gap-2">
+            <button
+              disabled={isBusy}
+              onClick={() => onApproveReturn(orderId)}
+              className="h-9 rounded-xl bg-emerald-600 px-3 text-[12px] font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+            >
+              {isBusy ? "..." : "Approve"}
+            </button>
+
+            <button
+              disabled={isBusy}
+              onClick={() => onRejectReturn(orderId)}
+              className="h-9 rounded-xl bg-red-600 px-3 text-[12px] font-semibold text-white hover:bg-red-700 disabled:opacity-60"
+            >
+              {isBusy ? "..." : "Reject"}
+            </button>
+          </div>
+        ) : null}
+
+        {refund ? (
+          <div className="text-[11px] text-gray-700">
+            Refund: <span className="font-semibold">{refundStatus || "—"}</span>
+            {refund?.amount ? <span className="text-gray-500"> • {money(refund.amount)}</span> : null}
+            {refund?.processedAt ? <span className="text-gray-500"> • {fmtDateTime(refund.processedAt)}</span> : null}
+          </div>
+        ) : null}
+
+        {canRefund ? (
+          <button
+            disabled={refundButtonDisabled}
+            onClick={() => onProcessRefund(orderId)}
+            className="h-9 rounded-xl bg-gray-900 px-3 text-[12px] font-semibold text-white hover:bg-black disabled:opacity-60"
+          >
+            {isBusy ? "Processing…" : refundProcessed ? "Refund Done" : "Process Refund"}
+          </button>
+        ) : null}
+
+        {retStatus === "REFUNDED" ? (
+          <div className="text-[11px] font-semibold text-emerald-700">Refund Completed</div>
+        ) : null}
+      </div>
+    );
   };
 
   return (
@@ -328,9 +596,7 @@ export default function AdminOrdersPage() {
       </div>
 
       {error ? (
-        <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
-          {error}
-        </div>
+        <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{error}</div>
       ) : null}
 
       {/* Table */}
@@ -345,16 +611,28 @@ export default function AdminOrdersPage() {
           </div>
         ) : items.length ? (
           <div className="overflow-x-auto">
-            <table className="min-w-[1700px] w-full text-sm">
+            {/* ✅ width increased due to 2 return columns */}
+            <table className="min-w-[2000px] w-full text-sm">
               <thead className="bg-white">
                 <tr className="border-b text-left text-xs font-bold text-gray-600">
                   <th className="px-5 py-3">Order</th>
                   <th className="px-5 py-3">Customer</th>
-                  <th className="px-5 py-3">Items</th>
-                  <th className="px-5 py-3">Payable</th>
+
+                  {/* ✅ now grouped by subOrders inside same row */}
+                  <th className="px-5 py-3">Items (Sold By)</th>
+
+                  {/* ✅ overall + per-sub totals */}
+                  <th className="px-5 py-3">Payable (Split)</th>
+
                   <th className="px-5 py-3">Payment Details</th>
-                  <th className="px-5 py-3">Shipment</th>
-                  <th className="px-5 py-3">Return / Refund</th>
+
+                  {/* ✅ list shipments (multiple) but button is single */}
+                  <th className="px-5 py-3">Shipment(s)</th>
+
+                  {/* ✅ requested: 2 columns for return blocks (use same functions) */}
+                  <th className="px-5 py-3">Return 1</th>
+                  <th className="px-5 py-3">Return 2</th>
+
                   <th className="px-5 py-3">Status</th>
                   <th className="px-5 py-3">Created</th>
                 </tr>
@@ -394,12 +672,12 @@ export default function AdminOrdersPage() {
                   const isCodPlaced = pm === "COD" && st === "PLACED";
                   const blockShipUntilConfirm = pm === "COD" && !codIsConfirmed;
 
-                  // shipment info
-                  const sr = latestShiprocketShipment(o);
-                  const srAwb = sr?.shiprocket?.awb || "";
-                  const srShipmentId = sr?.shiprocket?.shipmentId ?? null;
-                  const srOrderId = sr?.shiprocket?.orderId || "";
+                  // ✅ subOrders grouped view
+                  const subOrders = normalizeSubOrders(o);
+                  const isSplit = subOrders.length > 1;
 
+                  // ✅ shipment list
+                  const srList = shiprocketShipments(o);
                   const shipmentExists = hasShiprocketShipment(o);
 
                   const canCreateShipment =
@@ -408,26 +686,26 @@ export default function AdminOrdersPage() {
                     !(pm === "COD" && !codIsConfirmed) &&
                     !(pm === "ONLINE" && ps !== "PAID");
 
-                  // ✅ Return/Refund (new)
-                  const ret = o?.return || null;
-                  const retStatus = String(ret?.status || "").toUpperCase(); // REQUESTED/APPROVED/REJECTED/PICKUP_CREATED/RECEIVED/REFUNDED
-                  const refund = o?.refund || null;
-                  const refundStatus = String(refund?.status || "").toUpperCase(); // PENDING/PROCESSED/FAILED
+                  // ✅ Return columns mapping (first 2 suborders)
+                  const so1 = subOrders[0] || null;
+                  const so2 = subOrders[1] || null;
 
-                  const canApproveReject = retStatus === "REQUESTED";
-                  const canRefund = ["APPROVED", "RECEIVED"].includes(retStatus);
-
-                  const refundProcessed = refundStatus === "PROCESSED" || retStatus === "REFUNDED";
-                  const refundButtonDisabled = !canRefund || refundProcessed || isBusy;
-
-                  const bank = ret?.bankDetails || null; // if your backend stores it here
-                  const imgs = Array.isArray(ret?.images) ? ret.images : [];
+                  // ✅ make sure legacy uses order-level return/refund
+                  if (subOrders.length === 1) {
+                    subOrders[0].return = subOrders[0].return || o?.return || null;
+                    subOrders[0].refund = subOrders[0].refund || o?.refund || null;
+                  }
 
                   return (
-                    <tr key={orderId} className="border-b last:border-b-0">
+                    <tr key={orderId} className="border-b last:border-b-0 align-top">
                       <td className="px-5 py-3">
                         <div className="font-semibold text-gray-900">{orderCode}</div>
                         <div className="text-[11px] text-gray-500">Internal: {orderId.slice(-8)}</div>
+                        {isSplit ? (
+                          <div className="mt-1 text-[11px] font-semibold text-indigo-700">
+                            Split: {subOrders.length} sub-orders
+                          </div>
+                        ) : null}
                       </td>
 
                       <td className="px-5 py-3">
@@ -435,36 +713,82 @@ export default function AdminOrdersPage() {
                         <div className="text-[11px] text-gray-500">{phone}</div>
                       </td>
 
+                      {/* ✅ Items grouped per subOrder + Sold By */}
                       <td className="px-5 py-3">
-                        <div className="space-y-2">
-                          {(o.items || []).slice(0, 2).map((it: any, idx: number) => {
-                            const product = it?.productId; // populated
-                            const vText = getVariantText(product, it?.variantId);
+                        <div className="space-y-3">
+                          {subOrders.map((so: any, soIdx: number) => {
+                            const itemsArr = Array.isArray(so?.items) ? so.items : [];
+                            const show = itemsArr.slice(0, 2);
                             return (
-                              <div key={idx} className="text-[12px] text-gray-800">
-                                <div className="font-semibold">{it.title}</div>
-                                <div className="mt-0.5 text-[11px] font-semibold text-gray-500">
-                                  Code: {it.productCode || "—"}
+                              <div key={so._id || soIdx} className="border rounded-xl p-3">
+                                <div className="flex items-center justify-between gap-2">
+                                  <div className="text-[12px] font-extrabold text-gray-900">
+                                    Sold by: {so.soldBy}
+                                    {so.vendorName ? (
+                                      <span className="ml-1 text-[11px] font-semibold text-gray-500">
+                                        ({so.vendorName})
+                                      </span>
+                                    ) : null}
+                                  </div>
+                                  <div className="text-[11px] font-semibold text-gray-600">
+                                    Total: {money(pickSubOrderTotal(o, so))}
+                                  </div>
                                 </div>
-                                <div className="mt-1 text-xs text-gray-500">
-                                  Variant: {vText}
-                                  {it.colorKey ? ` • Color: ${it.colorKey}` : ""}
-                                  {" • "}Qty: {it.qty}
-                                </div>
+
+                                  <div className="space-y-2">
+    {(o.items || []).slice(0, 2).map((it: any, idx: number) => {
+      const vText = getVariantTextFromItem(it);
+      const colorText = it?.colorKey ? String(it.colorKey) : "";
+
+      return (
+        <div key={idx} className="text-[12px] text-gray-800">
+          <div className="font-semibold">{it.title}</div>
+
+          {it.productCode ? (
+            <div className="mt-0.5 text-[11px] font-semibold text-gray-500">
+              Code: {it.productCode}
+            </div>
+          ) : null}
+
+          <div className="mt-1 text-xs text-gray-500">
+            {vText ? `Variant: ${vText}` : ""}
+            {colorText ? `${vText ? " • " : ""}Color: ${colorText}` : ""}
+            {(vText || colorText) ? " • " : ""}Qty: {it.qty}
+          </div>
+        </div>
+      );
+    })}
+
+    {(o.items || []).length > 2 ? (
+      <div className="text-[11px] text-gray-500">
+        +{o.items.length - 2} more item(s)
+      </div>
+    ) : null}
+  </div>
                               </div>
                             );
                           })}
-                          {(o.items || []).length > 2 ? (
-                            <div className="text-[11px] text-gray-500">+{o.items.length - 2} more item(s)</div>
-                          ) : null}
                         </div>
                       </td>
 
+                      {/* ✅ Payable overall + per-sub split */}
                       <td className="px-5 py-3">
                         <div className="font-semibold text-gray-900">{money(payable)}</div>
                         {o?.totals?.discount ? (
                           <div className="text-[11px] text-emerald-700 font-semibold">
                             Discount: -{money(o.totals.discount)}
+                          </div>
+                        ) : null}
+
+                        {isSplit ? (
+                          <div className="mt-2 space-y-1 text-[11px] text-gray-700">
+                            <div className="font-semibold text-gray-900">Split totals</div>
+                            {subOrders.map((so: any, idx: number) => (
+                              <div key={so._id || idx} className="flex items-center justify-between gap-2">
+                                <span className="truncate max-w-[220px]">• {so.soldBy}</span>
+                                <span className="font-semibold">{money(pickSubOrderTotal(o, so))}</span>
+                              </div>
+                            ))}
                           </div>
                         ) : null}
                       </td>
@@ -499,9 +823,7 @@ export default function AdminOrdersPage() {
                             <div>
                               <span className="font-semibold text-gray-700">COD:</span>{" "}
                               {codIsConfirmed ? (
-                                <>
-                                  Confirmed{codConfirmedAt ? ` (${fmtDateTime(codConfirmedAt)})` : ""}
-                                </>
+                                <>Confirmed{codConfirmedAt ? ` (${fmtDateTime(codConfirmedAt)})` : ""}</>
                               ) : (
                                 "Not confirmed"
                               )}
@@ -521,25 +843,36 @@ export default function AdminOrdersPage() {
                         )}
                       </td>
 
-                      {/* Shipment */}
+                      {/* ✅ Shipment(s): list multiple shipments; button is single */}
                       <td className="px-5 py-3">
                         {shipmentExists ? (
-                          <div className="space-y-1 text-[11px] text-gray-700">
-                            <div>
-                              <span className="font-semibold">Provider:</span> SHIPROCKET
-                            </div>
-                            <div>
-                              <span className="font-semibold">Shipment ID:</span>{" "}
-                              <span className="font-mono">{srShipmentId ?? "—"}</span>
-                            </div>
-                            <div>
-                              <span className="font-semibold">AWB:</span>{" "}
-                              <span className="font-mono">{srAwb || "—"}</span>
-                            </div>
-                            <div>
-                              <span className="font-semibold">SR Order:</span>{" "}
-                              <span className="font-mono">{srOrderId || "—"}</span>
-                            </div>
+                          <div className="space-y-2">
+                            {srList.slice(0, 4).map((sr: any, idx: number) => {
+                              const srAwb = sr?.shiprocket?.awb || "";
+                              const srShipmentId = sr?.shiprocket?.shipmentId ?? null;
+                              const srOrderId2 = sr?.shiprocket?.orderId || "";
+                              return (
+                                <div key={idx} className="border rounded-xl p-3 text-[11px] text-gray-700">
+                                  <div className="font-semibold text-gray-900 mb-1">SHIPROCKET</div>
+                                  <div>
+                                    <span className="font-semibold">Shipment ID:</span>{" "}
+                                    <span className="font-mono">{srShipmentId ?? "—"}</span>
+                                  </div>
+                                  <div>
+                                    <span className="font-semibold">AWB:</span>{" "}
+                                    <span className="font-mono">{srAwb || "—"}</span>
+                                  </div>
+                                  <div>
+                                    <span className="font-semibold">SR Order:</span>{" "}
+                                    <span className="font-mono">{srOrderId2 || "—"}</span>
+                                  </div>
+                                </div>
+                              );
+                            })}
+
+                            {srList.length > 4 ? (
+                              <div className="text-[11px] text-gray-500">+{srList.length - 4} more shipment(s)</div>
+                            ) : null}
                           </div>
                         ) : (
                           <div className="space-y-2">
@@ -557,151 +890,44 @@ export default function AdminOrdersPage() {
                                 {st !== "CONFIRMED"
                                   ? "Confirm order first"
                                   : pm === "ONLINE" && ps !== "PAID"
-                                    ? "Online payment must be PAID"
-                                    : pm === "COD" && !codIsConfirmed
-                                      ? "Confirm COD first"
-                                      : "—"}
+                                  ? "Online payment must be PAID"
+                                  : pm === "COD" && !codIsConfirmed
+                                  ? "Confirm COD first"
+                                  : "—"}
                               </div>
                             ) : null}
                           </div>
                         )}
                       </td>
 
-                      {/* ✅ Return / Refund */}
+                      {/* ✅ Return 1 */}
                       <td className="px-5 py-3">
-                        {!retStatus ? (
-                          <div className="text-[11px] text-gray-500">—</div>
-                        ) : (
-                          <div className="space-y-2">
-                            <div className="text-[12px] font-semibold text-gray-900">
-                              Return: <span className="font-mono">{retStatus}</span>
-                            </div>
-
-                            {ret?.requestedAt ? (
-                              <div className="text-[11px] text-gray-600">
-                                Requested: {fmtDateTime(ret.requestedAt)}
-                              </div>
-                            ) : null}
-
-                            {ret?.reason ? (
-                              <div className="text-[11px] text-gray-600">
-                                Reason: <span className="font-semibold text-gray-800">{String(ret.reason)}</span>
-                              </div>
-                            ) : null}
-
-                            {/* ✅ note (not comment) */}
-                            {ret?.note ? (
-                              <div className="text-[11px] text-gray-600">
-                                Note: <span className="font-semibold text-gray-800">{String(ret.note)}</span>
-                              </div>
-                            ) : null}
-
-                            {retStatus === "REJECTED" && ret?.rejectReason ? (
-                              <div className="text-[11px] text-red-700">
-                                Reject: {String(ret.rejectReason)}
-                              </div>
-                            ) : null}
-
-                            {/* ✅ show COD bank details (if present) */}
-                            {bank ? (
-                              <div className="border p-2 text-[11px] text-gray-700">
-                                <div className="font-semibold text-gray-900 mb-1">Bank Details (COD)</div>
-                                <div>
-                                  <span className="font-semibold">A/C Holder:</span>{" "}
-                                  {bank?.accountHolderName || "—"}
-                                </div>
-                                <div>
-                                  <span className="font-semibold">A/C No:</span>{" "}
-                                  {bank?.accountNumber || "—"}
-                                </div>
-                                <div>
-                                  <span className="font-semibold">IFSC:</span> {bank?.ifsc || "—"}
-                                </div>
-                                {bank?.bankName ? (
-                                  <div>
-                                    <span className="font-semibold">Bank:</span> {bank.bankName}
-                                  </div>
-                                ) : null}
-                                {bank?.upiId ? (
-                                  <div>
-                                    <span className="font-semibold">UPI:</span> {bank.upiId}
-                                  </div>
-                                ) : null}
-                              </div>
-                            ) : null}
-
-                            {/* ✅ image proofs preview */}
-                            {imgs.length ? (
-                              <div>
-                                <div className="text-[11px] font-semibold text-gray-700 mb-1">Images</div>
-                                <div className="flex flex-wrap gap-2">
-                                  {imgs.slice(0, 5).map((p: string, i: number) => {
-                                    const src = resolveImageUrl(p);
-                                    return (
-                                      <a
-                                        key={i}
-                                        href={src || "#"}
-                                        target="_blank"
-                                        rel="noreferrer"
-                                        className="h-10 w-10 border bg-gray-50 overflow-hidden"
-                                        title="Open"
-                                      >
-                                        {src ? <img src={src} alt={`ret-${i}`} className="h-full w-full object-cover" /> : null}
-                                      </a>
-                                    );
-                                  })}
-                                </div>
-                              </div>
-                            ) : null}
-
-                            {canApproveReject ? (
-                              <div className="flex gap-2">
-                                <button
-                                  disabled={isBusy}
-                                  onClick={() => onApproveReturn(orderId)}
-                                  className="h-9 rounded-xl bg-emerald-600 px-3 text-[12px] font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
-                                >
-                                  {isBusy ? "..." : "Approve"}
-                                </button>
-
-                                <button
-                                  disabled={isBusy}
-                                  onClick={() => onRejectReturn(orderId)}
-                                  className="h-9 rounded-xl bg-red-600 px-3 text-[12px] font-semibold text-white hover:bg-red-700 disabled:opacity-60"
-                                >
-                                  {isBusy ? "..." : "Reject"}
-                                </button>
-                              </div>
-                            ) : null}
-
-                            {/* Refund status */}
-                            {refund ? (
-                              <div className="text-[11px] text-gray-700">
-                                Refund: <span className="font-semibold">{refundStatus || "—"}</span>
-                                {refund?.amount ? <span className="text-gray-500"> • {money(refund.amount)}</span> : null}
-                                {refund?.processedAt ? <span className="text-gray-500"> • {fmtDateTime(refund.processedAt)}</span> : null}
-                              </div>
-                            ) : null}
-
-                            {/* Refund action */}
-                            {canRefund ? (
-                              <button
-                                disabled={refundButtonDisabled}
-                                onClick={() => onProcessRefund(orderId)}
-                                className="h-9 rounded-xl bg-gray-900 px-3 text-[12px] font-semibold text-white hover:bg-black disabled:opacity-60"
-                              >
-                                {isBusy ? "Processing…" : refundProcessed ? "Refund Done" : "Process Refund"}
-                              </button>
-                            ) : null}
-
-                            {retStatus === "REFUNDED" ? (
-                              <div className="text-[11px] font-semibold text-emerald-700">Refund Completed</div>
+                        {so1 ? (
+                          <div className="border rounded-xl p-3">
+                            <div className="text-[11px] font-extrabold text-gray-900 mb-2">{so1.soldBy}</div>
+                            <ReturnBlock orderId={orderId} sub={so1} isBusy={isBusy} />
+                            {subOrders.length > 2 ? (
+                              <div className="mt-2 text-[11px] text-gray-500">+{subOrders.length - 2} more (not shown)</div>
                             ) : null}
                           </div>
+                        ) : (
+                          <div className="text-[11px] text-gray-500">—</div>
                         )}
                       </td>
 
-                      {/* Status */}
+                      {/* ✅ Return 2 */}
+                      <td className="px-5 py-3">
+                        {so2 ? (
+                          <div className="border rounded-xl p-3">
+                            <div className="text-[11px] font-extrabold text-gray-900 mb-2">{so2.soldBy}</div>
+                            <ReturnBlock orderId={orderId} sub={so2} isBusy={isBusy} />
+                          </div>
+                        ) : (
+                          <div className="text-[11px] text-gray-500">—</div>
+                        )}
+                      </td>
+
+                      {/* Status (single, as you wanted) */}
                       <td className="px-5 py-3">
                         <select
                           value={st}
