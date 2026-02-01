@@ -9,8 +9,6 @@ import {
   adminUpdateOrderStatus,
   adminConfirmCod,
   adminCreateShiprocketShipment,
-
-  // Return/Refund calls
   adminApproveReturn,
   adminRejectReturn,
   adminProcessRefund,
@@ -21,13 +19,11 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL;
 function money(n: number) {
   return `₹${Math.round(Number(n || 0))}`;
 }
-
 function moneyPaise(paise: any) {
   const p = Number(paise || 0);
   if (!Number.isFinite(p) || p <= 0) return "—";
   return money(p / 100);
 }
-
 function fmtDateTime(v?: any) {
   if (!v) return "—";
   try {
@@ -36,7 +32,6 @@ function fmtDateTime(v?: any) {
     return "—";
   }
 }
-
 function resolveImageUrl(path?: string) {
   if (!path) return "";
   if (path.startsWith("http://") || path.startsWith("https://")) return path;
@@ -52,7 +47,6 @@ function toNum(v: any, fb = 0) {
   return Number.isFinite(n) ? n : fb;
 }
 
-// ✅ compute subOrder total if backend doesn't send so.total
 function calcItemsTotal(items: any[]) {
   const arr = Array.isArray(items) ? items : [];
   return arr.reduce((sum, it) => {
@@ -89,7 +83,6 @@ function pickSubOrderTotal(order: any, so: any) {
   const computed = calcItemsTotal(so?.items || []);
   if (computed > 0) return computed;
 
-  // legacy fallback
   const totals = order?.totals || {};
   return (
     toNum(totals?.grandTotal, NaN) ||
@@ -117,7 +110,6 @@ function normalizeSubOrders(order: any) {
       subtotal: so?.subtotal,
       shipping: so?.shipping,
       total: so?.total,
-      // ✅ support subOrder-level return in future
       return: so?.return || null,
       refund: so?.refund || null,
     }));
@@ -144,21 +136,13 @@ function normalizeSubOrders(order: any) {
 }
 
 function pickVariantId(it: any) {
-  // supports: string | ObjectId | populated object
-  return (
-    it?.variantId?._id ||
-    it?.variantId ||
-    it?.variant?._id ||
-    it?.variant ||
-    null
-  );
+  return it?.variantId?._id || it?.variantId || it?.variant?._id || it?.variant || null;
 }
 
 function getVariantTextFromItem(it: any) {
   const vid = pickVariantId(it);
-  if (!vid) return ""; // ✅ no variant => don't show anything
+  if (!vid) return "";
 
-  // ✅ if backend stores snapshot/label directly (best)
   const direct =
     it?.variantLabel ||
     it?.variantName ||
@@ -170,7 +154,6 @@ function getVariantTextFromItem(it: any) {
 
   if (direct) return String(direct).trim();
 
-  // ✅ try product populated in different keys
   const product =
     (it?.productId && typeof it.productId === "object" ? it.productId : null) ||
     (it?.product && typeof it.product === "object" ? it.product : null);
@@ -182,6 +165,209 @@ function getVariantTextFromItem(it: any) {
   return String(text || "").trim();
 }
 
+/* ---------------- UI helpers ---------------- */
+
+function Badge({
+  children,
+  tone = "gray",
+}: {
+  children: React.ReactNode;
+  tone?: "gray" | "green" | "red" | "blue" | "amber" | "indigo";
+}) {
+  const map: Record<string, string> = {
+    gray: "bg-gray-100 text-gray-700",
+    green: "bg-emerald-100 text-emerald-800",
+    red: "bg-red-100 text-red-800",
+    blue: "bg-blue-100 text-blue-800",
+    amber: "bg-amber-100 text-amber-900",
+    indigo: "bg-indigo-100 text-indigo-800",
+  };
+  return (
+    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${map[tone] || map.gray}`}>
+      {children}
+    </span>
+  );
+}
+
+function IconButton({
+  children,
+  onClick,
+  disabled,
+  title,
+  tone = "default",
+}: {
+  children: React.ReactNode;
+  onClick: () => void;
+  disabled?: boolean;
+  title?: string;
+  tone?: "default" | "primary" | "danger";
+}) {
+  const base =
+    "inline-flex h-9 items-center justify-center gap-2 rounded-xl border px-3 text-[12px] font-semibold disabled:opacity-60";
+  const styles =
+    tone === "primary"
+      ? "bg-gray-900 text-white hover:bg-black border-gray-900"
+      : tone === "danger"
+        ? "bg-red-600 text-white hover:bg-red-700 border-red-600"
+        : "bg-white text-gray-800 hover:bg-gray-50";
+  return (
+    <button type="button" title={title} onClick={onClick} disabled={disabled} className={`${base} ${styles}`}>
+      {children}
+    </button>
+  );
+}
+
+function Drawer({
+  open,
+  onClose,
+  title,
+  subtitle,
+  children,
+}: {
+  open: boolean;
+  onClose: () => void;
+  title: string;
+  subtitle?: string;
+  children: React.ReactNode;
+}) {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-50">
+      <div className="absolute inset-0 bg-black/45" onClick={onClose} />
+      <div className="absolute right-0 top-0 h-full w-full max-w-[980px] bg-white shadow-2xl">
+        <div className="flex items-center justify-between border-b px-5 py-4">
+          <div className="min-w-0">
+            <div className="text-[12px] font-semibold text-gray-500">{subtitle || "Order Details"}</div>
+            <div className="truncate text-lg font-extrabold text-gray-900">{title}</div>
+          </div>
+          <button onClick={onClose} className="h-10 rounded-xl border px-4 text-sm font-semibold hover:bg-gray-50">
+            Close
+          </button>
+        </div>
+        <div className="h-[calc(100%-73px)] overflow-y-auto p-5">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+function Tabs({
+  value,
+  onChange,
+  items,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  items: { key: string; label: string }[];
+}) {
+  return (
+    <div className="flex flex-wrap gap-2">
+      {items.map((t) => {
+        const active = value === t.key;
+        return (
+          <button
+            key={t.key}
+            onClick={() => onChange(t.key)}
+            className={
+              "h-9 rounded-xl px-4 text-[12px] font-semibold " +
+              (active ? "bg-gray-900 text-white" : "border bg-white text-gray-800 hover:bg-gray-50")
+            }
+          >
+            {t.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function StatRow({ k, v }: { k: string; v: React.ReactNode }) {
+  return (
+    <div className="flex items-start justify-between gap-6 border-b py-2 text-sm">
+      <div className="text-gray-600">{k}</div>
+      <div className="text-right font-semibold text-gray-900">{v}</div>
+    </div>
+  );
+}
+
+function toneForPaymentStatus(ps: string) {
+  const s = String(ps || "").toUpperCase();
+  if (s === "PAID") return "green";
+  if (s === "FAILED") return "red";
+  return "amber";
+}
+
+function toneForOrderStatus(st: string) {
+  const s = String(st || "").toUpperCase();
+  if (s === "DELIVERED") return "green";
+  if (s === "CANCELLED") return "red";
+  if (s === "SHIPPED") return "blue";
+  if (s === "CONFIRMED") return "indigo";
+  return "gray";
+}
+
+function hasShiprocketShipment(o: any) {
+  return Array.isArray(o?.shipments) && o.shipments.some((s: any) => s?.provider === "SHIPROCKET");
+}
+
+function shiprocketShipments(o: any) {
+  const list = Array.isArray(o?.shipments) ? o.shipments.filter((s: any) => s?.provider === "SHIPROCKET") : [];
+  return [...list].sort((a: any, b: any) => {
+    const ta = a?.createdAt ? new Date(a.createdAt).getTime() : 0;
+    const tb = b?.createdAt ? new Date(b.createdAt).getTime() : 0;
+    return tb - ta;
+  });
+}
+
+/* --------- Return meta for table Alerts (critical UX) --------- */
+
+function getReturnMeta(order: any) {
+  const subs = normalizeSubOrders(order);
+
+  if (subs.length === 1) {
+    subs[0].return = subs[0].return || order?.return || null;
+    subs[0].refund = subs[0].refund || order?.refund || null;
+  }
+
+  const returns = subs
+    .map((so: any) => ({
+      soldBy: so?.soldBy,
+      status: String(so?.return?.status || "").toUpperCase(),
+      refundStatus: String(so?.refund?.status || "").toUpperCase(),
+    }))
+    .filter((x: any) => x.status);
+
+  const hasAnyReturn = returns.length > 0;
+  const requestedCount = returns.filter((r: any) => r.status === "REQUESTED").length;
+  const approvedCount = returns.filter((r: any) => r.status === "APPROVED").length;
+  const receivedCount = returns.filter((r: any) => r.status === "RECEIVED").length;
+  const refundedCount = returns.filter((r: any) => r.status === "REFUNDED").length;
+
+  const refundPendingCount = returns.filter(
+    (r: any) => ["APPROVED", "RECEIVED"].includes(r.status) && r.refundStatus !== "PROCESSED"
+  ).length;
+
+  const mostCritical =
+    requestedCount > 0
+      ? "REQUESTED"
+      : refundPendingCount > 0
+        ? "REFUND_PENDING"
+        : hasAnyReturn
+          ? "RETURN_EXISTS"
+          : "";
+
+  return {
+    hasAnyReturn,
+    requestedCount,
+    approvedCount,
+    receivedCount,
+    refundedCount,
+    refundPendingCount,
+    mostCritical,
+    returns,
+  };
+}
+
+/* ------------------ Page ------------------ */
 
 export default function AdminOrdersPage() {
   const [loading, setLoading] = useState(true);
@@ -192,6 +378,8 @@ export default function AdminOrdersPage() {
   const [status, setStatus] = useState<string>("");
   const [paymentMethod, setPaymentMethod] = useState<string>("");
   const [paymentStatus, setPaymentStatus] = useState<string>("");
+
+  const [attentionOnly, setAttentionOnly] = useState(false);
 
   const [page, setPage] = useState(1);
   const limit = 20;
@@ -204,8 +392,23 @@ export default function AdminOrdersPage() {
     totalPages: 1,
   });
 
-  const items = data?.items || [];
+  const rawItems = data?.items || [];
   const totalPages = Number(data?.totalPages || 1);
+
+  // Drawer state
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState<"items" | "shipments" | "returns" | "payment" | "customer">("items");
+  const [selectedOrder, setSelectedOrder] = useState<any>(null);
+
+  const openOrder = (o: any, tab: typeof activeTab = "items") => {
+    setSelectedOrder(o);
+    setActiveTab(tab);
+    setDrawerOpen(true);
+  };
+  const closeOrder = () => {
+    setDrawerOpen(false);
+    setSelectedOrder(null);
+  };
 
   const load = async (nextPage = 1) => {
     try {
@@ -249,6 +452,7 @@ export default function AdminOrdersPage() {
       ...prev,
       items: (prev.items || []).map((o: any) => (String(o._id) === String(orderId) ? next : o)),
     }));
+    setSelectedOrder((prev: any) => (prev && String(prev._id) === String(orderId) ? next : prev));
   };
 
   const onChangeStatus = async (orderId: string, nextStatus: string) => {
@@ -294,7 +498,6 @@ export default function AdminOrdersPage() {
 
       patchLocalOrder(orderId, { status: "SHIPPED" });
 
-      // ✅ your backend should create shipments for all subOrders if split
       const updated = await adminCreateShiprocketShipment(orderId);
       replaceLocalOrder(orderId, updated);
     } catch (e: any) {
@@ -305,7 +508,6 @@ export default function AdminOrdersPage() {
     }
   };
 
-  // ✅ Return Actions (still orderId-based; later we can add subOrderId param)
   const onApproveReturn = async (orderId: string) => {
     try {
       setBusyId(orderId);
@@ -361,35 +563,33 @@ export default function AdminOrdersPage() {
     }
   };
 
+  const items = useMemo(() => {
+    if (!attentionOnly) return rawItems;
+
+    return rawItems.filter((o: any) => {
+      const pm = String(o?.paymentMethod || "COD").toUpperCase();
+      const st = String(o?.status || "PLACED").toUpperCase();
+      const cod = o?.cod || null;
+      const codConfirmedAt = cod?.confirmedAt || null;
+      const codIsConfirmed =
+        pm === "COD" && (Boolean(codConfirmedAt) || ["CONFIRMED", "SHIPPED", "DELIVERED"].includes(st));
+
+      const rm = getReturnMeta(o);
+      const needsAttention = rm.mostCritical === "REQUESTED" || rm.mostCritical === "REFUND_PENDING";
+      const codAttention = pm === "COD" && !codIsConfirmed;
+
+      return needsAttention || codAttention;
+    });
+  }, [rawItems, attentionOnly]);
+
   const summaryText = useMemo(() => {
     const total = Number(data?.total || 0);
-    return `${total} order(s)`;
-  }, [data?.total]);
+    const shown = items.length;
+    return attentionOnly ? `Showing ${shown} of ${total} (Attention only)` : `${total} order(s)`;
+  }, [data?.total, items.length, attentionOnly]);
 
-  const hasShiprocketShipment = (o: any) =>
-    Array.isArray(o?.shipments) && o.shipments.some((s: any) => s?.provider === "SHIPROCKET");
-
-  const shiprocketShipments = (o: any) => {
-    const list = Array.isArray(o?.shipments) ? o.shipments.filter((s: any) => s?.provider === "SHIPROCKET") : [];
-    // latest first
-    return [...list].sort((a: any, b: any) => {
-      const ta = a?.createdAt ? new Date(a.createdAt).getTime() : 0;
-      const tb = b?.createdAt ? new Date(b.createdAt).getTime() : 0;
-      return tb - ta;
-    });
-  };
-
-  // ✅ small renderer for "return cell" per subOrder (currently same functions)
-  const ReturnBlock = ({
-    orderId,
-    sub,
-    isBusy,
-  }: {
-    orderId: string;
-    sub: any;
-    isBusy: boolean;
-  }) => {
-    // try sub.return, else fallback to order-level return when only one sub
+  // ✅ Return block (drawer only)
+  const ReturnBlock = ({ orderId, sub, isBusy }: { orderId: string; sub: any; isBusy: boolean }) => {
     const ret = sub?.return || null;
     const retStatus = String(ret?.status || "").toUpperCase();
     const refund = sub?.refund || null;
@@ -403,37 +603,38 @@ export default function AdminOrdersPage() {
     const bank = ret?.bankDetails || null;
     const imgs = Array.isArray(ret?.images) ? ret.images : [];
 
-    if (!retStatus) return <div className="text-[11px] text-gray-500">—</div>;
+    if (!retStatus) return <div className="text-[12px] text-gray-500">No return request.</div>;
 
     return (
-      <div className="space-y-2">
-        <div className="text-[12px] font-semibold text-gray-900">
-          <span className="font-mono">{retStatus}</span>
+      <div className="space-y-3">
+        <div className="flex items-center gap-2">
+          <Badge tone={retStatus === "REQUESTED" ? "amber" : retStatus === "REJECTED" ? "red" : "indigo"}>
+            {retStatus}
+          </Badge>
+          {ret?.requestedAt ? (
+            <span className="text-[12px] text-gray-600">Requested: {fmtDateTime(ret.requestedAt)}</span>
+          ) : null}
         </div>
 
-        {ret?.requestedAt ? (
-          <div className="text-[11px] text-gray-600">Requested: {fmtDateTime(ret.requestedAt)}</div>
-        ) : null}
-
         {ret?.reason ? (
-          <div className="text-[11px] text-gray-600">
-            Reason: <span className="font-semibold text-gray-800">{String(ret.reason)}</span>
+          <div className="text-[12px] text-gray-700">
+            Reason: <span className="font-semibold text-gray-900">{String(ret.reason)}</span>
           </div>
         ) : null}
 
         {ret?.note ? (
-          <div className="text-[11px] text-gray-600">
-            Note: <span className="font-semibold text-gray-800">{String(ret.note)}</span>
+          <div className="text-[12px] text-gray-700">
+            Note: <span className="font-semibold text-gray-900">{String(ret.note)}</span>
           </div>
         ) : null}
 
         {retStatus === "REJECTED" && ret?.rejectReason ? (
-          <div className="text-[11px] text-red-700">Reject: {String(ret.rejectReason)}</div>
+          <div className="text-[12px] text-red-700">Reject: {String(ret.rejectReason)}</div>
         ) : null}
 
         {bank ? (
-          <div className="border p-2 text-[11px] text-gray-700">
-            <div className="font-semibold text-gray-900 mb-1">Bank (COD)</div>
+          <div className="rounded-2xl border bg-gray-50 p-3 text-[12px] text-gray-700">
+            <div className="font-extrabold text-gray-900 mb-2">Bank details (COD)</div>
             <div>
               <span className="font-semibold">Holder:</span> {bank?.accountHolderName || "—"}
             </div>
@@ -458,9 +659,9 @@ export default function AdminOrdersPage() {
 
         {imgs.length ? (
           <div>
-            <div className="text-[11px] font-semibold text-gray-700 mb-1">Images</div>
+            <div className="text-[12px] font-semibold text-gray-700 mb-2">Images</div>
             <div className="flex flex-wrap gap-2">
-              {imgs.slice(0, 5).map((p: string, i: number) => {
+              {imgs.slice(0, 10).map((p: string, i: number) => {
                 const src = resolveImageUrl(p);
                 return (
                   <a
@@ -468,7 +669,7 @@ export default function AdminOrdersPage() {
                     href={src || "#"}
                     target="_blank"
                     rel="noreferrer"
-                    className="h-10 w-10 border bg-gray-50 overflow-hidden"
+                    className="h-14 w-14 overflow-hidden rounded-xl border bg-white"
                     title="Open"
                   >
                     {src ? <img src={src} alt={`ret-${i}`} className="h-full w-full object-cover" /> : null}
@@ -481,26 +682,17 @@ export default function AdminOrdersPage() {
 
         {canApproveReject ? (
           <div className="flex gap-2">
-            <button
-              disabled={isBusy}
-              onClick={() => onApproveReturn(orderId)}
-              className="h-9 rounded-xl bg-emerald-600 px-3 text-[12px] font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
-            >
+            <IconButton disabled={isBusy} onClick={() => onApproveReturn(orderId)} tone="primary">
               {isBusy ? "..." : "Approve"}
-            </button>
-
-            <button
-              disabled={isBusy}
-              onClick={() => onRejectReturn(orderId)}
-              className="h-9 rounded-xl bg-red-600 px-3 text-[12px] font-semibold text-white hover:bg-red-700 disabled:opacity-60"
-            >
+            </IconButton>
+            <IconButton disabled={isBusy} onClick={() => onRejectReturn(orderId)} tone="danger">
               {isBusy ? "..." : "Reject"}
-            </button>
+            </IconButton>
           </div>
         ) : null}
 
         {refund ? (
-          <div className="text-[11px] text-gray-700">
+          <div className="text-[12px] text-gray-700">
             Refund: <span className="font-semibold">{refundStatus || "—"}</span>
             {refund?.amount ? <span className="text-gray-500"> • {money(refund.amount)}</span> : null}
             {refund?.processedAt ? <span className="text-gray-500"> • {fmtDateTime(refund.processedAt)}</span> : null}
@@ -508,17 +700,13 @@ export default function AdminOrdersPage() {
         ) : null}
 
         {canRefund ? (
-          <button
-            disabled={refundButtonDisabled}
-            onClick={() => onProcessRefund(orderId)}
-            className="h-9 rounded-xl bg-gray-900 px-3 text-[12px] font-semibold text-white hover:bg-black disabled:opacity-60"
-          >
+          <IconButton disabled={refundButtonDisabled} onClick={() => onProcessRefund(orderId)} tone="primary">
             {isBusy ? "Processing…" : refundProcessed ? "Refund Done" : "Process Refund"}
-          </button>
+          </IconButton>
         ) : null}
 
         {retStatus === "REFUNDED" ? (
-          <div className="text-[11px] font-semibold text-emerald-700">Refund Completed</div>
+          <div className="text-[12px] font-semibold text-emerald-700">Refund Completed</div>
         ) : null}
       </div>
     );
@@ -526,27 +714,34 @@ export default function AdminOrdersPage() {
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-10">
+      {/* Header */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900">Admin · Orders</h1>
+          <h1 className="text-2xl font-extrabold text-gray-900">Admin · Orders</h1>
           <p className="text-sm text-gray-600">{summaryText}</p>
         </div>
 
         <div className="flex gap-2">
-          <Link href="/admin" className="rounded-xl border px-4 py-2 text-sm font-semibold hover:bg-gray-50">
+          <Link href="/admin" className="rounded-xl border bg-white px-4 py-2 text-sm font-semibold hover:bg-gray-50">
             Admin Home
           </Link>
+          <button
+            onClick={() => load(page)}
+            className="rounded-xl border bg-white px-4 py-2 text-sm font-semibold hover:bg-gray-50"
+          >
+            Refresh
+          </button>
         </div>
       </div>
 
       {/* Filters */}
-      <div className="mt-6 rounded-3xl border bg-white p-4">
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-5">
+      <div className="mt-6 rounded-3xl border bg-white p-4 shadow-sm">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-7">
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="Search order code / name / phone / RZP id"
-            className="h-11 rounded-2xl border px-4 text-sm outline-none focus:border-gray-400"
+            placeholder="Search: order code / name / phone / RZP id"
+            className="h-11 rounded-2xl border px-4 text-sm outline-none focus:border-gray-400 sm:col-span-2"
           />
 
           <select
@@ -585,6 +780,16 @@ export default function AdminOrdersPage() {
             ))}
           </select>
 
+          <label className="flex h-11 items-center gap-2 rounded-2xl border bg-white px-3 text-sm">
+            <input
+              type="checkbox"
+              checked={attentionOnly}
+              onChange={(e) => setAttentionOnly(e.target.checked)}
+              className="h-4 w-4"
+            />
+            <span className="font-semibold text-gray-800">Attention only</span>
+          </label>
+
           <button
             type="button"
             onClick={onApplyFilters}
@@ -600,8 +805,8 @@ export default function AdminOrdersPage() {
       ) : null}
 
       {/* Table */}
-      <div className="mt-6 rounded-3xl border bg-white overflow-hidden">
-        <div className="border-b bg-gray-50 px-5 py-3 text-sm font-semibold text-gray-900">Orders</div>
+      <div className="mt-6 overflow-hidden rounded-3xl border bg-white shadow-sm">
+        <div className="border-b bg-gray-50 px-5 py-3 text-sm font-extrabold text-gray-900">Orders</div>
 
         {loading ? (
           <div className="p-5 space-y-3">
@@ -611,30 +816,18 @@ export default function AdminOrdersPage() {
           </div>
         ) : items.length ? (
           <div className="overflow-x-auto">
-            {/* ✅ width increased due to 2 return columns */}
-            <table className="min-w-[2000px] w-full text-sm">
-              <thead className="bg-white">
+            <table className="min-w-[1450px] w-full text-sm">
+              <thead className="bg-white sticky top-0 z-10">
                 <tr className="border-b text-left text-xs font-bold text-gray-600">
                   <th className="px-5 py-3">Order</th>
                   <th className="px-5 py-3">Customer</th>
-
-                  {/* ✅ now grouped by subOrders inside same row */}
-                  <th className="px-5 py-3">Items (Sold By)</th>
-
-                  {/* ✅ overall + per-sub totals */}
-                  <th className="px-5 py-3">Payable (Split)</th>
-
-                  <th className="px-5 py-3">Payment Details</th>
-
-                  {/* ✅ list shipments (multiple) but button is single */}
-                  <th className="px-5 py-3">Shipment(s)</th>
-
-                  {/* ✅ requested: 2 columns for return blocks (use same functions) */}
-                  <th className="px-5 py-3">Return 1</th>
-                  <th className="px-5 py-3">Return 2</th>
-
+                  <th className="px-5 py-3">Summary</th>
+                  <th className="px-5 py-3">Payable</th>
+                  <th className="px-5 py-3">Payment</th>
+                  <th className="px-5 py-3">Alerts</th>
                   <th className="px-5 py-3">Status</th>
                   <th className="px-5 py-3">Created</th>
+                  <th className="px-5 py-3 text-right">Actions</th>
                 </tr>
               </thead>
 
@@ -653,11 +846,9 @@ export default function AdminOrdersPage() {
                   const st = String(o?.status || "PLACED").toUpperCase();
 
                   const pg = o?.pg || {};
-                  const rzpOrderId = pg?.orderId || "";
                   const rzpPaymentId = pg?.paymentId || "";
                   const rzpAmountPaise = pg?.amount;
                   const rzpCurrency = pg?.currency || "INR";
-                  const verifiedAt = pg?.verifiedAt || null;
 
                   const cod = o?.cod || null;
                   const codConfirmedAt = cod?.confirmedAt || null;
@@ -672,275 +863,177 @@ export default function AdminOrdersPage() {
                   const isCodPlaced = pm === "COD" && st === "PLACED";
                   const blockShipUntilConfirm = pm === "COD" && !codIsConfirmed;
 
-                  // ✅ subOrders grouped view
                   const subOrders = normalizeSubOrders(o);
-                  const isSplit = subOrders.length > 1;
+                  const vendorsCount = subOrders.length;
+                  const itemsCount = subOrders.reduce(
+                    (sum: number, so: any) => sum + (Array.isArray(so?.items) ? so.items.length : 0),
+                    0
+                  );
 
-                  // ✅ shipment list
-                  const srList = shiprocketShipments(o);
+                  // returns + row attention
+                  const returnMeta = getReturnMeta(o);
+                  const rowAttention =
+                    returnMeta.mostCritical === "REQUESTED" ||
+                    returnMeta.mostCritical === "REFUND_PENDING" ||
+                    (pm === "COD" && !codIsConfirmed);
+
+                  // shipments
                   const shipmentExists = hasShiprocketShipment(o);
-
                   const canCreateShipment =
                     st === "CONFIRMED" &&
                     !shipmentExists &&
                     !(pm === "COD" && !codIsConfirmed) &&
                     !(pm === "ONLINE" && ps !== "PAID");
 
-                  // ✅ Return columns mapping (first 2 suborders)
-                  const so1 = subOrders[0] || null;
-                  const so2 = subOrders[1] || null;
-
-                  // ✅ make sure legacy uses order-level return/refund
-                  if (subOrders.length === 1) {
-                    subOrders[0].return = subOrders[0].return || o?.return || null;
-                    subOrders[0].refund = subOrders[0].refund || o?.refund || null;
-                  }
-
                   return (
-                    <tr key={orderId} className="border-b last:border-b-0 align-top">
+                    <tr
+                      key={orderId}
+                      className={
+                        "border-b last:border-b-0 hover:bg-gray-50/60 " +
+                        (rowAttention ? "bg-amber-50/50" : "")
+                      }
+                    >
+                      {/* Order */}
                       <td className="px-5 py-3">
-                        <div className="font-semibold text-gray-900">{orderCode}</div>
-                        <div className="text-[11px] text-gray-500">Internal: {orderId.slice(-8)}</div>
-                        {isSplit ? (
-                          <div className="mt-1 text-[11px] font-semibold text-indigo-700">
-                            Split: {subOrders.length} sub-orders
-                          </div>
-                        ) : null}
+                        <div className={"relative " + (rowAttention ? "pl-3" : "")}>
+                          {rowAttention ? (
+                            <span className="absolute left-0 top-1 h-10 w-1 rounded-full bg-amber-500" />
+                          ) : null}
+                          <div className="font-bold text-gray-900">{orderCode}</div>
+                          <div className="text-[11px] text-gray-500">ID: {orderId.slice(-8)}</div>
+                          {vendorsCount > 1 ? (
+                            <div className="mt-2">
+                              <Badge tone="indigo">Split: {vendorsCount} vendors</Badge>
+                            </div>
+                          ) : null}
+                        </div>
                       </td>
 
+                      {/* Customer */}
                       <td className="px-5 py-3">
                         <div className="font-semibold text-gray-900">{customerName}</div>
                         <div className="text-[11px] text-gray-500">{phone}</div>
                       </td>
 
-                      {/* ✅ Items grouped per subOrder + Sold By */}
+                      {/* Summary */}
                       <td className="px-5 py-3">
-                        <div className="space-y-3">
-                          {subOrders.map((so: any, soIdx: number) => {
-                            const itemsArr = Array.isArray(so?.items) ? so.items : [];
-                            const show = itemsArr.slice(0, 2);
-                            return (
-                              <div key={so._id || soIdx} className="border rounded-xl p-3">
-                                <div className="flex items-center justify-between gap-2">
-                                  <div className="text-[12px] font-extrabold text-gray-900">
-                                    Sold by: {so.soldBy}
-                                    {so.vendorName ? (
-                                      <span className="ml-1 text-[11px] font-semibold text-gray-500">
-                                        ({so.vendorName})
-                                      </span>
-                                    ) : null}
-                                  </div>
-                                  <div className="text-[11px] font-semibold text-gray-600">
-                                    Total: {money(pickSubOrderTotal(o, so))}
-                                  </div>
-                                </div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <Badge tone="blue">{itemsCount} item(s)</Badge>
+                          <Badge tone={shipmentExists ? "green" : "gray"}>
+                            {shipmentExists ? "Shipment: Yes" : "Shipment: No"}
+                          </Badge>
+                          {vendorsCount > 1 ? <Badge tone="indigo">{vendorsCount} vendors</Badge> : <Badge tone="gray">Single vendor</Badge>}
+                        </div>
+                        <div className="mt-2 flex flex-wrap gap-3">
+                          <button
+                            type="button"
+                            onClick={() => openOrder(o, "items")}
+                            className="text-[12px] font-semibold text-blue-700 hover:underline"
+                          >
+                            View details
+                          </button>
 
-                                <div className="space-y-2">
-                                  {(o.items || []).slice(0, 2).map((it: any, idx: number) => {
-                                    const vText = getVariantTextFromItem(it);
-                                    const colorText = it?.colorKey ? String(it.colorKey) : "";
-
-                                    return (
-                                      <div key={idx} className="text-[12px] text-gray-800">
-                                        <div className="font-semibold">{it.title}</div>
-
-                                        {it.productCode ? (
-                                          <div className="mt-0.5 text-[11px] font-semibold text-gray-500">
-                                            Code: {it.productCode}
-                                          </div>
-                                        ) : null}
-
-                                        <div className="mt-1 text-xs text-gray-500">
-                                          {vText ? `Variant: ${vText}` : ""}
-                                          {colorText ? `${vText ? " • " : ""}Color: ${colorText}` : ""}
-                                          {(vText || colorText) ? " • " : ""}Qty: {it.qty}
-                                        </div>
-                                      </div>
-                                    );
-                                  })}
-
-                                  {(o.items || []).length > 2 ? (
-                                    <div className="text-[11px] text-gray-500">
-                                      +{o.items.length - 2} more item(s)
-                                    </div>
-                                  ) : null}
-                                </div>
-                              </div>
-                            );
-                          })}
+                          {returnMeta.hasAnyReturn ? (
+                            <button
+                              type="button"
+                              onClick={() => openOrder(o, "returns")}
+                              className={
+                                "text-[12px] font-semibold hover:underline " +
+                                (returnMeta.mostCritical === "REQUESTED" || returnMeta.mostCritical === "REFUND_PENDING"
+                                  ? "text-red-700"
+                                  : "text-amber-700")
+                              }
+                            >
+                              {returnMeta.mostCritical === "REQUESTED"
+                                ? "Action return"
+                                : returnMeta.mostCritical === "REFUND_PENDING"
+                                  ? "Refund pending"
+                                  : "View returns"}
+                            </button>
+                          ) : null}
                         </div>
                       </td>
 
-                      {/* ✅ Payable overall + per-sub split */}
+                      {/* Payable */}
                       <td className="px-5 py-3">
-                        <div className="font-semibold text-gray-900">{money(payable)}</div>
+                        <div className="text-base font-bold text-gray-900">{money(payable)}</div>
                         {o?.totals?.discount ? (
-                          <div className="text-[11px] text-emerald-700 font-semibold">
+                          <div className="mt-1 text-[11px] font-semibold text-emerald-700">
                             Discount: -{money(o.totals.discount)}
                           </div>
                         ) : null}
+                      </td>
 
-                        {isSplit ? (
-                          <div className="mt-2 space-y-1 text-[11px] text-gray-700">
-                            <div className="font-semibold text-gray-900">Split totals</div>
-                            {subOrders.map((so: any, idx: number) => (
-                              <div key={so._id || idx} className="flex items-center justify-between gap-2">
-                                <span className="truncate max-w-[220px]">• {so.soldBy}</span>
-                                <span className="font-semibold">{money(pickSubOrderTotal(o, so))}</span>
-                              </div>
-                            ))}
-                          </div>
+                      {/* Payment */}
+                      <td className="px-5 py-3">
+                        <div className="flex items-center gap-2">
+                          <Badge tone="gray">{pm}</Badge>
+                          <Badge tone={toneForPaymentStatus(ps) as any}>{ps}</Badge>
+                        </div>
+                        <div className="mt-2 text-[11px] text-gray-600">
+                          {pm === "ONLINE" ? (
+                            <>
+                              {rzpPaymentId ? "RZP captured" : "RZP pending"}{" "}
+                              {rzpAmountPaise ? `• ${moneyPaise(rzpAmountPaise)} ${rzpCurrency}` : ""}
+                            </>
+                          ) : (
+                            <>
+                              {codIsConfirmed ? "COD confirmed" : "COD not confirmed"}
+                              {codConfirmedAt ? ` • ${fmtDateTime(codConfirmedAt)}` : ""}
+                            </>
+                          )}
+                        </div>
+
+                        {isCodPlaced ? (
+                          <button
+                            type="button"
+                            disabled={isBusy}
+                            onClick={() => onConfirmCod(orderId)}
+                            className="mt-3 inline-flex h-9 items-center justify-center rounded-xl bg-emerald-600 px-3 text-[12px] font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+                          >
+                            {isBusy ? "Confirming…" : "Confirm COD"}
+                          </button>
                         ) : null}
                       </td>
 
-                      {/* Payment Details */}
+                      {/* Alerts (THIS FIXES YOUR PROBLEM) */}
                       <td className="px-5 py-3">
-                        <div className="text-gray-900 font-semibold">
-                          {pm} <span className="text-gray-500 font-normal">({ps})</span>
+                        <div className="flex flex-wrap gap-2">
+                          {returnMeta.requestedCount > 0 ? (
+                            <Badge tone="amber">Return Requested ({returnMeta.requestedCount})</Badge>
+                          ) : null}
+
+                          {returnMeta.refundPendingCount > 0 ? (
+                            <Badge tone="red">Refund Pending ({returnMeta.refundPendingCount})</Badge>
+                          ) : null}
+
+                          {pm === "COD" && !codIsConfirmed ? <Badge tone="amber">COD Not Confirmed</Badge> : null}
+
+                          {returnMeta.requestedCount === 0 &&
+                          returnMeta.refundPendingCount === 0 &&
+                          !(pm === "COD" && !codIsConfirmed) ? (
+                            <span className="text-[12px] text-gray-500">—</span>
+                          ) : null}
+                        </div>
+                      </td>
+
+                      {/* Status */}
+                      <td className="px-5 py-3">
+                        <div className="mb-2">
+                          <Badge tone={toneForOrderStatus(st) as any}>{st}</Badge>
                         </div>
 
-                        {pm === "ONLINE" ? (
-                          <div className="mt-1 space-y-1 text-[11px] text-gray-600">
-                            <div>
-                              <span className="font-semibold text-gray-700">RZP Order:</span>{" "}
-                              <span className="font-mono">{rzpOrderId || "—"}</span>
-                            </div>
-                            <div>
-                              <span className="font-semibold text-gray-700">RZP Payment:</span>{" "}
-                              <span className="font-mono">{rzpPaymentId || "—"}</span>
-                            </div>
-                            <div>
-                              <span className="font-semibold text-gray-700">Amount:</span>{" "}
-                              {rzpAmountPaise ? `${moneyPaise(rzpAmountPaise)} ${rzpCurrency}` : "—"}
-                            </div>
-                            <div>
-                              <span className="font-semibold text-gray-700">Verified:</span>{" "}
-                              {verifiedAt ? fmtDateTime(verifiedAt) : "—"}
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="mt-1 space-y-1 text-[11px] text-gray-600">
-                            <div>
-                              <span className="font-semibold text-gray-700">COD:</span>{" "}
-                              {codIsConfirmed ? (
-                                <>Confirmed{codConfirmedAt ? ` (${fmtDateTime(codConfirmedAt)})` : ""}</>
-                              ) : (
-                                "Not confirmed"
-                              )}
-                            </div>
-
-                            {isCodPlaced ? (
-                              <button
-                                type="button"
-                                disabled={isBusy}
-                                onClick={() => onConfirmCod(orderId)}
-                                className="mt-2 inline-flex h-9 items-center justify-center rounded-xl bg-emerald-600 px-3 text-[12px] font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
-                              >
-                                {isBusy ? "Confirming…" : "Confirm COD"}
-                              </button>
-                            ) : null}
-                          </div>
-                        )}
-                      </td>
-
-                      {/* ✅ Shipment(s): list multiple shipments; button is single */}
-                      <td className="px-5 py-3">
-                        {shipmentExists ? (
-                          <div className="space-y-2">
-                            {srList.slice(0, 4).map((sr: any, idx: number) => {
-                              const srAwb = sr?.shiprocket?.awb || "";
-                              const srShipmentId = sr?.shiprocket?.shipmentId ?? null;
-                              const srOrderId2 = sr?.shiprocket?.orderId || "";
-                              return (
-                                <div key={idx} className="border rounded-xl p-3 text-[11px] text-gray-700">
-                                  <div className="font-semibold text-gray-900 mb-1">SHIPROCKET</div>
-                                  <div>
-                                    <span className="font-semibold">Shipment ID:</span>{" "}
-                                    <span className="font-mono">{srShipmentId ?? "—"}</span>
-                                  </div>
-                                  <div>
-                                    <span className="font-semibold">AWB:</span>{" "}
-                                    <span className="font-mono">{srAwb || "—"}</span>
-                                  </div>
-                                  <div>
-                                    <span className="font-semibold">SR Order:</span>{" "}
-                                    <span className="font-mono">{srOrderId2 || "—"}</span>
-                                  </div>
-                                </div>
-                              );
-                            })}
-
-                            {srList.length > 4 ? (
-                              <div className="text-[11px] text-gray-500">+{srList.length - 4} more shipment(s)</div>
-                            ) : null}
-                          </div>
-                        ) : (
-                          <div className="space-y-2">
-                            <div className="text-[11px] text-gray-500">No shipment created</div>
-                            <button
-                              type="button"
-                              disabled={!canCreateShipment || isBusy}
-                              onClick={() => onCreateShipment(orderId)}
-                              className="inline-flex h-9 items-center justify-center rounded-xl bg-blue-600 px-3 text-[12px] font-semibold text-white hover:bg-blue-700 disabled:opacity-60"
-                            >
-                              {isBusy ? "Creating…" : "Create Shipment"}
-                            </button>
-                            {!canCreateShipment ? (
-                              <div className="text-[11px] text-gray-500">
-                                {st !== "CONFIRMED"
-                                  ? "Confirm order first"
-                                  : pm === "ONLINE" && ps !== "PAID"
-                                    ? "Online payment must be PAID"
-                                    : pm === "COD" && !codIsConfirmed
-                                      ? "Confirm COD first"
-                                      : "—"}
-                              </div>
-                            ) : null}
-                          </div>
-                        )}
-                      </td>
-
-                      {/* ✅ Return 1 */}
-                      <td className="px-5 py-3">
-                        {so1 ? (
-                          <div className="border rounded-xl p-3">
-                            <div className="text-[11px] font-extrabold text-gray-900 mb-2">{so1.soldBy}</div>
-                            <ReturnBlock orderId={orderId} sub={so1} isBusy={isBusy} />
-                            {subOrders.length > 2 ? (
-                              <div className="mt-2 text-[11px] text-gray-500">+{subOrders.length - 2} more (not shown)</div>
-                            ) : null}
-                          </div>
-                        ) : (
-                          <div className="text-[11px] text-gray-500">—</div>
-                        )}
-                      </td>
-
-                      {/* ✅ Return 2 */}
-                      <td className="px-5 py-3">
-                        {so2 ? (
-                          <div className="border rounded-xl p-3">
-                            <div className="text-[11px] font-extrabold text-gray-900 mb-2">{so2.soldBy}</div>
-                            <ReturnBlock orderId={orderId} sub={so2} isBusy={isBusy} />
-                          </div>
-                        ) : (
-                          <div className="text-[11px] text-gray-500">—</div>
-                        )}
-                      </td>
-
-                      {/* Status (single, as you wanted) */}
-                      <td className="px-5 py-3">
                         <select
                           value={st}
                           disabled={isBusy || lockedDelivered || lockedCancelled}
                           onChange={(e) => onChangeStatus(orderId, e.target.value)}
-                          className="h-10 rounded-xl border px-3 text-sm outline-none focus:border-gray-400 bg-white disabled:opacity-60"
+                          className="h-10 w-full rounded-xl border px-3 text-sm outline-none focus:border-gray-400 bg-white disabled:opacity-60"
                         >
                           {STATUS_OPTIONS.map((s) => {
                             const disableConfirmed = pm === "COD" && st === "PLACED" && s === "CONFIRMED";
                             const disableShipDeliver = blockShipUntilConfirm && (s === "SHIPPED" || s === "DELIVERED");
-                            const disabled = disableConfirmed || disableShipDeliver;
                             return (
-                              <option key={s} value={s} disabled={disabled}>
+                              <option key={s} value={s} disabled={disableConfirmed || disableShipDeliver}>
                                 {s}
                               </option>
                             );
@@ -954,7 +1047,35 @@ export default function AdminOrdersPage() {
                         {isBusy ? <div className="mt-1 text-[11px] text-gray-500">Updating…</div> : null}
                       </td>
 
+                      {/* Created */}
                       <td className="px-5 py-3 text-gray-700">{created}</td>
+
+                      {/* Actions */}
+                      <td className="px-5 py-3">
+                        <div className="flex justify-end gap-2">
+                          <IconButton onClick={() => openOrder(o, "items")}>View</IconButton>
+
+                          {(returnMeta.mostCritical === "REQUESTED" || returnMeta.mostCritical === "REFUND_PENDING") ? (
+                            <IconButton onClick={() => openOrder(o, "returns")} tone="danger">
+                              Action Return
+                            </IconButton>
+                          ) : returnMeta.hasAnyReturn ? (
+                            <IconButton onClick={() => openOrder(o, "returns")}>Returns</IconButton>
+                          ) : null}
+
+                          {!shipmentExists ? (
+                            <IconButton
+                              disabled={!canCreateShipment || isBusy}
+                              onClick={() => onCreateShipment(orderId)}
+                              tone="primary"
+                            >
+                              {isBusy ? "…" : "Create SR"}
+                            </IconButton>
+                          ) : (
+                            <IconButton onClick={() => openOrder(o, "shipments")}>Shipments</IconButton>
+                          )}
+                        </div>
+                      </td>
                     </tr>
                   );
                 })}
@@ -977,19 +1098,287 @@ export default function AdminOrdersPage() {
           <button
             disabled={loading || page <= 1}
             onClick={() => load(page - 1)}
-            className="rounded-xl border px-4 py-2 text-sm font-semibold hover:bg-gray-50 disabled:opacity-50"
+            className="rounded-xl border bg-white px-4 py-2 text-sm font-semibold hover:bg-gray-50 disabled:opacity-50"
           >
             Prev
           </button>
           <button
             disabled={loading || page >= totalPages}
             onClick={() => load(page + 1)}
-            className="rounded-xl border px-4 py-2 text-sm font-semibold hover:bg-gray-50 disabled:opacity-50"
+            className="rounded-xl border bg-white px-4 py-2 text-sm font-semibold hover:bg-gray-50 disabled:opacity-50"
           >
             Next
           </button>
         </div>
       </div>
+
+      {/* Drawer */}
+      <Drawer
+        open={drawerOpen}
+        onClose={closeOrder}
+        title={selectedOrder?.orderCode || "—"}
+        subtitle={selectedOrder?._id ? `Internal: ${String(selectedOrder._id).slice(-8)}` : undefined}
+      >
+        {selectedOrder ? (
+          <>
+            <Tabs
+              value={activeTab}
+              onChange={(v) => setActiveTab(v as any)}
+              items={[
+                { key: "items", label: "Items" },
+                { key: "shipments", label: "Shipments" },
+                { key: "returns", label: "Returns" },
+                { key: "payment", label: "Payment" },
+                { key: "customer", label: "Customer" },
+              ]}
+            />
+
+            <div className="mt-5 grid grid-cols-1 gap-4 lg:grid-cols-3">
+              {/* Left */}
+              <div className="lg:col-span-2 space-y-4">
+                {activeTab === "items" ? (
+                  <div className="rounded-3xl border bg-white p-4">
+                    <div className="mb-3 text-sm font-extrabold text-gray-900">Items (Vendor-wise)</div>
+
+                    {normalizeSubOrders(selectedOrder).map((so: any, idx: number) => {
+                      const itemsArr = Array.isArray(so?.items) ? so.items : [];
+                      return (
+                        <div key={so._id || idx} className="mb-3 rounded-2xl border p-4">
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="min-w-0">
+                              <div className="truncate font-extrabold text-gray-900">{so.soldBy}</div>
+                              {so.vendorName ? <div className="text-[12px] text-gray-500">{so.vendorName}</div> : null}
+                            </div>
+                            <div className="text-sm font-semibold text-gray-800">
+                              {money(pickSubOrderTotal(selectedOrder, so))}
+                            </div>
+                          </div>
+
+                          <div className="mt-3 space-y-3">
+                            {itemsArr.map((it: any, i: number) => {
+                              const vText = getVariantTextFromItem(it);
+                              const colorText = it?.colorKey ? String(it.colorKey) : "";
+                              return (
+                                <div key={i} className="rounded-2xl bg-gray-50 p-3">
+                                  <div className="font-semibold text-gray-900">{it.title}</div>
+                                  <div className="mt-1 text-[12px] text-gray-600">
+                                    {vText ? `Variant: ${vText}` : null}
+                                    {colorText ? ` • Color: ${colorText}` : null}
+                                    {" • "}Qty: {it.qty}
+                                  </div>
+                                  {it.productCode ? (
+                                    <div className="mt-1 text-[12px] text-gray-500">Code: {it.productCode}</div>
+                                  ) : null}
+                                </div>
+                              );
+                            })}
+                            {!itemsArr.length ? <div className="text-sm text-gray-600">No items for this vendor.</div> : null}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : null}
+
+                {activeTab === "shipments" ? (
+                  <div className="rounded-3xl border bg-white p-4">
+                    <div className="mb-3 text-sm font-extrabold text-gray-900">Shipments</div>
+
+                    {hasShiprocketShipment(selectedOrder) ? (
+                      <div className="space-y-3">
+                        {shiprocketShipments(selectedOrder).map((sr: any, idx: number) => {
+                          const awb = sr?.shiprocket?.awb || "—";
+                          const shipmentId = sr?.shiprocket?.shipmentId ?? "—";
+                          const srOrder = sr?.shiprocket?.orderId || "—";
+                          return (
+                            <div key={idx} className="rounded-2xl border p-4">
+                              <div className="flex items-center justify-between">
+                                <div className="font-extrabold text-gray-900">SHIPROCKET</div>
+                                <Badge tone="green">Created</Badge>
+                              </div>
+                              <div className="mt-3 space-y-2 text-sm">
+                                <StatRow k="Shipment ID" v={<span className="font-mono">{shipmentId}</span>} />
+                                <StatRow k="AWB" v={<span className="font-mono">{awb}</span>} />
+                                <StatRow k="SR Order" v={<span className="font-mono">{srOrder}</span>} />
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="rounded-2xl bg-gray-50 p-4">
+                        <div className="text-sm text-gray-700">No shipment created.</div>
+                      </div>
+                    )}
+                  </div>
+                ) : null}
+
+                {activeTab === "returns" ? (
+                  <div className="rounded-3xl border bg-white p-4">
+                    <div className="mb-3 text-sm font-extrabold text-gray-900">Returns (Vendor-wise)</div>
+
+                    {(() => {
+                      const subs = normalizeSubOrders(selectedOrder);
+                      if (subs.length === 1) {
+                        subs[0].return = subs[0].return || selectedOrder?.return || null;
+                        subs[0].refund = subs[0].refund || selectedOrder?.refund || null;
+                      }
+
+                      const any = subs.some((s: any) => s?.return);
+                      if (!any) return <div className="text-sm text-gray-600">No return requests.</div>;
+
+                      const isBusy = busyId === String(selectedOrder._id);
+
+                      return (
+                        <div className="space-y-3">
+                          {subs.map((so: any, idx: number) => (
+                            <div key={so._id || idx} className="rounded-2xl border p-4">
+                              <div className="mb-2 flex items-center justify-between">
+                                <div className="font-extrabold text-gray-900">{so.soldBy}</div>
+                                <Badge tone="amber">{String(so?.return?.status || "—").toUpperCase()}</Badge>
+                              </div>
+                              <ReturnBlock orderId={String(selectedOrder._id)} sub={so} isBusy={isBusy} />
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                ) : null}
+
+                {activeTab === "payment" ? (
+                  <div className="rounded-3xl border bg-white p-4">
+                    <div className="mb-3 text-sm font-extrabold text-gray-900">Payment</div>
+
+                    {(() => {
+                      const pm = String(selectedOrder?.paymentMethod || "COD").toUpperCase();
+                      const ps = String(selectedOrder?.paymentStatus || "PENDING").toUpperCase();
+                      const pg = selectedOrder?.pg || {};
+                      const rzpOrderId = pg?.orderId || "";
+                      const rzpPaymentId = pg?.paymentId || "";
+                      const rzpAmountPaise = pg?.amount;
+                      const rzpCurrency = pg?.currency || "INR";
+                      const verifiedAt = pg?.verifiedAt || null;
+
+                      const cod = selectedOrder?.cod || null;
+                      const codConfirmedAt = cod?.confirmedAt || null;
+
+                      return (
+                        <div className="space-y-2 text-sm">
+                          <StatRow k="Method" v={pm} />
+                          <StatRow k="Status" v={<Badge tone={toneForPaymentStatus(ps) as any}>{ps}</Badge>} />
+                          <StatRow
+                            k="Payable"
+                            v={money(selectedOrder?.totals?.grandTotal ?? selectedOrder?.totalAmount ?? 0)}
+                          />
+
+                          {pm === "ONLINE" ? (
+                            <>
+                              <StatRow k="RZP Order" v={<span className="font-mono">{rzpOrderId || "—"}</span>} />
+                              <StatRow k="RZP Payment" v={<span className="font-mono">{rzpPaymentId || "—"}</span>} />
+                              <StatRow
+                                k="Amount"
+                                v={rzpAmountPaise ? `${moneyPaise(rzpAmountPaise)} ${rzpCurrency}` : "—"}
+                              />
+                              <StatRow k="Verified" v={verifiedAt ? fmtDateTime(verifiedAt) : "—"} />
+                            </>
+                          ) : (
+                            <StatRow
+                              k="COD"
+                              v={codConfirmedAt ? `Confirmed (${fmtDateTime(codConfirmedAt)})` : "Not confirmed"}
+                            />
+                          )}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                ) : null}
+
+                {activeTab === "customer" ? (
+                  <div className="rounded-3xl border bg-white p-4">
+                    <div className="mb-3 text-sm font-extrabold text-gray-900">Customer</div>
+                    <div className="space-y-2 text-sm">
+                      <StatRow k="Name" v={selectedOrder?.contact?.name || "—"} />
+                      <StatRow k="Phone" v={selectedOrder?.contact?.phone || "—"} />
+                      <StatRow k="Email" v={selectedOrder?.contact?.email || "—"} />
+                      <StatRow
+                        k="Address"
+                        v={selectedOrder?.address?.fullAddress || selectedOrder?.address?.address || "—"}
+                      />
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+
+              {/* Right */}
+              <div className="space-y-4">
+                <div className="rounded-3xl border bg-white p-4">
+                  <div className="mb-2 text-sm font-extrabold text-gray-900">Quick Summary</div>
+                  <div className="space-y-2 text-sm">
+                    <StatRow k="Order" v={selectedOrder?.orderCode || "—"} />
+                    <StatRow
+                      k="Status"
+                      v={
+                        <Badge tone={toneForOrderStatus(selectedOrder?.status) as any}>
+                          {String(selectedOrder?.status || "—").toUpperCase()}
+                        </Badge>
+                      }
+                    />
+                    <StatRow k="Created" v={fmtDateTime(selectedOrder?.createdAt)} />
+                    <StatRow k="Payable" v={money(selectedOrder?.totals?.grandTotal ?? selectedOrder?.totalAmount ?? 0)} />
+                  </div>
+                </div>
+
+                <div className="rounded-3xl border bg-white p-4">
+                  <div className="mb-2 text-sm font-extrabold text-gray-900">Actions</div>
+
+                  {(() => {
+                    const orderId = String(selectedOrder._id);
+                    const pm = String(selectedOrder?.paymentMethod || "COD").toUpperCase();
+                    const st = String(selectedOrder?.status || "PLACED").toUpperCase();
+                    const isBusy = busyId === orderId;
+                    const shipmentExists = hasShiprocketShipment(selectedOrder);
+
+                    const cod = selectedOrder?.cod || null;
+                    const codConfirmedAt = cod?.confirmedAt || null;
+                    const codIsConfirmed =
+                      pm === "COD" && (Boolean(codConfirmedAt) || ["CONFIRMED", "SHIPPED", "DELIVERED"].includes(st));
+
+                    const ps = String(selectedOrder?.paymentStatus || "PENDING").toUpperCase();
+                    const canCreateShipment =
+                      st === "CONFIRMED" &&
+                      !shipmentExists &&
+                      !(pm === "COD" && !codIsConfirmed) &&
+                      !(pm === "ONLINE" && ps !== "PAID");
+
+                    const isCodPlaced = pm === "COD" && st === "PLACED";
+
+                    return (
+                      <div className="flex flex-wrap gap-2">
+                        <IconButton onClick={() => setActiveTab("items")}>Items</IconButton>
+                        <IconButton onClick={() => setActiveTab("shipments")}>Shipments</IconButton>
+                        <IconButton onClick={() => setActiveTab("returns")}>Returns</IconButton>
+
+                        {isCodPlaced ? (
+                          <IconButton disabled={isBusy} onClick={() => onConfirmCod(orderId)} tone="primary">
+                            {isBusy ? "…" : "Confirm COD"}
+                          </IconButton>
+                        ) : null}
+
+                        {!shipmentExists ? (
+                          <IconButton disabled={!canCreateShipment || isBusy} onClick={() => onCreateShipment(orderId)} tone="primary">
+                            {isBusy ? "…" : "Create Shipment"}
+                          </IconButton>
+                        ) : null}
+                      </div>
+                    );
+                  })()}
+                </div>
+              </div>
+            </div>
+          </>
+        ) : null}
+      </Drawer>
     </div>
   );
 }

@@ -63,6 +63,7 @@ import {
   adminDeleteVendor,
 } from "../controllers/vendor/vendor.controller.js";
 import { adminApproveVendorProduct, adminGetVendorProductById, adminListVendorProducts, adminRejectVendorProduct } from "../controllers/admin/Vendor.Product.Controller.js";
+import { adminRunWalletUnlock, adminSyncWalletForOrder } from "../controllers/admin/vendorWallet.admin.controller.js";
 
 const router = Router();
 
@@ -163,5 +164,7 @@ router.get(
   verifyAdmin,
   adminGetVendorProductById
 );
+router.post("/wallet/sync-order/:orderId", verifyAdmin, adminSyncWalletForOrder);
+router.post("/wallet/unlock", verifyAdmin, adminRunWalletUnlock);
 
 export default router;

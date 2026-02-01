@@ -2,6 +2,7 @@
 import { Request, Response } from "express";
 import { Types } from "mongoose";
 import { Order } from "../../models/Order.model";
+import { applyWalletEffectsForOrder } from "../../services/vendorWallet.service";
 
 const toStr = (v: any) => String(v ?? "").trim();
 
@@ -201,6 +202,8 @@ export const adminUpdateOrderStatus = async (req: Request, res: Response) => {
       // If suborder delivered and COD => mark payment paid (only when ALL delivered, we set parent too)
       // We'll compute parent after save.
       await order.save();
+      await applyWalletEffectsForOrder(order);
+
 
       // Update parent status derived (optional but recommended)
       const fresh: any = await Order.findById(orderId).lean();
@@ -233,16 +236,28 @@ export const adminUpdateOrderStatus = async (req: Request, res: Response) => {
     // -----------------
     // Parent update
     // -----------------
-    order.status = nextStatus as any;
+order.status = nextStatus as any;
 
-    // COD delivered => PAID
-    if (pm === "COD" && nextStatus === "DELIVERED") {
-      order.paymentStatus = "PAID";
-    }
+// ✅ Sync subOrders with parent status (skip locked)
+if (Array.isArray(order.subOrders) && order.subOrders.length) {
+  for (const so of order.subOrders) {
+    const soCur = upper(so.status || "PLACED");
+    if (soCur === "CANCELLED" || soCur === "DELIVERED") continue;
+    so.status = nextStatus;
+  }
+}
 
-    await order.save();
+// COD delivered => PAID
+if (pm === "COD" && nextStatus === "DELIVERED") {
+  order.paymentStatus = "PAID";
+}
 
-    return res.json({ message: "Order status updated", data: order });
+await order.save();
+
+// ✅ Wallet hook (IMPORTANT)
+await applyWalletEffectsForOrder(order);
+
+return res.json({ message: "Order status updated", data: order });
   } catch (err: any) {
     console.error("adminUpdateOrderStatus error:", err);
     return res.status(500).json({

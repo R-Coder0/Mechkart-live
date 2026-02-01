@@ -16,6 +16,7 @@ import {
   vendorGetMyProductById,
   vendorUpdateMyProduct,
 } from "../controllers/vendor/vendor.product.controller";
+import { vendorFetchOrders, vendorGetOrderById, vendorGetOrderTracking } from "../controllers/vendor/vendor.order.controller";
 const router = Router();
 
 /**
@@ -58,5 +59,10 @@ router.get("/products/:id", vendorAuth, vendorGetMyProductById);
 
 // Update my product (with images)
 router.put("/products/:id", vendorAuth, uploadProductImages, vendorUpdateMyProduct);
+
+// ✅ vendor orders
+router.get("/orders", vendorAuth, vendorFetchOrders);
+router.get("/orders/:orderId", vendorAuth, vendorGetOrderById);
+router.get("/orders/:orderId/tracking", vendorAuth, vendorGetOrderTracking);
 
 export default router;
