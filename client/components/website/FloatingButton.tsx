@@ -17,7 +17,7 @@ export default function WhatsAppFloatingButton() {
       aria-label="Chat on WhatsApp"
       className="fixed bottom-5 right-5 z-9999 flex items-center gap-2 bg-transparent rounded-full px-4 py-3 text-white active:scale-95 transition"
     >
-      <img src="/Whatsapp.webp" alt="WhatsApp" className="h-14 w-14" />
+      <img src="/WhatsApp.webp" alt="WhatsApp" className="h-14 w-14" />
       {/* <span className="text-sm font-semibold hidden sm:block">WhatsApp</span> */}
     </Link>
   );
