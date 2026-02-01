@@ -72,7 +72,7 @@ export default function Footer() {
           <h3 className="text-gray-400 text-[13px] font-semibold uppercase mt-3 mb-2 tracking-wide">
             Contact Us
           </h3>
-          <Link href="tel:+919879511957"> +91 98795 11957</Link>
+          <Link href="tel: +916260704024">  +91 62607-04024</Link>
 
           <div className="mt-4">
             {/* <h4 className="text-gray-400 text-[13px] font-semibold mb-2">Warehouse:</h4> */}
@@ -108,14 +108,7 @@ export default function Footer() {
               href="#"
               className="text-[#0077B6] hover:underline"
             >
-              080-45120000
-            </Link>{" "}
-            /{" "}
-            <Link
-              href="#"
-              className="text-[#0077B6] hover:underline"
-            >
-              080-67418000
+              +91 62607-04024
             </Link>
           </p>
         </div>
