@@ -6,6 +6,19 @@ import Link from "next/link";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL;
 
+// ✅ Admin token helper
+const getToken = () => {
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem("admin_token");
+};
+
+// ✅ Standard Bearer header
+const authHeaders = (): Record<string, string> => {
+  const t = getToken();
+  return t ? { Authorization: `Bearer ${t}` } : {};
+};
+
+
 function money(n: any) {
   const x = Number(n || 0);
   return `₹${Math.round(Number.isFinite(x) ? x : 0)}`;
@@ -53,12 +66,12 @@ function typeLabel(t: string) {
 }
 
 // -------------------- API helpers (Admin) --------------------
-// Expected endpoints (adjust if your routes differ):
-// GET    /api/admin/wallet/vendors?q=&page=&limit=
-// GET    /api/admin/wallet/vendor/:vendorId?status=&type=&page=&limit=
+// Backend routes (as per your server):
+// GET    /api/admin/wallet/vendor-wallet?q=&page=&limit=
+// GET    /api/admin/wallet/vendor/:vendorId?q=&type=&status=&page=&limit=
 // POST   /api/admin/wallet/unlock?limit=100
-// POST   /api/admin/wallet/payout/release  { vendorId, amount, method, reference, note }
-// POST   /api/admin/wallet/payout/fail     { vendorId, amount, method, reference, reason }
+// POST   /api/admin/wallet/payout/release   { vendorId, amount, method, reference, note }
+// POST   /api/admin/wallet/payout/failed    { vendorId, amount, method, reference, reason }
 
 async function adminFetchVendors(params: { q?: string; page?: number; limit?: number }) {
   const qs = new URLSearchParams();
@@ -67,9 +80,13 @@ async function adminFetchVendors(params: { q?: string; page?: number; limit?: nu
   qs.set("limit", String(params.limit || 20));
 
   const res = await fetch(`${API_BASE}/admin/wallet/vendor-wallet?${qs.toString()}`, {
-    credentials: "include",
+    method: "GET",
     cache: "no-store",
+    headers: {
+      ...authHeaders(),
+    },
   });
+
   const json = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(json?.message || "Failed to load vendors");
   return json?.data ?? json;
@@ -87,9 +104,13 @@ async function adminFetchVendorWallet(
   qs.set("limit", String(params.limit || 20));
 
   const res = await fetch(`${API_BASE}/admin/wallet/vendor/${vendorId}?${qs.toString()}`, {
-    credentials: "include",
+    method: "GET",
     cache: "no-store",
+    headers: {
+      ...authHeaders(),
+    },
   });
+
   const json = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(json?.message || "Failed to load wallet");
   return json?.data ?? json;
@@ -98,9 +119,12 @@ async function adminFetchVendorWallet(
 async function adminRunUnlock(limit = 100) {
   const res = await fetch(`${API_BASE}/admin/wallet/unlock?limit=${limit}`, {
     method: "POST",
-    credentials: "include",
     cache: "no-store",
+    headers: {
+      ...authHeaders(),
+    },
   });
+
   const json = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(json?.message || "Unlock failed");
   return json?.data ?? json;
@@ -115,11 +139,14 @@ async function adminReleasePayout(payload: {
 }) {
   const res = await fetch(`${API_BASE}/admin/wallet/payout/release`, {
     method: "POST",
-    credentials: "include",
     cache: "no-store",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...authHeaders(),
+    },
     body: JSON.stringify(payload),
   });
+
   const json = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(json?.message || "Payout release failed");
   return json?.data ?? json;
@@ -132,13 +159,17 @@ async function adminFailPayout(payload: {
   reference?: string;
   reason?: string;
 }) {
-  const res = await fetch(`${API_BASE}/admin/wallet/payout/fail`, {
+  // ✅ FIXED route: /failed (as per backend)
+  const res = await fetch(`${API_BASE}/admin/wallet/payout/failed`, {
     method: "POST",
-    credentials: "include",
     cache: "no-store",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...authHeaders(),
+    },
     body: JSON.stringify(payload),
   });
+
   const json = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(json?.message || "Payout fail log failed");
   return json?.data ?? json;
@@ -223,15 +254,17 @@ export default function AdminWalletPage() {
     try {
       setVLoading(true);
       setVError(null);
+
+      // ✅ token guard (optional but helpful)
+      if (!getToken()) throw new Error("Admin token missing. Please login again.");
+
       const resp = await adminFetchVendors({ q: vq, page: nextPage, limit: vLimit });
       setVendorsData(resp);
       setVPage(resp.page || nextPage);
 
       // auto-select first vendor if none selected
       const list = Array.isArray(resp?.items) ? resp.items : [];
-      if (!selectedVendor && list.length) {
-        setSelectedVendor(list[0]);
-      }
+      if (!selectedVendor && list.length) setSelectedVendor(list[0]);
     } catch (e: any) {
       setVError(e?.message || "Failed to load vendors");
     } finally {
@@ -244,6 +277,9 @@ export default function AdminWalletPage() {
     try {
       setWLoading(true);
       setWError(null);
+
+      if (!getToken()) throw new Error("Admin token missing. Please login again.");
+
       const resp = await adminFetchVendorWallet(String(vendor._id), {
         q: wq,
         type: wType,
@@ -251,6 +287,7 @@ export default function AdminWalletPage() {
         page: nextPage,
         limit: wLimit,
       });
+
       setWalletData(resp);
       setWPage(resp.page || nextPage);
     } catch (e: any) {
@@ -281,13 +318,14 @@ export default function AdminWalletPage() {
   const onRunUnlock = async () => {
     try {
       setBusy("unlock");
+      if (!getToken()) throw new Error("Admin token missing. Please login again.");
+
       const raw = prompt("Unlock limit? (default 100)") || "";
       const lim = raw.trim() ? Number(raw.trim()) : 100;
       const limit = Number.isFinite(lim) && lim > 0 ? lim : 100;
 
       await adminRunUnlock(limit);
 
-      // refresh wallet + vendor list (balances might change)
       if (selectedVendor?._id) await loadWallet(selectedVendor, 1);
       await loadVendors(vPage);
       alert("Unlock job executed");
@@ -302,6 +340,8 @@ export default function AdminWalletPage() {
     if (!selectedVendor?._id) return;
     try {
       setBusy("payout");
+      if (!getToken()) throw new Error("Admin token missing. Please login again.");
+
       const amountRaw = prompt("Payout amount (RUPEES) from AVAILABLE?") || "";
       const amt = Number(amountRaw.trim());
       if (!Number.isFinite(amt) || amt <= 0) return;
@@ -334,6 +374,8 @@ export default function AdminWalletPage() {
     if (!selectedVendor?._id) return;
     try {
       setBusy("payout_fail");
+      if (!getToken()) throw new Error("Admin token missing. Please login again.");
+
       const amountRaw = prompt("Failed payout amount (RUPEES)?") || "";
       const amt = Number(amountRaw.trim());
       if (!Number.isFinite(amt) || amt <= 0) return;
@@ -442,9 +484,7 @@ export default function AdminWalletPage() {
                       <button
                         key={String(v._id)}
                         onClick={() => setSelectedVendor(v)}
-                        className={`w-full text-left px-4 py-4 hover:bg-gray-50 ${
-                          active ? "bg-emerald-50/40" : "bg-white"
-                        }`}
+                        className={`w-full text-left px-4 py-4 hover:bg-gray-50 ${active ? "bg-emerald-50/40" : "bg-white"}`}
                       >
                         <div className="flex items-start justify-between gap-3">
                           <div className="min-w-0">
@@ -494,13 +534,14 @@ export default function AdminWalletPage() {
                     >
                       Prev
                     </button>
-                    <button
-                      disabled={vLoading || vPage >= vTotalPages}
-                      onClick={() => loadVendors(vPage + 1)}
-                      className="rounded-xl border px-4 py-2 text-sm font-semibold hover:bg-gray-50 disabled:opacity-50"
-                    >
-                      Next
-                    </button>
+<button
+  disabled={vLoading || vPage >= vTotalPages}
+  onClick={() => loadVendors(vPage + 1)}
+  className="rounded-xl border px-4 py-2 text-sm font-semibold hover:bg-gray-50 disabled:opacity-50"
+>
+  Next
+</button>
+
                   </div>
                 </div>
               </>
@@ -686,9 +727,7 @@ export default function AdminWalletPage() {
 
                                 <td className="px-5 py-3">
                                   <span
-                                    className={`inline-flex rounded-xl border px-3 py-1 text-[12px] font-semibold ${badgeClass(
-                                      st
-                                    )}`}
+                                    className={`inline-flex rounded-xl border px-3 py-1 text-[12px] font-semibold ${badgeClass(st)}`}
                                   >
                                     {st || "—"}
                                   </span>
