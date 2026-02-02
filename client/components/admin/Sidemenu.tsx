@@ -26,6 +26,7 @@ export default function Sidemenu() {
     { label: "Add Product", icon: Layers, href: "/admin/products-add" },
     { label: "Inventory", icon: Layers, href: "/admin/products" },
     { label: "vendor-products", icon: Layers, href: "/admin/vendor-products" },
+    { label: "vendor-Wallet", icon: Layers, href: "/admin/wallet" },
   ];
 
   return (

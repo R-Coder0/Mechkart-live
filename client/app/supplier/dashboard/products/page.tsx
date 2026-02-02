@@ -83,7 +83,7 @@ interface Product {
   approvalStatus?: "PENDING" | "APPROVED" | "REJECTED";
   rejectReason?: string;
   ownerType?: "ADMIN" | "VENDOR";
-ship?: Ship;   // ✅ add this
+  ship?: Ship;   // ✅ add this
 }
 
 interface EditVariantInput {
@@ -322,10 +322,10 @@ export default function AdminProductsListPage() {
     // shipment Detials
     const ship = (product as any).ship || {};
 
-setEditShipLengthCm(String(product.ship?.lengthCm ?? ""));
-setEditShipBreadthCm(String(product.ship?.breadthCm ?? ""));
-setEditShipHeightCm(String(product.ship?.heightCm ?? ""));
-setEditShipWeightKg(String(product.ship?.weightKg ?? ""));
+    setEditShipLengthCm(String(product.ship?.lengthCm ?? ""));
+    setEditShipBreadthCm(String(product.ship?.breadthCm ?? ""));
+    setEditShipHeightCm(String(product.ship?.heightCm ?? ""));
+    setEditShipWeightKg(String(product.ship?.weightKg ?? ""));
 
 
     // feature image
@@ -744,10 +744,10 @@ setEditShipWeightKg(String(product.ship?.weightKg ?? ""));
       if (editLowStockThreshold.trim() !== "") {
         formData.append("lowStockThreshold", editLowStockThreshold);
       }
-if (editShipLengthCm.trim() !== "") formData.append("shipLengthCm", editShipLengthCm);
-if (editShipBreadthCm.trim() !== "") formData.append("shipBreadthCm", editShipBreadthCm);
-if (editShipHeightCm.trim() !== "") formData.append("shipHeightCm", editShipHeightCm);
-if (editShipWeightKg.trim() !== "") formData.append("shipWeightKg", editShipWeightKg);
+      if (editShipLengthCm.trim() !== "") formData.append("shipLengthCm", editShipLengthCm);
+      if (editShipBreadthCm.trim() !== "") formData.append("shipBreadthCm", editShipBreadthCm);
+      if (editShipHeightCm.trim() !== "") formData.append("shipHeightCm", editShipHeightCm);
+      if (editShipWeightKg.trim() !== "") formData.append("shipWeightKg", editShipWeightKg);
 
 
       // 5️⃣ API CALL

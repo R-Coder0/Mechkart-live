@@ -63,7 +63,8 @@ import {
   adminDeleteVendor,
 } from "../controllers/vendor/vendor.controller.js";
 import { adminApproveVendorProduct, adminGetVendorProductById, adminListVendorProducts, adminRejectVendorProduct } from "../controllers/admin/Vendor.Product.Controller.js";
-import { adminRunWalletUnlock, adminSyncWalletForOrder } from "../controllers/admin/vendorWallet.admin.controller.js";
+import { adminGetVendorWallet, adminListVendorWallets, adminRunWalletUnlock, adminSyncWalletForOrder } from "../controllers/admin/vendorWallet.admin.controller.js";
+import { adminPayoutFailed, adminPayoutRelease } from "../controllers/admin/wallet.payout.controller.js";
 
 const router = Router();
 
@@ -166,5 +167,12 @@ router.get(
 );
 router.post("/wallet/sync-order/:orderId", verifyAdmin, adminSyncWalletForOrder);
 router.post("/wallet/unlock", verifyAdmin, adminRunWalletUnlock);
+// ✅ payout endpoints
+router.post("/wallet/payout/release", verifyAdmin, adminPayoutRelease);
+router.post("/wallet/payout/failed", verifyAdmin, adminPayoutFailed);
+router.get("/wallet/vendor/:vendorId", verifyAdmin, adminGetVendorWallet);
+
+// list wallets
+router.get("/wallet/vendor-wallet", verifyAdmin, adminListVendorWallets);
 
 export default router;

@@ -74,7 +74,7 @@ export default function VendorDashboardLayout({
       { label: "Orders", href: "/supplier/dashboard/orders" },
       { label: "Shipments", href: "/supplier/dashboard/shipments" },
       { label: "Returns", href: "/supplier/dashboard/returns" },
-      { label: "Payouts", href: "/supplier/dashboard/payouts" },
+      { label: "Payouts", href: "/supplier/dashboard/wallet" },
       { label: "Settings", href: "/supplier/dashboard/settings" },
     ],
     []
