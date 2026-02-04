@@ -1,3 +1,4 @@
+/* eslint-disable @next/next/no-img-element */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
@@ -17,7 +18,6 @@ const authHeaders = (): Record<string, string> => {
   const t = getToken();
   return t ? { Authorization: `Bearer ${t}` } : {};
 };
-
 
 function money(n: any) {
   const x = Number(n || 0);
@@ -65,14 +65,39 @@ function typeLabel(t: string) {
   }
 }
 
-// -------------------- API helpers (Admin) --------------------
-// Backend routes (as per your server):
-// GET    /api/admin/wallet/vendor-wallet?q=&page=&limit=
-// GET    /api/admin/wallet/vendor/:vendorId?q=&type=&status=&page=&limit=
-// POST   /api/admin/wallet/unlock?limit=100
-// POST   /api/admin/wallet/payout/release   { vendorId, amount, method, reference, note }
-// POST   /api/admin/wallet/payout/failed    { vendorId, amount, method, reference, reason }
+// ✅ name formatter (fixes React object error)
+function vendorDisplayName(v: any) {
+  const companyName = v?.company?.name || v?.companyName || v?.company?.name;
+  if (companyName) return String(companyName);
 
+  const nameObj = v?.name;
+  if (nameObj && typeof nameObj === "object") {
+    const first = String(nameObj.first || "").trim();
+    const last = String(nameObj.last || "").trim();
+    const full = `${first} ${last}`.trim();
+    if (full) return full;
+  }
+
+  if (typeof v?.name === "string" && v.name.trim()) return v.name.trim();
+  if (v?.vendorName) return String(v.vendorName);
+  return "Vendor";
+}
+
+function safeImgUrl(path?: string) {
+  const p = String(path || "").trim();
+  if (!p) return "";
+  if (p.startsWith("http://") || p.startsWith("https://")) return p;
+
+  const base = String(API_BASE || "");
+  if (!base) return p;
+
+  // if API_BASE ends with /api => strip
+  const host = base.replace(/\/api\/?$/, "");
+  if (p.startsWith("/")) return `${host}${p}`;
+  return `${host}/${p}`;
+}
+
+// -------------------- API helpers (Admin) --------------------
 async function adminFetchVendors(params: { q?: string; page?: number; limit?: number }) {
   const qs = new URLSearchParams();
   if (params.q) qs.set("q", params.q);
@@ -82,9 +107,7 @@ async function adminFetchVendors(params: { q?: string; page?: number; limit?: nu
   const res = await fetch(`${API_BASE}/admin/wallet/vendor-wallet?${qs.toString()}`, {
     method: "GET",
     cache: "no-store",
-    headers: {
-      ...authHeaders(),
-    },
+    headers: { ...authHeaders() },
   });
 
   const json = await res.json().catch(() => ({}));
@@ -106,9 +129,7 @@ async function adminFetchVendorWallet(
   const res = await fetch(`${API_BASE}/admin/wallet/vendor/${vendorId}?${qs.toString()}`, {
     method: "GET",
     cache: "no-store",
-    headers: {
-      ...authHeaders(),
-    },
+    headers: { ...authHeaders() },
   });
 
   const json = await res.json().catch(() => ({}));
@@ -120,9 +141,7 @@ async function adminRunUnlock(limit = 100) {
   const res = await fetch(`${API_BASE}/admin/wallet/unlock?limit=${limit}`, {
     method: "POST",
     cache: "no-store",
-    headers: {
-      ...authHeaders(),
-    },
+    headers: { ...authHeaders() },
   });
 
   const json = await res.json().catch(() => ({}));
@@ -159,7 +178,6 @@ async function adminFailPayout(payload: {
   reference?: string;
   reason?: string;
 }) {
-  // ✅ FIXED route: /failed (as per backend)
   const res = await fetch(`${API_BASE}/admin/wallet/payout/failed`, {
     method: "POST",
     cache: "no-store",
@@ -175,14 +193,41 @@ async function adminFailPayout(payload: {
   return json?.data ?? json;
 }
 
-type ModalState =
+type TxnModalState =
   | { open: false }
   | {
-      open: true;
-      vendor: any;
-      wallet: any;
-      txns: any[];
-    };
+    open: true;
+    vendor: any;
+    walletData: any;
+    txns: any[];
+  };
+
+type UnlockModalState =
+  | { open: false }
+  | {
+    open: true;
+    limit: number;
+  };
+
+type PayoutModalState =
+  | { open: false }
+  | {
+    open: true;
+    amount: number;
+    method: "UPI" | "BANK" | "MANUAL";
+    reference: string;
+    note: string;
+  };
+
+type FailModalState =
+  | { open: false }
+  | {
+    open: true;
+    amount: number;
+    method: "UPI" | "BANK" | "MANUAL";
+    reference: string;
+    reason: string;
+  };
 
 const TYPE_OPTIONS = [
   "",
@@ -196,6 +241,13 @@ const TYPE_OPTIONS = [
 ];
 
 const STATUS_OPTIONS = ["", "HOLD", "AVAILABLE", "PAID", "REVERSED", "FAILED"];
+
+function uuidFallback(prefix = "REF") {
+  try {
+    if (typeof crypto !== "undefined" && crypto?.randomUUID) return crypto.randomUUID();
+  } catch { }
+  return `${prefix}-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+}
 
 export default function AdminWalletPage() {
   // Left: vendors
@@ -216,7 +268,7 @@ export default function AdminWalletPage() {
   const vendors = Array.isArray(vendorsData?.items) ? vendorsData.items : [];
   const vTotalPages = Number(vendorsData?.totalPages || 1);
 
-  // Selected vendor
+  // Selected vendor (from list)
   const [selectedVendor, setSelectedVendor] = useState<any | null>(null);
 
   // Right: vendor wallet
@@ -228,41 +280,44 @@ export default function AdminWalletPage() {
   const [wPage, setWPage] = useState(1);
   const wLimit = 20;
 
+  // ✅ Step-2 API response shape
   const [walletData, setWalletData] = useState<any>({
-    vendorId: "",
-    balances: { hold: 0, available: 0, paid: 0 },
-    items: [],
+    vendor: null,
+    wallet: { balances: { hold: 0, available: 0, paid: 0 }, stats: {} },
+    transactions: [],
     page: 1,
     limit: wLimit,
-    total: 0,
+    totalTxns: 0,
     totalPages: 1,
   });
 
   const txns = useMemo(() => {
-    if (Array.isArray(walletData?.items)) return walletData.items;
-    if (Array.isArray(walletData?.transactions)) return walletData.transactions;
-    return [];
+    return Array.isArray(walletData?.transactions) ? walletData.transactions : [];
   }, [walletData]);
 
   const wTotalPages = Number(walletData?.totalPages || 1);
 
+  // const vendorInfo = walletData?.vendor;
+  // const walletBalances = walletData?.wallet?.balances || { hold: 0, available: 0, paid: 0 };
+
   // Modals / Actions
   const [busy, setBusy] = useState<string | null>(null);
-  const [modal, setModal] = useState<ModalState>({ open: false });
+
+  const [txnModal, setTxnModal] = useState<TxnModalState>({ open: false });
+  const [unlockModal, setUnlockModal] = useState<UnlockModalState>({ open: false });
+  const [payoutModal, setPayoutModal] = useState<PayoutModalState>({ open: false });
+  const [failModal, setFailModal] = useState<FailModalState>({ open: false });
 
   const loadVendors = async (nextPage = 1) => {
     try {
       setVLoading(true);
       setVError(null);
-
-      // ✅ token guard (optional but helpful)
       if (!getToken()) throw new Error("Admin token missing. Please login again.");
 
       const resp = await adminFetchVendors({ q: vq, page: nextPage, limit: vLimit });
       setVendorsData(resp);
       setVPage(resp.page || nextPage);
 
-      // auto-select first vendor if none selected
       const list = Array.isArray(resp?.items) ? resp.items : [];
       if (!selectedVendor && list.length) setSelectedVendor(list[0]);
     } catch (e: any) {
@@ -273,14 +328,13 @@ export default function AdminWalletPage() {
   };
 
   const loadWallet = async (vendor: any, nextPage = 1) => {
-    if (!vendor?._id) return;
+    if (!vendor?.vendorId) return;
     try {
       setWLoading(true);
       setWError(null);
-
       if (!getToken()) throw new Error("Admin token missing. Please login again.");
 
-      const resp = await adminFetchVendorWallet(String(vendor._id), {
+      const resp = await adminFetchVendorWallet(String(vendor.vendorId), {
         q: wq,
         type: wType,
         status: wStatus,
@@ -303,32 +357,87 @@ export default function AdminWalletPage() {
   }, []);
 
   useEffect(() => {
-    if (!selectedVendor?._id) return;
+    if (!selectedVendor?.vendorId) return;
     loadWallet(selectedVendor, 1);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedVendor?._id]);
+  }, [selectedVendor?.vendorId]);
 
   const vendorsSummary = useMemo(() => {
     const total = Number(vendorsData?.total || 0);
     return `${total} vendor(s)`;
   }, [vendorsData?.total]);
+  const vendorInfo = walletData?.vendor || null;
+  const walletBalances = walletData?.wallet?.balances || walletData?.balances || { hold: 0, available: 0, paid: 0 };
+  const unlockSummary = walletData?.unlockSummary || { dueHoldAmount: 0, dueHoldCount: 0, nextUnlockAt: null };
 
-  const walletBalances = walletData?.balances || { hold: 0, available: 0, paid: 0 };
+  const fmtDate = (d?: any) => {
+    if (!d) return "—";
+    try {
+      return new Date(d).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
+    } catch {
+      return "—";
+    }
+  };
 
-  const onRunUnlock = async () => {
+
+
+  // ---------------- Actions (open modals) ----------------
+  const onOpenUnlock = () => {
+    setUnlockModal({ open: true, limit: 100 });
+  };
+
+  const onOpenReleasePayout = () => {
+    if (!selectedVendor?.vendorId) return;
+
+    const available = Number(walletBalances?.available || 0);
+    const amt = Number.isFinite(available) && available > 0 ? available : 0;
+
+    setPayoutModal({
+      open: true,
+      amount: amt,
+      method: "MANUAL",
+      reference: uuidFallback("PAYOUT"),
+      note: "Admin payout release",
+    });
+  };
+
+  const onOpenFailPayout = () => {
+    if (!selectedVendor?.vendorId) return;
+
+    const available = Number(walletBalances?.available || 0);
+    const amt = Number.isFinite(available) && available > 0 ? available : 0;
+
+    setFailModal({
+      open: true,
+      amount: amt,
+      method: "MANUAL",
+      reference: uuidFallback("FAIL"),
+      reason: "Payout failed (logged by admin)",
+    });
+  };
+
+  // ---------------- Actions (submit) ----------------
+  const onSubmitUnlock = async () => {
+    if (!unlockModal.open) return;
     try {
       setBusy("unlock");
       if (!getToken()) throw new Error("Admin token missing. Please login again.");
 
-      const raw = prompt("Unlock limit? (default 100)") || "";
-      const lim = raw.trim() ? Number(raw.trim()) : 100;
-      const limit = Number.isFinite(lim) && lim > 0 ? lim : 100;
-
+      const limit = Math.max(1, Math.min(500, Number(unlockModal.limit || 100)));
       await adminRunUnlock(limit);
 
-      if (selectedVendor?._id) await loadWallet(selectedVendor, 1);
+      if (selectedVendor?.vendorId) await loadWallet(selectedVendor, 1);
       await loadVendors(vPage);
-      alert("Unlock job executed");
+
+      setUnlockModal({ open: false });
+      const latest = await adminFetchVendorWallet(String(selectedVendor.vendorId), { page: 1, limit: wLimit });
+      const summary = latest?.unlockSummary;
+      if (summary?.dueHoldAmount && summary.dueHoldAmount > 0) {
+        alert("Unlock executed. Some amount was due to unlock earlier.");
+      } else {
+        alert(`Unlock executed. Due unlock: ₹${Math.round(Number(summary?.dueHoldAmount || 0))}. Next unlock: ${fmtDate(summary?.nextUnlockAt)}`);
+      }
+
     } catch (e: any) {
       alert(e?.message || "Unlock failed");
     } finally {
@@ -336,32 +445,30 @@ export default function AdminWalletPage() {
     }
   };
 
-  const onReleasePayout = async () => {
-    if (!selectedVendor?._id) return;
+  const onSubmitPayout = async () => {
+    if (!payoutModal.open || !selectedVendor?.vendorId) return;
     try {
       setBusy("payout");
       if (!getToken()) throw new Error("Admin token missing. Please login again.");
 
-      const amountRaw = prompt("Payout amount (RUPEES) from AVAILABLE?") || "";
-      const amt = Number(amountRaw.trim());
-      if (!Number.isFinite(amt) || amt <= 0) return;
-
-      const methodRaw = (prompt("Method? UPI / BANK / MANUAL", "UPI") || "UPI").toUpperCase();
-      const method = (["UPI", "BANK", "MANUAL"].includes(methodRaw) ? methodRaw : "MANUAL") as any;
-
-      const reference = prompt("Reference/UTR/TxnId (optional)") || "";
-      const note = prompt("Note (optional)") || "";
+      const amt = Number(payoutModal.amount || 0);
+      if (!Number.isFinite(amt) || amt <= 0) {
+        alert("Enter a valid payout amount.");
+        return;
+      }
 
       await adminReleasePayout({
-        vendorId: String(selectedVendor._id),
+        vendorId: String(selectedVendor.vendorId),
         amount: amt,
-        method,
-        reference: reference.trim() || undefined,
-        note: note.trim() || undefined,
+        method: payoutModal.method,
+        reference: payoutModal.reference?.trim() || uuidFallback("PAYOUT"),
+        note: payoutModal.note?.trim() || undefined,
       });
 
       await loadWallet(selectedVendor, 1);
       await loadVendors(vPage);
+
+      setPayoutModal({ open: false });
       alert("Payout released");
     } catch (e: any) {
       alert(e?.message || "Payout release failed");
@@ -370,31 +477,29 @@ export default function AdminWalletPage() {
     }
   };
 
-  const onFailPayout = async () => {
-    if (!selectedVendor?._id) return;
+  const onSubmitFail = async () => {
+    if (!failModal.open || !selectedVendor?.vendorId) return;
     try {
       setBusy("payout_fail");
       if (!getToken()) throw new Error("Admin token missing. Please login again.");
 
-      const amountRaw = prompt("Failed payout amount (RUPEES)?") || "";
-      const amt = Number(amountRaw.trim());
-      if (!Number.isFinite(amt) || amt <= 0) return;
-
-      const methodRaw = (prompt("Method? UPI / BANK / MANUAL", "UPI") || "UPI").toUpperCase();
-      const method = (["UPI", "BANK", "MANUAL"].includes(methodRaw) ? methodRaw : "MANUAL") as any;
-
-      const reference = prompt("Reference/UTR/TxnId (optional)") || "";
-      const reason = prompt("Failure reason?") || "Failed";
+      const amt = Number(failModal.amount || 0);
+      if (!Number.isFinite(amt) || amt <= 0) {
+        alert("Enter a valid amount to log failure.");
+        return;
+      }
 
       await adminFailPayout({
-        vendorId: String(selectedVendor._id),
+        vendorId: String(selectedVendor.vendorId),
         amount: amt,
-        method,
-        reference: reference.trim() || undefined,
-        reason: reason.trim() || undefined,
+        method: failModal.method,
+        reference: failModal.reference?.trim() || uuidFallback("FAIL"),
+        reason: failModal.reason?.trim() || undefined,
       });
 
       await loadWallet(selectedVendor, 1);
+
+      setFailModal({ open: false });
       alert("Payout failure logged");
     } catch (e: any) {
       alert(e?.message || "Payout fail log failed");
@@ -405,15 +510,15 @@ export default function AdminWalletPage() {
 
   const openTxnModal = () => {
     if (!selectedVendor) return;
-    setModal({
+    setTxnModal({
       open: true,
       vendor: selectedVendor,
-      wallet: walletData,
+      walletData,
       txns,
     });
   };
 
-  const closeTxnModal = () => setModal({ open: false });
+  const closeTxnModal = () => setTxnModal({ open: false });
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-10">
@@ -431,7 +536,7 @@ export default function AdminWalletPage() {
 
           <button
             disabled={busy === "unlock"}
-            onClick={onRunUnlock}
+            onClick={onOpenUnlock}
             className="rounded-xl bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-black disabled:opacity-60"
           >
             {busy === "unlock" ? "Running…" : "Run Unlock Job"}
@@ -461,6 +566,7 @@ export default function AdminWalletPage() {
                   Search
                 </button>
               </div>
+
               {vError ? (
                 <div className="mt-3 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
                   {vError}
@@ -478,21 +584,19 @@ export default function AdminWalletPage() {
               <>
                 <div className="divide-y">
                   {vendors.map((v: any) => {
-                    const active = String(selectedVendor?._id || "") === String(v?._id || "");
-                    const b = v?.wallet?.balances || v?.balances || { hold: 0, available: 0, paid: 0 };
+                    const active = String(selectedVendor?.vendorId || "") === String(v?.vendorId || "");
+                    const b = v?.wallet?.balances || { hold: 0, available: 0, paid: 0 };
                     return (
                       <button
-                        key={String(v._id)}
+                        key={String(v.vendorId)}
                         onClick={() => setSelectedVendor(v)}
                         className={`w-full text-left px-4 py-4 hover:bg-gray-50 ${active ? "bg-emerald-50/40" : "bg-white"}`}
                       >
                         <div className="flex items-start justify-between gap-3">
                           <div className="min-w-0">
-                            <div className="font-semibold text-gray-900 line-clamp-1">
-                              {v?.name || v?.companyName || v?.vendorName || "Vendor"}
-                            </div>
+                            <div className="font-semibold text-gray-900 line-clamp-1">{vendorDisplayName(v)}</div>
                             <div className="text-[11px] text-gray-500">
-                              {v?.phone || v?.mobile || "—"} {v?.email ? `• ${v.email}` : ""}
+                              {v?.phone || "—"} {v?.email ? `• ${v.email}` : ""}
                             </div>
                           </div>
 
@@ -534,14 +638,13 @@ export default function AdminWalletPage() {
                     >
                       Prev
                     </button>
-<button
-  disabled={vLoading || vPage >= vTotalPages}
-  onClick={() => loadVendors(vPage + 1)}
-  className="rounded-xl border px-4 py-2 text-sm font-semibold hover:bg-gray-50 disabled:opacity-50"
->
-  Next
-</button>
-
+                    <button
+                      disabled={vLoading || vPage >= vTotalPages}
+                      onClick={() => loadVendors(vPage + 1)}
+                      className="rounded-xl border px-4 py-2 text-sm font-semibold hover:bg-gray-50 disabled:opacity-50"
+                    >
+                      Next
+                    </button>
                   </div>
                 </div>
               </>
@@ -556,26 +659,27 @@ export default function AdminWalletPage() {
           <div className="rounded-3xl border bg-white overflow-hidden">
             <div className="border-b bg-gray-50 px-5 py-3 flex items-center justify-between">
               <div className="text-sm font-semibold text-gray-900">
-                Wallet {selectedVendor ? `• ${selectedVendor?.name || selectedVendor?.companyName || "Vendor"}` : ""}
+                Wallet{" "}
+                {selectedVendor ? `• ${vendorDisplayName(vendorInfo || selectedVendor)}` : ""}
               </div>
 
               <div className="flex gap-2">
                 <button
-                  disabled={!selectedVendor || busy === "payout"}
-                  onClick={onReleasePayout}
+                  disabled={!selectedVendor?.vendorId || busy === "payout"}
+                  onClick={onOpenReleasePayout}
                   className="h-9 rounded-xl bg-emerald-600 px-3 text-[12px] font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
                 >
                   {busy === "payout" ? "..." : "Release Payout"}
                 </button>
                 <button
-                  disabled={!selectedVendor || busy === "payout_fail"}
-                  onClick={onFailPayout}
+                  disabled={!selectedVendor?.vendorId || busy === "payout_fail"}
+                  onClick={onOpenFailPayout}
                   className="h-9 rounded-xl bg-red-600 px-3 text-[12px] font-semibold text-white hover:bg-red-700 disabled:opacity-60"
                 >
                   {busy === "payout_fail" ? "..." : "Log Payout Failed"}
                 </button>
                 <button
-                  disabled={!selectedVendor}
+                  disabled={!selectedVendor?.vendorId}
                   onClick={() => loadWallet(selectedVendor, wPage)}
                   className="h-9 rounded-xl border px-3 text-[12px] font-semibold hover:bg-gray-50 disabled:opacity-60"
                 >
@@ -584,10 +688,61 @@ export default function AdminWalletPage() {
               </div>
             </div>
 
-            {!selectedVendor ? (
+            {!selectedVendor?.vendorId ? (
               <div className="p-6 text-sm text-gray-600">Select a vendor to view wallet.</div>
             ) : (
               <>
+                {/* payout details */}
+                {vendorInfo?.payment ? (
+                  <div className="p-4 border-b bg-gray-50">
+                    <div className="text-sm font-semibold text-gray-900 mb-2">Payout Details</div>
+
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      <div className="text-sm">
+                        <div className="text-gray-500 text-[12px]">Vendor</div>
+                        <div className="font-semibold">{vendorDisplayName(vendorInfo)}</div>
+                        <div className="text-[12px] text-gray-600">
+                          {vendorInfo?.phone || "—"} {vendorInfo?.email ? `• ${vendorInfo.email}` : ""}
+                        </div>
+                      </div>
+
+                      <div className="text-sm">
+                        {vendorInfo.payment.upiId ? (
+                          <div>
+                            <span className="text-gray-500 text-[12px]">UPI</span>
+                            <div className="font-semibold">{vendorInfo.payment.upiId}</div>
+                          </div>
+                        ) : (
+                          <div className="text-gray-500 text-[12px]">UPI: —</div>
+                        )}
+
+                        {vendorInfo.payment.bankAccount ? (
+                          <div className="mt-2">
+                            <span className="text-gray-500 text-[12px]">Bank</span>
+                            <div className="font-semibold">{vendorInfo.payment.bankAccount}</div>
+                            <div className="text-[12px] text-gray-600">IFSC: {vendorInfo.payment.ifsc || "—"}</div>
+                          </div>
+                        ) : null}
+                      </div>
+                    </div>
+
+                    {vendorInfo.payment.qrImage ? (
+                      <img
+                        src={safeImgUrl(vendorInfo.payment.qrImage)}
+                        alt="QR"
+                        className="mt-3 h-36 rounded border bg-white"
+                      />
+                    ) : null}
+                  </div>
+                ) : (
+                  <div className="p-4 border-b bg-amber-50">
+                    <div className="text-sm font-semibold text-amber-900">Payout Details Missing</div>
+                    <div className="text-[12px] text-amber-800">
+                      Vendor has no UPI/Bank/QR details saved.
+                    </div>
+                  </div>
+                )}
+
                 {/* balances */}
                 <div className="p-5 border-b">
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
@@ -595,6 +750,13 @@ export default function AdminWalletPage() {
                       <div className="text-sm font-semibold text-gray-700">Hold</div>
                       <div className="mt-2 text-2xl font-extrabold text-gray-900">{money(walletBalances.hold)}</div>
                       <div className="mt-1 text-[12px] text-gray-500">Locked (unlock due)</div>
+                      <div className="mt-2 text-[12px] text-gray-700">
+                        Unlock due: <b>{money(unlockSummary?.dueHoldAmount || 0)}</b>
+                      </div>
+                      <div className="mt-1 text-[12px] text-gray-500">
+                        Next unlock: <b>{fmtDate(unlockSummary?.nextUnlockAt)}</b>
+                      </div>
+
                     </div>
                     <div className="rounded-3xl border bg-white p-4">
                       <div className="text-sm font-semibold text-gray-700">Available</div>
@@ -701,6 +863,7 @@ export default function AdminWalletPage() {
                             const dir = String(t?.direction || "").toUpperCase();
                             const amt = Number(t?.amount || 0);
                             const signed = dir === "DEBIT" ? -Math.abs(amt) : Math.abs(amt);
+
                             return (
                               <tr key={t?._id || t?.idempotencyKey || idx} className="border-b last:border-b-0">
                                 <td className="px-5 py-3 text-gray-700">{fmtDateTime(when)}</td>
@@ -713,7 +876,9 @@ export default function AdminWalletPage() {
                                 <td className="px-5 py-3">
                                   <div className="font-semibold text-gray-900">{t?.orderCode || "—"}</div>
                                   {t?.subOrderId ? (
-                                    <div className="text-[11px] text-gray-500">Sub: {String(t.subOrderId).slice(-8)}</div>
+                                    <div className="text-[11px] text-gray-500">
+                                      Sub: {String(t.subOrderId).slice(-8)}
+                                    </div>
                                   ) : null}
                                 </td>
 
@@ -783,19 +948,218 @@ export default function AdminWalletPage() {
         </div>
       </div>
 
-      {/* All Txns Modal */}
-      {modal.open ? (
-        <div className="fixed inset-0 z-[60]">
+      {/* -------------------- Unlock Modal -------------------- */}
+      {unlockModal.open ? (
+        <div className="fixed inset-0 z-80">
+          <div className="absolute inset-0 bg-black/40" onClick={() => setUnlockModal({ open: false })} />
+          <div className="absolute left-1/2 top-1/2 w-[92%] max-w-md -translate-x-1/2 -translate-y-1/2 rounded-3xl bg-white shadow-xl overflow-hidden">
+            <div className="border-b px-5 py-4">
+              <div className="text-lg font-bold text-gray-900">Run Unlock Job</div>
+              <div className="text-[12px] text-gray-600">Moves due HOLD → AVAILABLE (limit controls wallets processed).</div>
+            </div>
+
+            <div className="p-5 space-y-3">
+              <label className="text-sm font-semibold text-gray-700">Limit (1 - 500)</label>
+              <input
+                value={unlockModal.limit}
+                onChange={(e) => setUnlockModal({ open: true, limit: Number(e.target.value || 0) })}
+                className="h-11 w-full rounded-2xl border px-4 text-sm outline-none focus:border-gray-400"
+                type="number"
+                min={1}
+                max={500}
+              />
+
+              <div className="flex gap-2 justify-end pt-2">
+                <button
+                  onClick={() => setUnlockModal({ open: false })}
+                  className="h-10 rounded-xl border px-4 text-sm font-semibold hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  disabled={busy === "unlock"}
+                  onClick={onSubmitUnlock}
+                  className="h-10 rounded-xl bg-gray-900 px-4 text-sm font-semibold text-white hover:bg-black disabled:opacity-60"
+                >
+                  {busy === "unlock" ? "Running…" : "Run"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* -------------------- Payout Modal -------------------- */}
+      {payoutModal.open ? (
+        <div className="fixed inset-0 z-80">
+          <div className="absolute inset-0 bg-black/40" onClick={() => setPayoutModal({ open: false })} />
+          <div className="absolute left-1/2 top-1/2 w-[94%] max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-3xl bg-white shadow-xl overflow-hidden">
+            <div className="border-b px-5 py-4">
+              <div className="text-lg font-bold text-gray-900">Release Payout</div>
+              <div className="text-[12px] text-gray-600">
+                Vendor: <span className="font-semibold">{vendorDisplayName(vendorInfo || selectedVendor)}</span> • Available:{" "}
+                <span className="font-semibold">{money(walletBalances.available)}</span>
+              </div>
+            </div>
+
+            <div className="p-5 space-y-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-sm font-semibold text-gray-700">Amount (₹)</label>
+                  <input
+                    value={payoutModal.amount}
+                    onChange={(e) => setPayoutModal({ ...payoutModal, amount: Number(e.target.value || 0) })}
+                    className="h-11 w-full rounded-2xl border px-4 text-sm outline-none focus:border-gray-400"
+                    type="number"
+                    min={1}
+                  />
+                </div>
+
+                <div>
+                  <label className="text-sm font-semibold text-gray-700">Method</label>
+                  <select
+                    value={payoutModal.method}
+                    onChange={(e) => setPayoutModal({ ...payoutModal, method: e.target.value as any })}
+                    className="h-11 w-full rounded-2xl border px-4 text-sm outline-none focus:border-gray-400 bg-white"
+                  >
+                    <option value="UPI">UPI</option>
+                    <option value="BANK">BANK</option>
+                    <option value="MANUAL">MANUAL</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-sm font-semibold text-gray-700">Reference / UTR / TxnId</label>
+                <input
+                  value={payoutModal.reference}
+                  onChange={(e) => setPayoutModal({ ...payoutModal, reference: e.target.value })}
+                  className="h-11 w-full rounded-2xl border px-4 text-sm outline-none focus:border-gray-400"
+                  placeholder="e.g. UTR123..."
+                />
+              </div>
+
+              <div>
+                <label className="text-sm font-semibold text-gray-700">Note (optional)</label>
+                <input
+                  value={payoutModal.note}
+                  onChange={(e) => setPayoutModal({ ...payoutModal, note: e.target.value })}
+                  className="h-11 w-full rounded-2xl border px-4 text-sm outline-none focus:border-gray-400"
+                  placeholder="Admin payout release"
+                />
+              </div>
+
+              <div className="flex gap-2 justify-end pt-2">
+                <button
+                  onClick={() => setPayoutModal({ open: false })}
+                  className="h-10 rounded-xl border px-4 text-sm font-semibold hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  disabled={busy === "payout"}
+                  onClick={onSubmitPayout}
+                  className="h-10 rounded-xl bg-emerald-600 px-4 text-sm font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+                >
+                  {busy === "payout" ? "Submitting…" : "Submit"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* -------------------- Fail Payout Modal -------------------- */}
+      {failModal.open ? (
+        <div className="fixed inset-0 z-80">
+          <div className="absolute inset-0 bg-black/40" onClick={() => setFailModal({ open: false })} />
+          <div className="absolute left-1/2 top-1/2 w-[94%] max-w-lg -translate-x-1/2 -translate-y-1/2 rounded-3xl bg-white shadow-xl overflow-hidden">
+            <div className="border-b px-5 py-4">
+              <div className="text-lg font-bold text-gray-900">Log Payout Failed</div>
+              <div className="text-[12px] text-gray-600">
+                Vendor: <span className="font-semibold">{vendorDisplayName(vendorInfo || selectedVendor)}</span>
+              </div>
+            </div>
+
+            <div className="p-5 space-y-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-sm font-semibold text-gray-700">Amount (₹)</label>
+                  <input
+                    value={failModal.amount}
+                    onChange={(e) => setFailModal({ ...failModal, amount: Number(e.target.value || 0) })}
+                    className="h-11 w-full rounded-2xl border px-4 text-sm outline-none focus:border-gray-400"
+                    type="number"
+                    min={1}
+                  />
+                </div>
+
+                <div>
+                  <label className="text-sm font-semibold text-gray-700">Method</label>
+                  <select
+                    value={failModal.method}
+                    onChange={(e) => setFailModal({ ...failModal, method: e.target.value as any })}
+                    className="h-11 w-full rounded-2xl border px-4 text-sm outline-none focus:border-gray-400 bg-white"
+                  >
+                    <option value="UPI">UPI</option>
+                    <option value="BANK">BANK</option>
+                    <option value="MANUAL">MANUAL</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-sm font-semibold text-gray-700">Reference / UTR / TxnId</label>
+                <input
+                  value={failModal.reference}
+                  onChange={(e) => setFailModal({ ...failModal, reference: e.target.value })}
+                  className="h-11 w-full rounded-2xl border px-4 text-sm outline-none focus:border-gray-400"
+                />
+              </div>
+
+              <div>
+                <label className="text-sm font-semibold text-gray-700">Reason</label>
+                <input
+                  value={failModal.reason}
+                  onChange={(e) => setFailModal({ ...failModal, reason: e.target.value })}
+                  className="h-11 w-full rounded-2xl border px-4 text-sm outline-none focus:border-gray-400"
+                />
+              </div>
+
+              <div className="flex gap-2 justify-end pt-2">
+                <button
+                  onClick={() => setFailModal({ open: false })}
+                  className="h-10 rounded-xl border px-4 text-sm font-semibold hover:bg-gray-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  disabled={busy === "payout_fail"}
+                  onClick={onSubmitFail}
+                  className="h-10 rounded-xl bg-red-600 px-4 text-sm font-semibold text-white hover:bg-red-700 disabled:opacity-60"
+                >
+                  {busy === "payout_fail" ? "Submitting…" : "Submit"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* -------------------- Txn Modal -------------------- */}
+      {txnModal.open ? (
+        <div className="fixed inset-0 z-70">
           <div className="absolute inset-0 bg-black/40" onClick={closeTxnModal} />
           <div className="absolute right-0 top-0 h-full w-full max-w-3xl bg-white shadow-xl overflow-y-auto">
             <div className="sticky top-0 z-10 border-b bg-white px-5 py-4 flex items-center justify-between">
               <div>
                 <div className="text-lg font-bold text-gray-900">
-                  Transactions • {modal.vendor?.name || modal.vendor?.companyName || "Vendor"}
+                  Transactions • {vendorDisplayName(txnModal.walletData?.vendor || txnModal.vendor)}
                 </div>
                 <div className="text-[11px] text-gray-500">
-                  Hold {money(modal.wallet?.balances?.hold)} • Available {money(modal.wallet?.balances?.available)} • Paid{" "}
-                  {money(modal.wallet?.balances?.paid)}
+                  Hold {money(txnModal.walletData?.wallet?.balances?.hold)} • Available{" "}
+                  {money(txnModal.walletData?.wallet?.balances?.available)} • Paid{" "}
+                  {money(txnModal.walletData?.wallet?.balances?.paid)}
                 </div>
               </div>
               <button onClick={closeTxnModal} className="h-9 rounded-xl border px-3 text-sm font-semibold hover:bg-gray-50">
@@ -819,7 +1183,7 @@ export default function AdminWalletPage() {
                   </thead>
 
                   <tbody>
-                    {(modal.txns || []).map((t: any, idx: number) => {
+                    {(txnModal.txns || []).map((t: any, idx: number) => {
                       const when = t?.effectiveAt || t?.createdAt || t?.updatedAt;
                       const st = String(t?.status || "").toUpperCase();
                       const dir = String(t?.direction || "").toUpperCase();

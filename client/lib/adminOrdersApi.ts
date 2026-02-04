@@ -129,7 +129,8 @@ export type AdminOrder = {
   address?: any;
 
   paymentMethod: "COD" | "ONLINE";
-  paymentStatus: "PENDING" | "PAID" | "FAILED";
+paymentStatus: "PENDING" | "PAID" | "FAILED" | "COD_PENDING_CONFIRMATION";
+
   status: "PLACED" | "CONFIRMED" | "SHIPPED" | "DELIVERED" | "CANCELLED";
 
   pg?: RazorpaySnapshot | null;
@@ -206,7 +207,8 @@ export async function adminFetchOrders(params?: {
   q?: string;
   status?: string;
   paymentMethod?: "COD" | "ONLINE";
-  paymentStatus?: "PENDING" | "PAID" | "FAILED";
+paymentStatus?: "PENDING" | "PAID" | "FAILED" | "COD_PENDING_CONFIRMATION";
+
   page?: number;
   limit?: number;
 }): Promise<AdminOrdersResponse> {

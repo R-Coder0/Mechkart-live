@@ -40,7 +40,7 @@ function resolveImageUrl(path?: string) {
 }
 
 const STATUS_OPTIONS = ["PLACED", "CONFIRMED", "SHIPPED", "DELIVERED", "CANCELLED"] as const;
-const PAYMENT_STATUS_OPTIONS = ["PENDING", "PAID", "FAILED"] as const;
+const PAYMENT_STATUS_OPTIONS = ["PENDING", "PAID", "FAILED", "COD_PENDING_CONFIRMATION"] as const;
 
 function toNum(v: any, fb = 0) {
   const n = Number(v);
@@ -306,17 +306,23 @@ function toneForOrderStatus(st: string) {
 }
 
 function hasShiprocketShipment(o: any) {
-  return Array.isArray(o?.shipments) && o.shipments.some((s: any) => s?.provider === "SHIPROCKET");
+  const subs = Array.isArray(o?.subOrders) ? o.subOrders : [];
+  return subs.some((so: any) => so?.shipment?.provider === "SHIPROCKET" && (so?.shipment?.shiprocket?.shipmentId || so?.shipment?.shiprocket?.awb));
 }
 
 function shiprocketShipments(o: any) {
-  const list = Array.isArray(o?.shipments) ? o.shipments.filter((s: any) => s?.provider === "SHIPROCKET") : [];
+  const subs = Array.isArray(o?.subOrders) ? o.subOrders : [];
+  const list = subs
+    .map((so: any) => so?.shipment)
+    .filter((s: any) => s?.provider === "SHIPROCKET");
+
   return [...list].sort((a: any, b: any) => {
     const ta = a?.createdAt ? new Date(a.createdAt).getTime() : 0;
     const tb = b?.createdAt ? new Date(b.createdAt).getTime() : 0;
     return tb - ta;
   });
 }
+
 
 /* --------- Return meta for table Alerts (critical UX) --------- */
 
@@ -419,7 +425,7 @@ export default function AdminOrdersPage() {
         q,
         status,
         paymentMethod: paymentMethod as "COD" | "ONLINE" | undefined,
-        paymentStatus: paymentStatus as "PENDING" | "PAID" | "FAILED" | undefined,
+        paymentStatus: paymentStatus as "PENDING" | "PAID" | "FAILED" | "COD_PENDING_CONFIRMATION" | undefined,
         page: nextPage,
         limit,
       });
@@ -491,22 +497,45 @@ export default function AdminOrdersPage() {
     }
   };
 
-  const onCreateShipment = async (orderId: string) => {
-    try {
-      setBusyId(orderId);
-      setError(null);
+const onCreateShipment = async (orderId: string) => {
+  try {
+    setBusyId(orderId);
+    setError(null);
 
-      patchLocalOrder(orderId, { status: "SHIPPED" });
+    // ✅ optimistic patch should also make COD "confirmed"
+    setData((prev: any) => ({
+      ...prev,
+      items: (prev.items || []).map((o: any) => {
+        if (String(o._id) !== String(orderId)) return o;
 
-      const updated = await adminCreateShiprocketShipment(orderId);
-      replaceLocalOrder(orderId, updated);
-    } catch (e: any) {
-      setError(e?.message || "Create shipment failed");
-      await load(page);
-    } finally {
-      setBusyId(null);
-    }
-  };
+        const pm = String(o?.paymentMethod || "COD").toUpperCase();
+        const next: any = { ...o, status: "SHIPPED" };
+
+        // ✅ if COD, ensure UI doesn't show "Confirm COD" after auto ship
+        if (pm === "COD") {
+          next.cod = {
+            ...(o.cod || {}),
+            confirmedAt: (o.cod && o.cod.confirmedAt) ? o.cod.confirmedAt : new Date().toISOString(),
+          };
+
+          // optional but good: if backend uses COD_PENDING_CONFIRMATION
+          next.paymentStatus = o.paymentStatus || "COD_PENDING_CONFIRMATION";
+        }
+
+        return next;
+      }),
+    }));
+
+    const updated = await adminCreateShiprocketShipment(orderId);
+    replaceLocalOrder(orderId, updated);
+  } catch (e: any) {
+    setError(e?.message || "Create shipment failed");
+    await load(page);
+  } finally {
+    setBusyId(null);
+  }
+};
+
 
   const onApproveReturn = async (orderId: string) => {
     try {
@@ -860,7 +889,7 @@ export default function AdminOrdersPage() {
                   const lockedDelivered = st === "DELIVERED";
                   const lockedCancelled = st === "CANCELLED";
 
-                  const isCodPlaced = pm === "COD" && st === "PLACED";
+               const isCodPlaced = pm === "COD" && st === "PLACED" && !codIsConfirmed;
                   const blockShipUntilConfirm = pm === "COD" && !codIsConfirmed;
 
                   const subOrders = normalizeSubOrders(o);

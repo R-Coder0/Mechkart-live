@@ -6,7 +6,7 @@ import Link from "next/link";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL;
 
-// ✅ vendor token (as you said)
+// ✅ vendor token
 const getToken = () => {
   if (typeof window === "undefined") return null;
   return localStorage.getItem("vendor_token");
@@ -58,15 +58,8 @@ function typeLabel(t: string) {
   }
 }
 
-async function vendorFetchWallet(params: {
-  q?: string;
-  type?: string;
-  status?: string;
-  page?: number;
-  limit?: number;
-}) {
+async function vendorFetchWallet(params: { type?: string; status?: string; page?: number; limit?: number }) {
   const qs = new URLSearchParams();
-  if (params.q) qs.set("q", params.q);
   if (params.type) qs.set("type", params.type);
   if (params.status) qs.set("status", params.status);
   qs.set("page", String(params.page || 1));
@@ -75,7 +68,7 @@ async function vendorFetchWallet(params: {
   const token = getToken();
   const res = await fetch(`${API_BASE}/vendors/wallet?${qs.toString()}`, {
     method: "GET",
-    credentials: "include", // ok even if you use cookies too
+    credentials: "include",
     cache: "no-store",
     headers: {
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -88,7 +81,6 @@ async function vendorFetchWallet(params: {
 }
 
 type Txn = any;
-
 type ModalState = { open: boolean; txn: Txn | null };
 
 const TYPE_OPTIONS = [
@@ -108,33 +100,37 @@ export default function VendorWalletPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [q, setQ] = useState("");
   const [type, setType] = useState("");
   const [status, setStatus] = useState("");
-
   const [page, setPage] = useState(1);
   const limit = 20;
 
+  // ✅ match backend response shape
   const [data, setData] = useState<any>({
     vendorId: "",
-    balances: { hold: 0, available: 0, paid: 0 },
-    items: [],
+    wallet: { balances: { hold: 0, available: 0, paid: 0 }, stats: {} },
+    transactions: [],
     page: 1,
     limit,
-    total: 0,
+    totalTxns: 0,
     totalPages: 1,
   });
 
   const [modal, setModal] = useState<ModalState>({ open: false, txn: null });
 
-  const items: Txn[] = Array.isArray(data?.items) ? data.items : Array.isArray(data?.transactions) ? data.transactions : [];
+const items: Txn[] =
+  Array.isArray(data?.txns) ? data.txns :
+  Array.isArray(data?.transactions) ? data.transactions :
+  [];
+
   const totalPages = Number(data?.totalPages || 1);
 
   const load = async (nextPage = 1) => {
     try {
       setLoading(true);
       setError(null);
-      const resp = await vendorFetchWallet({ q, type, status, page: nextPage, limit });
+
+      const resp = await vendorFetchWallet({ type, status, page: nextPage, limit });
       setData(resp);
       setPage(resp.page || nextPage);
     } catch (e: any) {
@@ -150,11 +146,16 @@ export default function VendorWalletPage() {
   }, []);
 
   const summaryText = useMemo(() => {
-    const total = Number(data?.total || 0);
-    return `${total} transaction(s)`;
-  }, [data?.total]);
+   const total = Number(data?.totalTxns ?? data?.total ?? 0);
 
-  const balances = data?.balances || { hold: 0, available: 0, paid: 0 };
+    return `${total} transaction(s)`;
+  }, [data?.total, data?.totalTxns]);
+
+const balances =
+  data?.balances ||
+  data?.wallet?.balances ||
+  { hold: 0, available: 0, paid: 0 };
+
 
   const openTxn = (txn: Txn) => setModal({ open: true, txn });
   const closeTxn = () => setModal({ open: false, txn: null });
@@ -172,10 +173,7 @@ export default function VendorWalletPage() {
           <Link href="/vendors" className="rounded-xl border px-4 py-2 text-sm font-semibold hover:bg-gray-50">
             Vendor Home
           </Link>
-          <button
-            onClick={() => load(page)}
-            className="rounded-xl bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-black"
-          >
+          <button onClick={() => load(page)} className="rounded-xl bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-black">
             Refresh
           </button>
         </div>
@@ -204,19 +202,8 @@ export default function VendorWalletPage() {
 
       {/* Filters */}
       <div className="mt-6 rounded-3xl border bg-white p-4">
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-5">
-          <input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="Search order code / note / reference"
-            className="h-11 rounded-2xl border px-4 text-sm outline-none focus:border-gray-400"
-          />
-
-          <select
-            value={type}
-            onChange={(e) => setType(e.target.value)}
-            className="h-11 rounded-2xl border px-4 text-sm outline-none focus:border-gray-400 bg-white"
-          >
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
+          <select value={type} onChange={(e) => setType(e.target.value)} className="h-11 rounded-2xl border px-4 text-sm outline-none focus:border-gray-400 bg-white">
             <option value="">All Types</option>
             {TYPE_OPTIONS.filter(Boolean).map((t) => (
               <option key={t} value={t}>
@@ -225,11 +212,7 @@ export default function VendorWalletPage() {
             ))}
           </select>
 
-          <select
-            value={status}
-            onChange={(e) => setStatus(e.target.value)}
-            className="h-11 rounded-2xl border px-4 text-sm outline-none focus:border-gray-400 bg-white"
-          >
+          <select value={status} onChange={(e) => setStatus(e.target.value)} className="h-11 rounded-2xl border px-4 text-sm outline-none focus:border-gray-400 bg-white">
             <option value="">All Status</option>
             {STATUS_OPTIONS.filter(Boolean).map((s) => (
               <option key={s} value={s}>
@@ -238,18 +221,13 @@ export default function VendorWalletPage() {
             ))}
           </select>
 
-          <button
-            type="button"
-            onClick={() => load(1)}
-            className="h-11 rounded-2xl bg-gray-900 px-4 text-sm font-semibold text-white hover:bg-black"
-          >
+          <button type="button" onClick={() => load(1)} className="h-11 rounded-2xl bg-gray-900 px-4 text-sm font-semibold text-white hover:bg-black">
             Apply
           </button>
 
           <button
             type="button"
             onClick={() => {
-              setQ("");
               setType("");
               setStatus("");
               setTimeout(() => load(1), 0);
@@ -262,9 +240,7 @@ export default function VendorWalletPage() {
       </div>
 
       {error ? (
-        <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
-          {error}
-        </div>
+        <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{error}</div>
       ) : null}
 
       {/* Table */}
@@ -272,11 +248,7 @@ export default function VendorWalletPage() {
         <div className="border-b bg-gray-50 px-5 py-3 text-sm font-semibold text-gray-900">Transactions</div>
 
         {loading ? (
-          <div className="p-5 space-y-3">
-            {Array.from({ length: 6 }).map((_, i) => (
-              <div key={i} className="h-10 rounded-2xl bg-gray-100 animate-pulse" />
-            ))}
-          </div>
+          <div className="p-5 space-y-3">{Array.from({ length: 6 }).map((_, i) => <div key={i} className="h-10 rounded-2xl bg-gray-100 animate-pulse" />)}</div>
         ) : items.length ? (
           <div className="overflow-x-auto">
             <table className="min-w-[1100px] w-full text-sm">
@@ -323,9 +295,7 @@ export default function VendorWalletPage() {
                       </td>
 
                       <td className="px-5 py-3">
-                        <span className={`inline-flex rounded-xl border px-3 py-1 text-[12px] font-semibold ${badgeClass(st)}`}>
-                          {st || "—"}
-                        </span>
+                        <span className={`inline-flex rounded-xl border px-3 py-1 text-[12px] font-semibold ${badgeClass(st)}`}>{st || "—"}</span>
                       </td>
 
                       <td className="px-5 py-3">
@@ -338,10 +308,7 @@ export default function VendorWalletPage() {
                       </td>
 
                       <td className="px-5 py-3">
-                        <button
-                          onClick={() => openTxn(t)}
-                          className="h-9 rounded-xl border px-3 text-[12px] font-semibold hover:bg-gray-50"
-                        >
+                        <button onClick={() => openTxn(t)} className="h-9 rounded-xl border px-3 text-[12px] font-semibold hover:bg-gray-50">
                           View
                         </button>
                       </td>
@@ -359,23 +326,14 @@ export default function VendorWalletPage() {
       {/* Pagination */}
       <div className="mt-6 flex items-center justify-between">
         <div className="text-sm text-gray-600">
-          Page <span className="font-semibold text-gray-900">{page}</span> of{" "}
-          <span className="font-semibold text-gray-900">{totalPages}</span>
+          Page <span className="font-semibold text-gray-900">{page}</span> of <span className="font-semibold text-gray-900">{totalPages}</span>
         </div>
 
         <div className="flex gap-2">
-          <button
-            disabled={loading || page <= 1}
-            onClick={() => load(page - 1)}
-            className="rounded-xl border px-4 py-2 text-sm font-semibold hover:bg-gray-50 disabled:opacity-50"
-          >
+          <button disabled={loading || page <= 1} onClick={() => load(page - 1)} className="rounded-xl border px-4 py-2 text-sm font-semibold hover:bg-gray-50 disabled:opacity-50">
             Prev
           </button>
-          <button
-            disabled={loading || page >= totalPages}
-            onClick={() => load(page + 1)}
-            className="rounded-xl border px-4 py-2 text-sm font-semibold hover:bg-gray-50 disabled:opacity-50"
-          >
+          <button disabled={loading || page >= totalPages} onClick={() => load(page + 1)} className="rounded-xl border px-4 py-2 text-sm font-semibold hover:bg-gray-50 disabled:opacity-50">
             Next
           </button>
         </div>
