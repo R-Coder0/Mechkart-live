@@ -18,6 +18,71 @@ const toNumber = (value: any): number | null => {
   const n = Number(value);
   return Number.isNaN(n) ? null : n;
 };
+// every next 0.5kg => +30
+const calcShippingMarkup = (weightKg: any) => {
+  const w = Number(weightKg || 0);
+  if (!Number.isFinite(w) || w <= 0) return 0;
+
+  const step = 0.5;
+  const slabs = Math.ceil(w / step); // 0.5=>1, 1.0=>2, 1.2=>3 ...
+  const base = 60;
+  const extra = Math.max(0, slabs - 1) * 30;
+
+  return base + extra;
+};
+
+const applyShippingToProduct = (p: any) => {
+  const obj = typeof p?.toObject === "function" ? p.toObject() : p;
+
+  const weightKg = obj?.ship?.weightKg ?? 0;
+  const shippingMarkup = calcShippingMarkup(weightKg);
+
+  // ✅ product base prices
+  const baseMrp = Number(obj?.mrp || 0);
+  const baseSale = Number(obj?.salePrice || 0);
+
+  // ✅ variants base prices too (optional but recommended)
+  const variants = Array.isArray(obj?.variants) ? obj.variants : [];
+const v2 = variants.map((v: any) => {
+  const vv = typeof v?.toObject === "function" ? v.toObject() : v;
+  return {
+    ...vv,
+    mrp: Number(vv?.mrp || 0) + shippingMarkup,
+    salePrice: Number(vv?.salePrice || 0) + shippingMarkup,
+  };
+});
+
+
+  return {
+    ...obj,
+
+    // ✅ overwrite prices ONLY for customer-side response
+    mrp: baseMrp + shippingMarkup,
+    salePrice: baseSale + shippingMarkup,
+    variants: v2,
+
+    // ✅ also return breakdown (future use in cart/checkout)
+    pricingMeta: {
+      baseMrp,
+      baseSalePrice: baseSale,
+      shippingMarkup,
+      weightKg,
+    },
+  };
+};
+const shouldAddShipping = (req: Request) => {
+  const anyReq = req as any;
+
+  // ✅ admin should see shipping added
+  if (anyReq?.admin?._id) return true;
+
+  // ❌ vendor should NOT see shipping added
+  if (anyReq?.vendor?._id) return false;
+
+  // ✅ public/customer should see shipping added
+  return true;
+};
+
 
 // helper – normalize galleryImages from body
 const normalizeGalleryFromBody = (galleryImages: any): string[] => {
@@ -428,10 +493,10 @@ export const getProductBySlug = async (req: Request, res: Response, next: NextFu
     if (!product) {
       return res.status(404).json({ message: "Product not found" });
     }
-
+    const productOut = shouldAddShipping(req) ? applyShippingToProduct(product) : product;
     return res.json({
       message: "Product fetched successfully",
-      data: product,
+      data: productOut,
     });
   } catch (err) {
     next(err);
@@ -513,10 +578,14 @@ export const getAllProducts = async (req: Request, res: Response, next: NextFunc
       .populate("subCategory", "name slug")
       .populate("vendorId", "company.name") // ✅
       .sort({ createdAt: -1 });
+    const isPublic = shouldAddShipping(req);
 
+    const out = isPublic
+      ? products.map((p: any) => applyShippingToProduct(p))
+      : products;
     return res.json({
       message: "Products fetched successfully",
-      data: products,
+      data: out,
     });
   } catch (err) {
     next(err);
@@ -535,10 +604,11 @@ export const getProductById = async (req: Request, res: Response, next: NextFunc
     if (!product) {
       return res.status(404).json({ message: "Product not found" });
     }
+    const productOut = shouldAddShipping(req) ? applyShippingToProduct(product) : product;
 
     return res.json({
       message: "Product fetched successfully",
-      data: product,
+      data: productOut,
     });
   } catch (err) {
     next(err);

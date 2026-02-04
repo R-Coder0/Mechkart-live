@@ -6,9 +6,9 @@ import { Category } from "../../models/Category.model";
 
 /**
  * IMPORTANT:
- * - Vendor products => ownerType="VENDOR", vendor=<vendorId>, approvalStatus="PENDING"
- * - Admin approve karega later (admin side endpoint banega / ya existing updateProduct se)
- * - Shipping dims vendor product create time pe bhi save honge (env defaults fallback)
+ * - Vendor products => ownerType="VENDOR", vendorId=<vendorId>, approvalStatus="PENDING"
+ * - Admin approve later
+ * - Vendor sees base price (NO shipping markup here)
  */
 
 const makeSlug = (title: string) =>
@@ -62,9 +62,7 @@ const normalizeArrayLike = (value: any): any[] => {
       .sort((a, b) => a.n - b.n)
       .map((x) => x.k);
 
-    if (numericKeys.length) {
-      return numericKeys.map((k) => (value as any)[k]);
-    }
+    if (numericKeys.length) return numericKeys.map((k) => (value as any)[k]);
 
     if (Array.isArray((value as any).variants)) return (value as any).variants;
     if (Array.isArray((value as any).colors)) return (value as any).colors;
@@ -172,8 +170,7 @@ const buildVariants = (
 
       quantity: typeof v.quantity === "number" ? v.quantity : Number(v.quantity || 0),
       mrp: typeof v.mrp === "number" ? v.mrp : Number(v.mrp || 0),
-      salePrice:
-        typeof v.salePrice === "number" ? v.salePrice : Number(v.salePrice || 0),
+      salePrice: typeof v.salePrice === "number" ? v.salePrice : Number(v.salePrice || 0),
 
       images: finalImages,
     };
@@ -221,9 +218,7 @@ const buildColors = (
 
 const calcTotalStock = (variantsArr: any[], baseStock: number) => {
   const hasVariants = Array.isArray(variantsArr) && variantsArr.length > 0;
-  if (hasVariants) {
-    return variantsArr.reduce((sum, v) => sum + Number(v.quantity || 0), 0);
-  }
+  if (hasVariants) return variantsArr.reduce((sum, v) => sum + Number(v.quantity || 0), 0);
   return Number(baseStock || 0);
 };
 
@@ -235,49 +230,27 @@ const getShipDefaults = () => {
   const B = Number(process.env.SHIP_BREADTH_CM ?? 15);
   const H = Number(process.env.SHIP_HEIGHT_CM ?? 10);
   const W = Number(process.env.SHIP_WEIGHT_KG ?? 0.5);
+
   return {
-    shipLengthCm: Number.isFinite(L) ? L : 20,
-    shipBreadthCm: Number.isFinite(B) ? B : 15,
-    shipHeightCm: Number.isFinite(H) ? H : 10,
-    shipWeightKg: Number.isFinite(W) ? W : 0.5,
+    lengthCm: Number.isFinite(L) ? L : 20,
+    breadthCm: Number.isFinite(B) ? B : 15,
+    heightCm: Number.isFinite(H) ? H : 10,
+    weightKg: Number.isFinite(W) ? W : 0.5,
   };
 };
 
 /**
  * VENDOR: CREATE PRODUCT
  * POST /api/vendors/products
- *
- * Updated (fixed) create logic:
- * - Proper debug logs placement
- * - Robust shipping field extraction (supports flat keys + bracket keys + ship object)
- * - Same variant/color/image logic retained
  */
-export const vendorCreateProduct = async (
-  req: Request,
-  res: Response,
-  next: NextFunction
-) => {
+export const vendorCreateProduct = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const vendorId = (req as any)?.vendor?._id;
+    const vendorIdRaw = (req as any)?.vendor?._id;
+    const vendorId =
+      Types.ObjectId.isValid(String(vendorIdRaw)) ? new Types.ObjectId(String(vendorIdRaw)) : null;
+
     if (!vendorId) return res.status(401).json({ message: "Unauthorized" });
 
-    // ---- DEBUG (TEMP) ----
-    console.log("CREATE req.body keys:", Object.keys(req.body || {}));
-    console.log("CREATE req.body.ship:", (req.body as any)?.ship);
-    console.log("CREATE ship flat:", {
-      shipLengthCm: (req.body as any)?.shipLengthCm,
-      shipBreadthCm: (req.body as any)?.shipBreadthCm,
-      shipHeightCm: (req.body as any)?.shipHeightCm,
-      shipWeightKg: (req.body as any)?.shipWeightKg,
-    });
-    console.log("CREATE ship bracket:", {
-      L: (req.body as any)?.["ship[lengthCm]"],
-      B: (req.body as any)?.["ship[breadthCm]"],
-      H: (req.body as any)?.["ship[heightCm]"],
-      W: (req.body as any)?.["ship[weightKg]"],
-    });
-
-    // ---- read body (keep destructuring for other fields) ----
     const {
       title,
       description,
@@ -294,7 +267,6 @@ export const vendorCreateProduct = async (
       subCategoryId,
     } = req.body as any;
 
-    // ---- validation ----
     const baseMrp = toNumber(mrp);
     const baseSale = toNumber(salePrice);
 
@@ -322,12 +294,10 @@ export const vendorCreateProduct = async (
       subCatId = subCat._id;
     }
 
-    // ---- slug ----
     const slug = makeSlug(title);
-    const existing = await Product.findOne({ slug });
+    const existing = await Product.findOne({ slug }).select("_id");
     const finalSlug = existing ? `${slug}-${String(vendorId).slice(-6)}` : slug;
 
-    // ---- images from multer ----
     const { featureImagePath, galleryPaths } = extractImagePaths(req);
     const variantImagesMap = extractVariantImages(req);
     const colorImagesMap = extractColorImages(req);
@@ -335,61 +305,45 @@ export const vendorCreateProduct = async (
     const bodyGallery = normalizeGalleryFromBody(galleryImages);
     const finalGallery = [...bodyGallery, ...galleryPaths];
 
-    // ---- build variants & colors ----
     const builtVariants = buildVariants(variants, variantImagesMap);
     const builtColors = buildColors(colors, colorImagesMap);
 
-    // ---- stock ----
     const parsedBaseStock = toNumber(baseStock) ?? 0;
     const parsedThreshold = toNumber(lowStockThreshold) ?? 5;
 
     const totalStock = calcTotalStock(builtVariants, parsedBaseStock);
     const isLowStock = calcLowStockFlag(totalStock, parsedThreshold);
 
-    // ---- SHIPPING (robust extraction) ----
+    // SHIPPING (save into product.ship)
     const shipDefaults = getShipDefaults();
 
     const rawShipLength =
       (req.body as any)?.shipLengthCm ??
-      (req.body as any)?.["shipLengthCm"] ??
       (req.body as any)?.["ship[lengthCm]"] ??
       (req.body as any)?.ship?.lengthCm;
 
     const rawShipBreadth =
       (req.body as any)?.shipBreadthCm ??
-      (req.body as any)?.["shipBreadthCm"] ??
       (req.body as any)?.["ship[breadthCm]"] ??
       (req.body as any)?.ship?.breadthCm;
 
     const rawShipHeight =
       (req.body as any)?.shipHeightCm ??
-      (req.body as any)?.["shipHeightCm"] ??
       (req.body as any)?.["ship[heightCm]"] ??
       (req.body as any)?.ship?.heightCm;
 
     const rawShipWeight =
       (req.body as any)?.shipWeightKg ??
-      (req.body as any)?.["shipWeightKg"] ??
       (req.body as any)?.["ship[weightKg]"] ??
       (req.body as any)?.ship?.weightKg;
 
-    const shipL = toNumber(rawShipLength) ?? shipDefaults.shipLengthCm;
-    const shipB = toNumber(rawShipBreadth) ?? shipDefaults.shipBreadthCm;
-    const shipH = toNumber(rawShipHeight) ?? shipDefaults.shipHeightCm;
-    const shipW = toNumber(rawShipWeight) ?? shipDefaults.shipWeightKg;
+    const ship = {
+      lengthCm: toNumber(rawShipLength) ?? shipDefaults.lengthCm,
+      breadthCm: toNumber(rawShipBreadth) ?? shipDefaults.breadthCm,
+      heightCm: toNumber(rawShipHeight) ?? shipDefaults.heightCm,
+      weightKg: toNumber(rawShipWeight) ?? shipDefaults.weightKg,
+    };
 
-    console.log("CREATE ship parsed:", {
-      rawShipLength,
-      rawShipBreadth,
-      rawShipHeight,
-      rawShipWeight,
-      shipL,
-      shipB,
-      shipH,
-      shipW,
-    });
-
-    // ---- create ----
     const product = await Product.create({
       title,
       slug: finalSlug,
@@ -413,15 +367,10 @@ export const vendorCreateProduct = async (
       subCategory: subCatId,
 
       ownerType: "VENDOR",
-      vendorId: vendorId,
+      vendorId,
       approvalStatus: "PENDING",
 
-      ship: {
-        lengthCm: shipL,
-        breadthCm: shipB,
-        heightCm: shipH,
-        weightKg: shipW,
-      },
+      ship,
     });
 
     return res.status(201).json({
@@ -433,21 +382,23 @@ export const vendorCreateProduct = async (
   }
 };
 
-
 /**
  * VENDOR: LIST MY PRODUCTS
- * GET /api/vendors/products?approvalStatus=PENDING|APPROVED|REJECTED&active=true|false&lowStock=true|false&q=
+ * GET /api/vendors/products
  */
 export const vendorListMyProducts = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const vendorId = (req as any)?.vendor?._id;
+    const vendorIdRaw = (req as any)?.vendor?._id;
+    const vendorId =
+      Types.ObjectId.isValid(String(vendorIdRaw)) ? new Types.ObjectId(String(vendorIdRaw)) : null;
+
     if (!vendorId) return res.status(401).json({ message: "Unauthorized" });
 
     const { approvalStatus, active, lowStock, q } = req.query as any;
 
     const filter: any = {
       ownerType: "VENDOR",
-      vendorId: vendorId,
+      vendorId,
     };
 
     if (approvalStatus) filter.approvalStatus = String(approvalStatus).toUpperCase();
@@ -476,16 +427,19 @@ export const vendorListMyProducts = async (req: Request, res: Response, next: Ne
  */
 export const vendorGetMyProductById = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const vendorId = (req as any)?.vendor?._id;
+    const vendorIdRaw = (req as any)?.vendor?._id;
+    const vendorId =
+      Types.ObjectId.isValid(String(vendorIdRaw)) ? new Types.ObjectId(String(vendorIdRaw)) : null;
+
     if (!vendorId) return res.status(401).json({ message: "Unauthorized" });
 
     const { id } = req.params;
     if (!Types.ObjectId.isValid(id)) return res.status(400).json({ message: "Invalid product id" });
 
     const product = await Product.findOne({
-      _id: id,
+      _id: new Types.ObjectId(id),
       ownerType: "VENDOR",
-      vendorId: vendorId,
+      vendorId,
     })
       .populate("category", "name slug")
       .populate("subCategory", "name slug");
@@ -501,21 +455,23 @@ export const vendorGetMyProductById = async (req: Request, res: Response, next: 
 /**
  * VENDOR: UPDATE MY PRODUCT
  * PUT /api/vendors/products/:id
- * Rule:
- * - If vendor edits, set approvalStatus back to PENDING (admin will re-approve)
+ * Rule: vendor edit => approvalStatus back to PENDING
  */
 export const vendorUpdateMyProduct = async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const vendorId = (req as any)?.vendor?._id;
+    const vendorIdRaw = (req as any)?.vendor?._id;
+    const vendorId =
+      Types.ObjectId.isValid(String(vendorIdRaw)) ? new Types.ObjectId(String(vendorIdRaw)) : null;
+
     if (!vendorId) return res.status(401).json({ message: "Unauthorized" });
 
     const { id } = req.params;
     if (!Types.ObjectId.isValid(id)) return res.status(400).json({ message: "Invalid product id" });
 
-    const product = await Product.findOne({
-      _id: id,
+    const product: any = await Product.findOne({
+      _id: new Types.ObjectId(id),
       ownerType: "VENDOR",
-      vendorId: vendorId,
+      vendorId,
     });
 
     if (!product) return res.status(404).json({ message: "Product not found" });
@@ -536,135 +492,113 @@ export const vendorUpdateMyProduct = async (req: Request, res: Response, next: N
       subCategoryId,
       isActive,
       removeFeatureImage,
-
       shipLengthCm,
       shipBreadthCm,
       shipHeightCm,
       shipWeightKg,
     } = req.body as any;
 
-    // BASIC
+    // TITLE + SLUG (avoid collisions)
     if (title) {
-      (product as any).title = title;
-      (product as any).slug = makeSlug(title);
-    }
-    if (typeof description !== "undefined") (product as any).description = description;
-    if (typeof features !== "undefined") (product as any).features = typeof features === "string" ? features : "";
+      const newSlug = makeSlug(title);
+      const exists = await Product.findOne({
+        slug: newSlug,
+        _id: { $ne: product._id },
+      }).select("_id");
 
-    // IMAGES
+      product.title = title;
+      product.slug = exists ? `${newSlug}-${String(vendorId).slice(-6)}` : newSlug;
+    }
+
+    if (typeof description !== "undefined") product.description = description;
+    if (typeof features !== "undefined") product.features = typeof features === "string" ? features : "";
+
     const { featureImagePath, galleryPaths } = extractImagePaths(req);
     const variantImagesMap = extractVariantImages(req);
     const colorImagesMap = extractColorImages(req);
 
     const removeFeature = removeFeatureImage === "true" || removeFeatureImage === true;
-    if (removeFeature) (product as any).featureImage = "";
+    if (removeFeature) product.featureImage = "";
 
-    if (featureImagePath) {
-      (product as any).featureImage = featureImagePath;
-    } else if (typeof featureImage !== "undefined" && !removeFeature) {
-      (product as any).featureImage = featureImage;
-    }
+    if (featureImagePath) product.featureImage = featureImagePath;
+    else if (typeof featureImage !== "undefined" && !removeFeature) product.featureImage = featureImage;
 
     if (typeof galleryImages !== "undefined" || galleryPaths.length > 0) {
       const bodyGallery = normalizeGalleryFromBody(galleryImages);
-      (product as any).galleryImages = [...bodyGallery, ...galleryPaths];
+      product.galleryImages = [...bodyGallery, ...galleryPaths];
     }
 
-    // PRICING
     const baseMrp = toNumber(mrp);
-    if (baseMrp !== null) (product as any).mrp = baseMrp;
+    if (baseMrp !== null) product.mrp = baseMrp;
 
     const baseSale = toNumber(salePrice);
-    if (baseSale !== null) (product as any).salePrice = baseSale;
+    if (baseSale !== null) product.salePrice = baseSale;
 
-    // VARIANTS
-    let updatedVariants: any[] = (product as any).variants || [];
+    let updatedVariants: any[] = product.variants || [];
     if (typeof variants !== "undefined") {
-      updatedVariants = buildVariants(variants, variantImagesMap, (product as any).variants || []);
-      (product as any).variants = updatedVariants;
+      updatedVariants = buildVariants(variants, variantImagesMap, product.variants || []);
+      product.variants = updatedVariants;
     } else if (Object.keys(variantImagesMap).length > 0) {
-      updatedVariants = buildVariants((product as any).variants || [], variantImagesMap, (product as any).variants || []);
-      (product as any).variants = updatedVariants;
+      updatedVariants = buildVariants(product.variants || [], variantImagesMap, product.variants || []);
+      product.variants = updatedVariants;
     }
 
-    // COLORS
     if (typeof colors !== "undefined") {
-      (product as any).colors = buildColors(colors, colorImagesMap, (product as any).colors || []);
+      product.colors = buildColors(colors, colorImagesMap, product.colors || []);
     } else if (Object.keys(colorImagesMap).length > 0) {
-      (product as any).colors = buildColors((product as any).colors || [], colorImagesMap, (product as any).colors || []);
+      product.colors = buildColors(product.colors || [], colorImagesMap, product.colors || []);
     }
 
-    // STOCK
     const thresholdNum = toNumber(lowStockThreshold);
-    if (thresholdNum !== null) (product as any).lowStockThreshold = thresholdNum;
+    if (thresholdNum !== null) product.lowStockThreshold = thresholdNum;
 
     const baseStockNum = toNumber(baseStock);
-    if (baseStockNum !== null && (!updatedVariants || updatedVariants.length === 0)) {
-      (product as any).baseStock = baseStockNum;
-    }
-    if (updatedVariants && updatedVariants.length > 0) {
-      (product as any).baseStock = 0;
-    }
+    if (baseStockNum !== null && (!updatedVariants || updatedVariants.length === 0)) product.baseStock = baseStockNum;
+    if (updatedVariants && updatedVariants.length > 0) product.baseStock = 0;
 
-    const finalTotalStock = calcTotalStock(updatedVariants || [], (product as any).baseStock || 0);
-    (product as any).totalStock = finalTotalStock;
+    const finalTotalStock = calcTotalStock(updatedVariants || [], product.baseStock || 0);
+    product.totalStock = finalTotalStock;
 
-    const finalThreshold = (product as any).lowStockThreshold ?? 5;
-    (product as any).isLowStock = calcLowStockFlag(finalTotalStock, finalThreshold);
+    const finalThreshold = product.lowStockThreshold ?? 5;
+    product.isLowStock = calcLowStockFlag(finalTotalStock, finalThreshold);
 
-    // ACTIVE (vendor can toggle)
-    if (typeof isActive !== "undefined") {
-      (product as any).isActive = isActive === "true" || isActive === true;
-    }
+    if (typeof isActive !== "undefined") product.isActive = isActive === "true" || isActive === true;
 
-    // CATEGORY
     if (categoryId) {
       if (!Types.ObjectId.isValid(categoryId)) return res.status(400).json({ message: "Invalid category id" });
       const cat = await Category.findById(categoryId);
       if (!cat) return res.status(404).json({ message: "Category not found" });
-      (product as any).category = cat._id;
+      product.category = cat._id;
     }
 
     if (typeof subCategoryId !== "undefined") {
-      if (!subCategoryId) {
-        (product as any).subCategory = null;
-      } else {
+      if (!subCategoryId) product.subCategory = null;
+      else {
         if (!Types.ObjectId.isValid(subCategoryId)) return res.status(400).json({ message: "Invalid sub category id" });
         const sub = await Category.findById(subCategoryId);
         if (!sub) return res.status(404).json({ message: "Sub category not found" });
-        (product as any).subCategory = sub._id;
+        product.subCategory = sub._id;
       }
     }
 
-    // SHIPPING
-// SHIPPING (schema has `ship.{lengthCm,breadthCm,heightCm,weightKg}`)
-const shipDefaults = getShipDefaults();
+    // SHIPPING (save only, no markup)
+    const shipDefaults = getShipDefaults();
+    if (!product.ship) product.ship = { ...shipDefaults };
 
-const shipL = toNumber(shipLengthCm);
-const shipB = toNumber(shipBreadthCm);
-const shipH = toNumber(shipHeightCm);
-const shipW = toNumber(shipWeightKg);
+    const L = toNumber(shipLengthCm);
+    const B = toNumber(shipBreadthCm);
+    const H = toNumber(shipHeightCm);
+    const W = toNumber(shipWeightKg);
 
-// ensure ship object exists
-if (!(product as any).ship) {
-  (product as any).ship = {
-    lengthCm: shipDefaults.shipLengthCm,
-    breadthCm: shipDefaults.shipBreadthCm,
-    heightCm: shipDefaults.shipHeightCm,
-    weightKg: shipDefaults.shipWeightKg,
-  };
-}
+    if (L !== null) product.ship.lengthCm = L;
+    if (B !== null) product.ship.breadthCm = B;
+    if (H !== null) product.ship.heightCm = H;
+    if (W !== null) product.ship.weightKg = W;
 
-if (shipL !== null) (product as any).ship.lengthCm = shipL;
-if (shipB !== null) (product as any).ship.breadthCm = shipB;
-if (shipH !== null) (product as any).ship.heightCm = shipH;
-if (shipW !== null) (product as any).ship.weightKg = shipW;
+    // vendor edit => needs re-approval
+    product.approvalStatus = "PENDING";
 
-
-    // ✅ IMPORTANT: vendor edit => needs re-approval
-    (product as any).approvalStatus = "PENDING";
-
-    await (product as any).save();
+    await product.save();
 
     return res.json({
       message: "Product updated and sent for re-approval",
