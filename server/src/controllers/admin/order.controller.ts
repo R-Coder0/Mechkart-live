@@ -55,7 +55,6 @@ export const adminGetOrders = async (req: Request, res: Response) => {
         { "contact.name": { $regex: q, $options: "i" } },
         { "pg.orderId": { $regex: q, $options: "i" } },
         { "pg.paymentId": { $regex: q, $options: "i" } },
-        // optional: match vendorName / soldBy quickly
         { "subOrders.vendorName": { $regex: q, $options: "i" } },
         { "subOrders.soldBy": { $regex: q, $options: "i" } },
       ];
@@ -67,8 +66,6 @@ export const adminGetOrders = async (req: Request, res: Response) => {
           path: "items.productId",
           select: "title variants colors galleryImages featureImage ship",
         })
-        // NOTE: subOrders items also contain productId; if you want populate there too,
-        // you can do it in a separate admin detail endpoint. Keep list lightweight.
         .select(
           [
             "orderCode",
@@ -113,9 +110,6 @@ export const adminGetOrders = async (req: Request, res: Response) => {
 
 // ----------------------------------------------------
 // UPDATE STATUS (Parent OR SubOrder)
-// Body options:
-// - { status: "SHIPPED" } -> updates parent order
-// - { status: "SHIPPED", subOrderId: "..." } -> updates that subOrder only
 // ----------------------------------------------------
 export const adminUpdateOrderStatus = async (req: Request, res: Response) => {
   try {
@@ -125,7 +119,6 @@ export const adminUpdateOrderStatus = async (req: Request, res: Response) => {
     const nextStatus = upper(req.body?.status);
     const subOrderId = toStr(req.body?.subOrderId);
 
-    // validate status
     if (!allowedStatuses.includes(nextStatus as any)) {
       return res.status(400).json({ message: "Invalid status" });
     }
@@ -141,23 +134,29 @@ export const adminUpdateOrderStatus = async (req: Request, res: Response) => {
     // Shared guardrails
     // -----------------
 
-    // ONLINE must be PAID before SHIPPED/DELIVERED (parent or suborder)
+    // ONLINE must be PAID before SHIPPED/DELIVERED
     if (pm === "ONLINE" && ps !== "PAID" && ["SHIPPED", "DELIVERED"].includes(nextStatus)) {
       return res.status(400).json({
         message: "Cannot mark as SHIPPED/DELIVERED until ONLINE payment is PAID",
       });
     }
 
-    // COD must be CONFIRMED before SHIPPED/DELIVERED
-    // (Parent must be CONFIRMED; for subOrder also require parent CONFIRMED)
+    // ✅ FIX (ISSUE #1):
+    // COD must be "confirmed" before SHIPPED/DELIVERED
+    // Do NOT rely on current status === CONFIRMED (because once shipped, status becomes SHIPPED).
     if (pm === "COD") {
-      const parentIsConfirmed = cur === "CONFIRMED";
-      if (!parentIsConfirmed && ["SHIPPED", "DELIVERED"].includes(nextStatus)) {
+      const codConfirmed =
+        !!order?.cod?.confirmedAt ||
+        ps === "COD_PENDING_CONFIRMATION" ||
+        ps === "PAID";
+
+      if (!codConfirmed && ["SHIPPED", "DELIVERED"].includes(nextStatus)) {
         return res.status(400).json({
           message: "Cannot mark SHIPPED/DELIVERED until COD is CONFIRMED",
         });
       }
-      // enforce COD confirm via button
+
+      // enforce COD confirm via button (only from PLACED)
       if (nextStatus === "CONFIRMED" && cur === "PLACED") {
         return res.status(400).json({ message: "Use Confirm COD button to confirm COD orders." });
       }
@@ -188,7 +187,6 @@ export const adminUpdateOrderStatus = async (req: Request, res: Response) => {
 
       const soCur = upper(so.status || "PLACED");
 
-      // lock suborder if delivered/cancelled
       if (soCur === "DELIVERED" && nextStatus !== "DELIVERED") {
         return res.status(400).json({ message: "Delivered subOrder status cannot be changed" });
       }
@@ -196,16 +194,11 @@ export const adminUpdateOrderStatus = async (req: Request, res: Response) => {
         return res.status(400).json({ message: "Cancelled subOrder status cannot be changed" });
       }
 
-      // Update the subOrder
       so.status = nextStatus;
 
-      // If suborder delivered and COD => mark payment paid (only when ALL delivered, we set parent too)
-      // We'll compute parent after save.
       await order.save();
       await applyWalletEffectsForOrder(order);
 
-
-      // Update parent status derived (optional but recommended)
       const fresh: any = await Order.findById(orderId).lean();
       const soArr = Array.isArray(fresh?.subOrders) ? fresh.subOrders : [];
 
@@ -236,28 +229,27 @@ export const adminUpdateOrderStatus = async (req: Request, res: Response) => {
     // -----------------
     // Parent update
     // -----------------
-order.status = nextStatus as any;
+    order.status = nextStatus as any;
 
-// ✅ Sync subOrders with parent status (skip locked)
-if (Array.isArray(order.subOrders) && order.subOrders.length) {
-  for (const so of order.subOrders) {
-    const soCur = upper(so.status || "PLACED");
-    if (soCur === "CANCELLED" || soCur === "DELIVERED") continue;
-    so.status = nextStatus;
-  }
-}
+    // ✅ Sync subOrders with parent status (skip locked)
+    if (Array.isArray(order.subOrders) && order.subOrders.length) {
+      for (const so of order.subOrders) {
+        const soCur = upper(so.status || "PLACED");
+        if (soCur === "CANCELLED" || soCur === "DELIVERED") continue;
+        so.status = nextStatus;
+      }
+    }
 
-// COD delivered => PAID
-if (pm === "COD" && nextStatus === "DELIVERED") {
-  order.paymentStatus = "PAID";
-}
+    // COD delivered => PAID
+    if (pm === "COD" && nextStatus === "DELIVERED") {
+      order.paymentStatus = "PAID";
+    }
 
-await order.save();
+    await order.save();
 
-// ✅ Wallet hook (IMPORTANT)
-await applyWalletEffectsForOrder(order);
+    await applyWalletEffectsForOrder(order);
 
-return res.json({ message: "Order status updated", data: order });
+    return res.json({ message: "Order status updated", data: order });
   } catch (err: any) {
     console.error("adminUpdateOrderStatus error:", err);
     return res.status(500).json({
@@ -292,7 +284,6 @@ export const adminConfirmCodOrder = async (req: Request, res: Response) => {
     const adminId = (req as any)?.admin?._id ? new Types.ObjectId(String((req as any).admin._id)) : null;
 
     order.status = "CONFIRMED";
-    // ✅ recommended: mark COD pending confirmation explicitly
     order.paymentStatus = "COD_PENDING_CONFIRMATION";
 
     order.cod = {
@@ -301,7 +292,6 @@ export const adminConfirmCodOrder = async (req: Request, res: Response) => {
       confirmedBy: adminId,
     };
 
-    // ✅ also confirm subOrders if present (skip cancelled)
     if (Array.isArray(order.subOrders) && order.subOrders.length) {
       for (const so of order.subOrders) {
         const soCur = upper(so.status);

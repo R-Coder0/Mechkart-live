@@ -25,7 +25,7 @@ function toObjectId(id: any) {
  */
 export const vendorGetMyWallet = async (req: Request, res: Response) => {
   try {
-    const vendorIdRaw = (req as any)?.vendor?._id || (req as any)?.vendorId; // depending on your middleware
+    const vendorIdRaw = (req as any)?.vendor?._id || (req as any)?.vendorId;
     const vid = toObjectId(vendorIdRaw);
     if (!vid) return res.status(401).json({ message: "Unauthorized (vendor)" });
 
@@ -39,33 +39,39 @@ export const vendorGetMyWallet = async (req: Request, res: Response) => {
     // ensure wallet exists
     let wallet: any = await VendorWallet.findOne({ vendorId: vid }).lean();
     if (!wallet) {
-      wallet = await VendorWallet.create({
+      const created = await VendorWallet.create({
         vendorId: vid,
         balances: { hold: 0, available: 0, paid: 0 },
         transactions: [],
         stats: { totalCredits: 0, totalDebits: 0, lastTxnAt: new Date() },
       });
-      wallet = wallet.toObject();
+      wallet = created.toObject();
     }
 
     const allTxns = Array.isArray(wallet.transactions) ? wallet.transactions : [];
 
-    // filtering in-memory (simple + ok for now)
+    // filtering in-memory (simple)
     let filtered = allTxns;
     if (status) filtered = filtered.filter((t: any) => String(t?.status || "").toUpperCase() === status);
     if (type) filtered = filtered.filter((t: any) => String(t?.type || "").toUpperCase() === type);
 
     const totalTxns = filtered.length;
     const totalPages = Math.max(1, Math.ceil(totalTxns / limit));
-    const slice = filtered.slice(skip, skip + limit);
+    const transactions = filtered.slice(skip, skip + limit);
 
     return res.json({
       message: "Vendor wallet",
       data: {
         vendorId: vid.toString(),
-        balances: wallet.balances || { hold: 0, available: 0, paid: 0 },
-        stats: wallet.stats || {},
-        txns: slice,
+
+        // ✅ keep same shape as admin: { wallet: { balances, stats }, transactions: [] }
+        wallet: {
+          balances: wallet.balances || { hold: 0, available: 0, paid: 0 },
+          stats: wallet.stats || { totalCredits: 0, totalDebits: 0, lastTxnAt: null },
+        },
+
+        transactions,
+
         page,
         limit,
         totalTxns,
@@ -74,6 +80,9 @@ export const vendorGetMyWallet = async (req: Request, res: Response) => {
     });
   } catch (e: any) {
     console.error("vendorGetMyWallet error:", e);
-    return res.status(500).json({ message: "Failed to load wallet", error: e?.message || "Unknown error" });
+    return res.status(500).json({
+      message: "Failed to load wallet",
+      error: e?.message || "Unknown error",
+    });
   }
 };

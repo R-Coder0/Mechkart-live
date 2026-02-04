@@ -262,12 +262,21 @@ export async function applyWalletEffectsForOrder(order: any) {
   const results: any[] = [];
 
   for (const so of subOrders) {
-    const vendorId = so?.vendorId ? String(so.vendorId) : "";
-    const ownerType = String(so?.ownerType || "").toUpperCase();
+// ✅ vendorId can be ObjectId OR populated object { _id: ... }
+const vendorIdRaw = (so?.vendorId && typeof so.vendorId === "object" && so.vendorId._id)
+  ? so.vendorId._id
+  : so?.vendorId;
 
-    if (!vendorId || ownerType !== "VENDOR") continue;
+const vendorId = vendorIdRaw ? String(vendorIdRaw) : "";
 
-    const subOrderId = String(so?._id || "");
+// ✅ ownerType optional — don’t block if missing
+const ownerType = String(so?.ownerType || "").toUpperCase();
+if (!vendorId) continue;
+if (ownerType && ownerType !== "VENDOR") continue;
+
+const subOrderId = so?._id ? String(so._id) : "";
+if (!subOrderId) continue;
+
     const subStatus = String(so?.status || orderStatus || "").toUpperCase();
 
     const amt = pickSubOrderTotal(order, so);

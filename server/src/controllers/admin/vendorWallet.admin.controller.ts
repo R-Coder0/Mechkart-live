@@ -2,10 +2,12 @@
 import { Request, Response } from "express";
 import { Order } from "../../models/Order.model"; // ✅ adjust path
 import { applyWalletEffectsForOrder } from "../../services/vendorWallet.service";
+import { Vendor } from "../../models/Vendor.model";
 import {
   adminReleaseVendorPayout,
   adminLogPayoutFailed,
-} from "../../services/vendorWallet.payout.service"; // ✅ adjust path (where you kept merged payout file)
+} from "../../services/vendorWallet.payout.service";
+// ✅ adjust path (where you kept merged payout file)
 
 import { unlockDueHoldToAvailable } from "../../services/vendorWallet.unlock.service"; // ✅ your unlock service
 
@@ -46,6 +48,10 @@ export async function adminSyncWalletForOrder(req: Request, res: Response) {
 // GET: Vendor wallet summary + txns (admin view)
 // GET /api/admin/vendor-wallet/:vendorId
 // ----------------------------------------------------
+// ----------------------------------------------------
+// GET: Vendor wallet summary + txns (admin view)
+// GET /api/admin/wallet/vendor/:vendorId
+// ----------------------------------------------------
 export const adminGetVendorWallet = async (req: Request, res: Response) => {
   try {
     const vendorId = toStr(req.params.vendorId);
@@ -55,17 +61,34 @@ export const adminGetVendorWallet = async (req: Request, res: Response) => {
     const limit = Math.min(100, Math.max(10, Number(req.query.limit || 20)));
     const skip = (page - 1) * limit;
 
+    const now = new Date();
+
+    // ✅ fetch vendor details (so payout box works)
+    const vendor = await Vendor.findById(vendorId)
+      .select("name email phone company payment status")
+      .lean()
+      .exec();
+
     const wallet = await VendorWallet.findOne({ vendorId: new Types.ObjectId(vendorId) })
       .lean()
       .exec();
 
+    // ✅ if no wallet yet
     if (!wallet) {
       return res.json({
         message: "Wallet not found (will be auto-created on first credit)",
         data: {
           vendorId,
-          balances: { hold: 0, available: 0, paid: 0 },
-          stats: { totalCredits: 0, totalDebits: 0, lastTxnAt: null },
+          vendor: vendor || null,
+          wallet: {
+            balances: { hold: 0, available: 0, paid: 0 },
+            stats: { totalCredits: 0, totalDebits: 0, lastTxnAt: null },
+          },
+          unlockSummary: {
+            dueHoldAmount: 0,
+            dueHoldCount: 0,
+            nextUnlockAt: null,
+          },
           transactions: [],
           page,
           limit,
@@ -76,6 +99,32 @@ export const adminGetVendorWallet = async (req: Request, res: Response) => {
     }
 
     const txns = Array.isArray(wallet.transactions) ? wallet.transactions : [];
+
+    // ✅ Unlock summary compute
+    let dueHoldAmount = 0;
+    let dueHoldCount = 0;
+    let nextUnlockAt: Date | null = null;
+
+    for (const t of txns) {
+      const type = String(t?.type || "");
+      const status = String(t?.status || "");
+      if (type !== "DELIVERED_HOLD_CREDIT") continue;
+      if (status !== "HOLD") continue;
+
+      const unlockAt = t?.unlockAt ? new Date(t.unlockAt) : null;
+      if (!unlockAt) continue;
+
+      const amt = Math.max(0, toNum(t?.amount, 0));
+      if (unlockAt.getTime() <= now.getTime()) {
+        dueHoldAmount += amt;
+        dueHoldCount += 1;
+      } else {
+        if (!nextUnlockAt || unlockAt.getTime() < nextUnlockAt.getTime()) {
+          nextUnlockAt = unlockAt;
+        }
+      }
+    }
+
     const totalTxns = txns.length;
     const slice = txns.slice(skip, skip + limit);
 
@@ -83,20 +132,33 @@ export const adminGetVendorWallet = async (req: Request, res: Response) => {
       message: "Vendor wallet fetched",
       data: {
         vendorId,
-        balances: wallet.balances,
-        stats: wallet.stats,
+        vendor: vendor || null, // ✅ NOW payout details show again
+        wallet: {
+          balances: wallet.balances || { hold: 0, available: 0, paid: 0 },
+          stats: wallet.stats || { totalCredits: 0, totalDebits: 0, lastTxnAt: null },
+        },
+        unlockSummary: {
+          dueHoldAmount,
+          dueHoldCount,
+          nextUnlockAt,
+        },
         transactions: slice,
         page,
         limit,
         totalTxns,
-        totalPages: Math.ceil(totalTxns / limit),
+        totalPages: Math.max(1, Math.ceil(totalTxns / limit)),
       },
     });
   } catch (e: any) {
     console.error("adminGetVendorWallet error:", e);
-    return res.status(500).json({ message: "Failed to fetch wallet", error: e?.message || "Unknown error" });
+    return res.status(500).json({
+      message: "Failed to fetch wallet",
+      error: e?.message || "Unknown error",
+    });
   }
 };
+
+
 
 // ----------------------------------------------------
 // LIST: wallets (admin) - optional filters (due payouts)
@@ -112,34 +174,119 @@ export const adminListVendorWallets = async (req: Request, res: Response) => {
     const limit = Math.min(100, Math.max(10, Number(req.query.limit || 20)));
     const skip = (page - 1) * limit;
 
-    const filter: any = {};
-    if (due) filter["balances.available"] = { $gt: 0 };
+    // ---- vendor search filter ----
+    const match: any = {};
+    if (q) {
+      if (isValidObjectId(q)) {
+        match._id = new Types.ObjectId(q);
+      } else {
+        match.$or = [
+          { "name.first": { $regex: q, $options: "i" } },
+          { "name.last": { $regex: q, $options: "i" } },
+          { email: { $regex: q, $options: "i" } },
+          { phone: { $regex: q, $options: "i" } },
+          { "company.name": { $regex: q, $options: "i" } },
+        ];
+      }
+    }
 
-    // NOTE: vendor name search requires populate/join; wallet doesn't store vendorName.
-    // If you want search by vendorName, either store vendorName snapshot in wallet
-    // or query Vendor collection then filter vendorIds.
-    // For now, q can match vendorId string (simple).
-    if (q && isValidObjectId(q)) filter.vendorId = new Types.ObjectId(q);
+    // ---- aggregation from Vendor -> lookup wallet ----
+    const pipeline: any[] = [
+      { $match: match },
 
-    const [items, total] = await Promise.all([
-      VendorWallet.find(filter)
-        .select("vendorId balances stats updatedAt")
-        .sort({ updatedAt: -1 })
-        .skip(skip)
-        .limit(limit)
-        .lean(),
-      VendorWallet.countDocuments(filter),
+      // join wallet by vendorId
+      {
+        $lookup: {
+          from: "vendorwallets", // collection name (lowercase plural by mongoose)
+          localField: "_id",
+          foreignField: "vendorId",
+          as: "wallet",
+        },
+      },
+      { $unwind: { path: "$wallet", preserveNullAndEmptyArrays: true } },
+    ];
+
+    // due filter uses wallet.balances.available
+    if (due) {
+      pipeline.push({
+        $match: { "wallet.balances.available": { $gt: 0 } },
+      });
+    }
+
+    // sorting: prioritize wallets updated, fallback vendor createdAt
+    pipeline.push(
+      { $sort: { "wallet.updatedAt": -1, createdAt: -1 } },
+      {
+        $project: {
+          _id: 0,
+
+          // ✅ IMPORTANT: always return real vendorId
+          vendorId: "$_id",
+
+          // vendor identity
+          name: {
+            first: "$name.first",
+            last: "$name.last",
+          },
+          email: 1,
+          phone: 1,
+          company: {
+            name: "$company.name",
+            email: "$company.email",
+            gst: "$company.gst",
+          },
+
+          // payment details for payout screen
+          payment: {
+            upiId: "$payment.upiId",
+            bankAccount: "$payment.bankAccount",
+            ifsc: "$payment.ifsc",
+            qrImage: "$payment.qrImage",
+          },
+
+          status: 1,
+
+          // wallet snapshot (if missing => zeros)
+          wallet: {
+            walletId: "$wallet._id",
+            balances: {
+              hold: { $ifNull: ["$wallet.balances.hold", 0] },
+              available: { $ifNull: ["$wallet.balances.available", 0] },
+              paid: { $ifNull: ["$wallet.balances.paid", 0] },
+            },
+            stats: "$wallet.stats",
+            updatedAt: "$wallet.updatedAt",
+          },
+
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      }
+    );
+
+    // total count (same pipeline without pagination)
+    const countPipeline = [...pipeline, { $count: "total" }];
+
+    // pagination
+    const itemsPipeline = [...pipeline, { $skip: skip }, { $limit: limit }];
+
+    const [items, countArr] = await Promise.all([
+      Vendor.aggregate(itemsPipeline),
+      Vendor.aggregate(countPipeline),
     ]);
+
+    const total = Number(countArr?.[0]?.total || 0);
 
     return res.json({
       message: "Vendor wallets fetched",
-      data: { items, page, limit, total, totalPages: Math.ceil(total / limit) },
+      data: { items, page, limit, total, totalPages: Math.max(1, Math.ceil(total / limit)) },
     });
   } catch (e: any) {
     console.error("adminListVendorWallets error:", e);
     return res.status(500).json({ message: "Failed to fetch wallets", error: e?.message || "Unknown error" });
   }
 };
+
 
 // // ----------------------------------------------------
 // // POST: Release payout (AVAILABLE -> PAID)
