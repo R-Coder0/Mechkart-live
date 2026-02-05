@@ -34,34 +34,29 @@ const calcShippingMarkup = (weightKg: any) => {
 const applyShippingToProduct = (p: any) => {
   const obj = typeof p?.toObject === "function" ? p.toObject() : p;
 
+  // ✅ ONLY vendor products get shipping markup
+  if (obj?.ownerType !== "VENDOR") {
+    return obj; // ⛔ admin products untouched
+  }
+
   const weightKg = obj?.ship?.weightKg ?? 0;
   const shippingMarkup = calcShippingMarkup(weightKg);
 
-  // ✅ product base prices
   const baseMrp = Number(obj?.mrp || 0);
   const baseSale = Number(obj?.salePrice || 0);
 
-  // ✅ variants base prices too (optional but recommended)
   const variants = Array.isArray(obj?.variants) ? obj.variants : [];
-const v2 = variants.map((v: any) => {
-  const vv = typeof v?.toObject === "function" ? v.toObject() : v;
-  return {
-    ...vv,
-    mrp: Number(vv?.mrp || 0) + shippingMarkup,
-    salePrice: Number(vv?.salePrice || 0) + shippingMarkup,
-  };
-});
-
+  const v2 = variants.map((v: any) => ({
+    ...v,
+    mrp: Number(v?.mrp || 0) + shippingMarkup,
+    salePrice: Number(v?.salePrice || 0) + shippingMarkup,
+  }));
 
   return {
     ...obj,
-
-    // ✅ overwrite prices ONLY for customer-side response
     mrp: baseMrp + shippingMarkup,
     salePrice: baseSale + shippingMarkup,
     variants: v2,
-
-    // ✅ also return breakdown (future use in cart/checkout)
     pricingMeta: {
       baseMrp,
       baseSalePrice: baseSale,
@@ -70,6 +65,7 @@ const v2 = variants.map((v: any) => {
     },
   };
 };
+
 const shouldAddShipping = (req: Request) => {
   const anyReq = req as any;
 

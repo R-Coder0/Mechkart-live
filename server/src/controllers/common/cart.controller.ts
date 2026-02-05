@@ -33,6 +33,26 @@ const lineMatches = (
   const c = it.colorKey ? String(it.colorKey).trim().toLowerCase() : null;
   return p === productId && v === variantId && c === colorKey;
 };
+// ✅ shipping markup rule
+// 0.5kg => 60
+// every next 0.5kg => +30
+const calcShippingMarkup = (weightKg: any) => {
+  const w = Number(weightKg || 0);
+  if (!Number.isFinite(w) || w <= 0) return 0;
+
+  const step = 0.5;
+  const slabs = Math.ceil(w / step); // 0.5=>1, 1.0=>2, 1.2=>3...
+  const base = 60;
+  const extra = Math.max(0, slabs - 1) * 30;
+  return base + extra;
+};
+
+const shouldApplyShippingMarkup = (req: Request) => {
+  const anyReq = req as any;
+  if (anyReq?.vendor?._id) return false; // vendor panel never
+  return true; // public + admin dono ke liye allow
+};
+
 
 // user injected by verifyUser middleware (cookie auth)
 const getUserId = (req: Request) => (req as any).user?._id || null;
@@ -89,45 +109,75 @@ const getOrCreateCart = async (ownerKey: string, userId: any, guestId: any) => {
  * Enrich cart items with lightweight product data (same shape as GET /common/cart)
  * IMPORTANT: This is the root fix for UI disappearing after mutations.
  */
-const enrichCartLean = async (cartLean: any) => {
+const enrichCartLean = async (req: Request, cartLean: any) => {
   if (!cartLean) return null;
 
   const productIds = (cartLean.items || []).map((i: any) => i.productId);
+
   const products = await Product.find({
     _id: { $in: productIds },
     isActive: true,
   })
     .select(
-      "title slug featureImage galleryImages variants colors isActive ownerType vendorId approvalStatus"
+      "title slug featureImage galleryImages variants colors isActive ownerType vendorId approvalStatus ship mrp salePrice"
     )
-    .populate({
-      path: "vendorId", // ✅ if your schema uses `vendorId`
-      select: "company.name",
-    })
+    .populate({ path: "vendorId", select: "company.name" })
     .lean();
-
 
   const map = new Map(products.map((p: any) => [String(p._id), p]));
 
-const items = (cartLean.items || []).map((it: any) => ({
-  ...it,
-  product: map.get(String(it.productId)) || null,
-}));
+  const applyMarkup = shouldApplyShippingMarkup(req);
+
+  const items = (cartLean.items || []).map((it: any) => {
+    const p = map.get(String(it.productId)) || null;
+
+    // default: base snapshot
+    let mrp = Number(it?.mrp || 0);
+    let salePrice = Number(it?.salePrice || 0);
+
+    let pricingMeta: any = undefined;
+if (applyMarkup && p && p.ownerType === "VENDOR") {
+  const weightKg = p?.ship?.weightKg ?? 0;
+  const shippingMarkup = calcShippingMarkup(weightKg);
+
+  pricingMeta = {
+    baseMrp: mrp,
+    baseSalePrice: salePrice,
+    shippingMarkup,
+    weightKg,
+  };
+
+  mrp = mrp + shippingMarkup;
+  salePrice = salePrice + shippingMarkup;
+}
+
+
+    return {
+      ...it,
+      // ✅ overwrite only in response (DB me base hi rahega)
+      mrp,
+      salePrice,
+      pricingMeta: pricingMeta || undefined,
+      product: p,
+    };
+  });
 
   return { ...cartLean, items };
 };
 
-const getEnrichedCartByOwnerKey = async (ownerKey: string) => {
+
+const getEnrichedCartByOwnerKey = async (req: Request, ownerKey: string) => {
   const cartLean = await Cart.findOne({ ownerKey }).lean();
   if (!cartLean) return null;
-  return enrichCartLean(cartLean);
+  return enrichCartLean(req, cartLean);
 };
 
-const getEnrichedCartById = async (cartId: any) => {
+const getEnrichedCartById = async (req: Request, cartId: any) => {
   const cartLean = await Cart.findById(cartId).lean();
   if (!cartLean) return null;
-  return enrichCartLean(cartLean);
+  return enrichCartLean(req, cartLean);
 };
+
 const mergeGuestCartIntoUserCart = async (userId: any, guestId: string) => {
   const userOwnerKey = `u:${String(userId)}`;
   const guestOwnerKey = `g:${String(guestId)}`;
@@ -198,7 +248,7 @@ export const getMyCart = async (req: Request, res: Response, next: NextFunction)
     }
 
     const { ownerKey } = getOwner(req, res);
-    const enriched = await getEnrichedCartByOwnerKey(ownerKey);
+const enriched = await getEnrichedCartByOwnerKey(req, ownerKey);
 
     return res.status(200).json({
       message: "Cart fetched",
@@ -343,7 +393,8 @@ export const addToCart = async (req: any, res: any) => {
     await cart.save();
 
     // ✅ return enriched cart (same as GET)
-    const enriched = await getEnrichedCartById(cart._id);
+const enriched = await getEnrichedCartById(req, cart._id);
+
     return res.status(200).json({ message: "Added to cart", data: enriched || cart });
   } catch (err: any) {
     console.error("❌ addToCart error:", err);
@@ -421,7 +472,8 @@ export const updateCartQty = async (req: Request, res: Response, next: NextFunct
 
     await cart.save();
 
-    const enriched = await getEnrichedCartById(cart._id);
+const enriched = await getEnrichedCartById(req, cart._id);
+
     return res.status(200).json({ message: "Quantity updated", data: enriched || cart });
   } catch (err) {
     next(err);
@@ -460,7 +512,8 @@ export const setCartItemSelected = async (req: Request, res: Response, next: Nex
 
     await cart.save();
 
-    const enriched = await getEnrichedCartById(cart._id);
+const enriched = await getEnrichedCartById(req, cart._id);
+
     return res.status(200).json({ message: "Selection updated", data: enriched || cart });
   } catch (err) {
     next(err);
@@ -482,8 +535,8 @@ export const setCartSelectAll = async (req: Request, res: Response, next: NextFu
     }
 
     await cart.save();
+const enriched = await getEnrichedCartById(req, cart._id);
 
-    const enriched = await getEnrichedCartById(cart._id);
     return res.status(200).json({ message: "Selection updated", data: enriched || cart });
   } catch (err) {
     next(err);
@@ -623,7 +676,8 @@ export const updateCartItemOptions = async (req: Request, res: Response, next: N
 
     await cart.save();
 
-    const enriched = await getEnrichedCartByOwnerKey(ownerKey);
+const enriched = await getEnrichedCartByOwnerKey(req, ownerKey);
+
     return res.status(200).json({ message: "Item options updated", data: enriched || cart });
   } catch (err) {
     next(err);
@@ -655,7 +709,8 @@ export const removeCartItem = async (req: Request, res: Response, next: NextFunc
 
     await cart.save();
 
-    const enriched = await getEnrichedCartById(cart._id);
+const enriched = await getEnrichedCartById(req, cart._id);
+
     return res.status(200).json({ message: "Item removed", data: enriched || cart });
   } catch (err) {
     next(err);
@@ -675,7 +730,8 @@ export const clearCart = async (req: Request, res: Response, next: NextFunction)
     cart.items = [] as any;
     await cart.save();
 
-    const enriched = await getEnrichedCartById(cart._id);
+const enriched = await getEnrichedCartById(req, cart._id);
+
     return res.status(200).json({ message: "Cart cleared", data: enriched || cart });
   } catch (err) {
     next(err);
