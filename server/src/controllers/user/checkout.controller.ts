@@ -4,8 +4,6 @@ import { Types } from "mongoose";
 import { Cart } from "../../models/Cart.model";
 import { Product } from "../../models/Product.model";
 import { validateAndComputeOffer } from "../../services/offer.apply.service";
-
-// ✅ add this (update path as per your project)
 import { Vendor } from "../../models/Vendor.model";
 
 const getUserId = (req: Request) => (req as any).user?._id;
@@ -19,10 +17,31 @@ const round2 = (n: number) => Math.round(n * 100) / 100;
 
 const oid = (v: any) => new Types.ObjectId(String(v));
 
-/**
- * Compute eligible products for appliedOffer based on already-fetched product data inside items
- * (so we don't need extra DB calls here).
- */
+/** =========================
+ * Shipping Markup (Vendor-only)
+ * ========================= */
+// 0.5kg => 60, every next 0.5kg => +30
+const calcShippingMarkup = (weightKg: any) => {
+  const w = Number(weightKg || 0);
+  if (!Number.isFinite(w) || w <= 0) return 0;
+
+  const step = 0.5;
+  const slabs = Math.ceil(w / step);
+  const base = 60;
+  const extra = Math.max(0, slabs - 1) * 30;
+  return base + extra;
+};
+
+const getShippingMarkupForProduct = (product: any) => {
+  // ✅ ONLY vendor products
+  if (String(product?.ownerType) !== "VENDOR") return 0;
+  const weightKg = product?.ship?.weightKg ?? 0;
+  return calcShippingMarkup(weightKg);
+};
+
+/** =========================
+ * Offer helpers
+ * ========================= */
 function buildEligibleSetFromItems(appliedOffer: any, items: any[]) {
   const scope = String(appliedOffer?.scope || "SITE");
 
@@ -57,17 +76,9 @@ function buildEligibleSetFromItems(appliedOffer: any, items: any[]) {
     );
   }
 
-  // fallback = no eligible
   return new Set<string>();
 }
 
-/**
- * Allocate cart discount across eligible items proportionally (with rounding remainder fix).
- * Returns new items with:
- *  - offerDiscount
- *  - finalLineTotal
- *  - effectiveUnitPrice
- */
 function allocateDiscountToItems(items: any[], eligibleSet: Set<string>, totalDiscount: number) {
   const discount = Math.max(0, Number(totalDiscount || 0));
   if (!discount || eligibleSet.size === 0) {
@@ -75,9 +86,7 @@ function allocateDiscountToItems(items: any[], eligibleSet: Set<string>, totalDi
       ...it,
       offerDiscount: 0,
       finalLineTotal: round2(Number(it.lineTotal || 0)),
-      effectiveUnitPrice: it.qty
-        ? round2(Number(it.lineTotal || 0) / Number(it.qty || 1))
-        : 0,
+      effectiveUnitPrice: it.qty ? round2(Number(it.lineTotal || 0) / Number(it.qty || 1)) : 0,
     }));
   }
 
@@ -91,13 +100,10 @@ function allocateDiscountToItems(items: any[], eligibleSet: Set<string>, totalDi
       ...it,
       offerDiscount: 0,
       finalLineTotal: round2(Number(it.lineTotal || 0)),
-      effectiveUnitPrice: it.qty
-        ? round2(Number(it.lineTotal || 0) / Number(it.qty || 1))
-        : 0,
+      effectiveUnitPrice: it.qty ? round2(Number(it.lineTotal || 0) / Number(it.qty || 1)) : 0,
     }));
   }
 
-  // find last eligible index for remainder adjustment
   let lastEligibleIndex = -1;
   items.forEach((it, idx) => {
     if (eligibleSet.has(String(it.productId))) lastEligibleIndex = idx;
@@ -136,18 +142,18 @@ function allocateDiscountToItems(items: any[], eligibleSet: Set<string>, totalDi
 
 /**
  * Group items seller-wise:
- *  - ADMIN => key "ADMIN"
- *  - VENDOR => key `VENDOR:<vendorId>`
- * subtotal is computed from finalLineTotal (post-offer)
+ * - ADMIN => "ADMIN"
+ * - VENDOR => "VENDOR:<vendorId>"
  */
 function groupBySeller(items: any[]) {
   const map = new Map<string, any>();
 
   for (const it of items) {
     const ownerType = String(it.ownerType || it?.product?.ownerType || "ADMIN");
-    const vendorId = ownerType === "VENDOR"
-      ? String(it.vendorId || it?.product?.vendorId || "")
-      : "";
+    const vendorId =
+      ownerType === "VENDOR" && (it.vendorId || it?.product?.vendorId)
+        ? String(it.vendorId || it?.product?.vendorId)
+        : "";
 
     const key = ownerType === "ADMIN" ? "ADMIN" : `VENDOR:${vendorId}`;
 
@@ -166,21 +172,21 @@ function groupBySeller(items: any[]) {
     g.subtotal = round2(Number(g.subtotal || 0) + Number(it.finalLineTotal ?? it.lineTotal ?? 0));
   }
 
-  // optional ordering: vendor groups first, admin last
   const arr = Array.from(map.values());
   arr.sort((a, b) => (a.ownerType === "ADMIN" ? 1 : 0) - (b.ownerType === "ADMIN" ? 1 : 0));
   return arr;
 }
 
+/** =========================
+ * GET CHECKOUT SUMMARY
+ * ========================= */
 export const getCheckoutSummary = async (req: Request, res: Response) => {
   try {
     const userId = getUserId(req);
     if (!userId) return res.status(401).json({ message: "Unauthorized" });
 
-    // couponCode can come from query (?couponCode=XXXX) OR body
     const couponCode = toStr((req.query as any)?.couponCode || (req.body as any)?.couponCode) || "";
 
-    // 1) Fetch cart (ownerKey primary)
     const ownerKey = `u:${String(userId)}`;
     const cart = (await Cart.findOne({ ownerKey })) || (await Cart.findOne({ userId }));
 
@@ -188,27 +194,25 @@ export const getCheckoutSummary = async (req: Request, res: Response) => {
       return res.status(400).json({ message: "Cart is empty" });
     }
 
-    // only selected
     const selectedItems = (cart.items as any[]).filter((it) => it?.isSelected === true);
     if (!selectedItems.length) {
       return res.status(400).json({ message: "No items selected for checkout" });
     }
 
-    // 2) fetch products
+    // ✅ products fetch must include ship + ownerType + vendorId always
     const productIds = Array.from(new Set(selectedItems.map((it: any) => String(it.productId))));
     const products = await Product.find({
       _id: { $in: productIds },
       isActive: true,
     })
       .select(
-        // ✅ added ownership fields
-        "productId title slug featureImage galleryImages variants colors isActive mrp salePrice baseStock stock quantity category subCategory ownerType vendorId"
+        "productId title slug featureImage galleryImages variants colors isActive mrp salePrice baseStock stock quantity category subCategory ownerType vendorId ship"
       )
       .lean();
 
     const productMap = new Map(products.map((p: any) => [String(p._id), p]));
 
-    // 2.1) fetch vendor names in one call
+    // vendor names
     const vendorIds = Array.from(
       new Set(
         products
@@ -223,10 +227,8 @@ export const getCheckoutSummary = async (req: Request, res: Response) => {
 
     const vendorMap = new Map(vendors.map((v: any) => [String(v._id), v]));
 
-    // 3) build items
     const items = selectedItems.map((it: any) => {
       const product = productMap.get(String(it.productId));
-
       if (!product || product.isActive === false) throw new Error("Some products are unavailable");
 
       const qty = toNum(it.qty, 0);
@@ -247,25 +249,28 @@ export const getCheckoutSummary = async (req: Request, res: Response) => {
       if (available <= 0) throw new Error("Stock issue for some items");
       if (qty > available) throw new Error("Stock issue for some items");
 
-      const mrp = hasVariants
-        ? toNum(variant?.mrp ?? it.mrp ?? 0, 0)
-        : toNum(product.mrp ?? it.mrp ?? 0, 0);
+      // ✅ base pricing (without shipping)
+      const baseMrp = hasVariants ? toNum(variant?.mrp ?? it.mrp ?? 0, 0) : toNum(product.mrp ?? it.mrp ?? 0, 0);
 
-      const salePrice = hasVariants
-        ? toNum(variant?.salePrice ?? it.salePrice ?? mrp, mrp)
-        : toNum(product.salePrice ?? it.salePrice ?? mrp, mrp);
+      const baseSalePrice = hasVariants
+        ? toNum(variant?.salePrice ?? it.salePrice ?? baseMrp, baseMrp)
+        : toNum(product.salePrice ?? it.salePrice ?? baseMrp, baseMrp);
 
-      const lineTotal = round2(salePrice * qty);
+      // ✅ shipping markup only for vendor products
+      const shippingMarkup = getShippingMarkupForProduct(product);
 
-      // ✅ Sold-by fields
-      const ownerType = String((product as any).ownerType || "ADMIN");
-      const vendorId = ownerType === "VENDOR" ? String((product as any).vendorId || "") : null;
+      // ✅ payable (customer-facing)
+      const payableMrp = round2(baseMrp + shippingMarkup);
+      const payableSalePrice = round2(baseSalePrice + shippingMarkup);
+
+      const lineTotal = round2(payableSalePrice * qty);
+
+      const ownerType = String(product.ownerType || "ADMIN");
+      const vendorId =
+        ownerType === "VENDOR" && product.vendorId ? String(product.vendorId) : null;
 
       const vendorDoc = vendorId ? vendorMap.get(String(vendorId)) : null;
-      const soldBy =
-        ownerType === "VENDOR"
-          ? String(vendorDoc?.company?.name || "Vendor")
-          : "Mechkart";
+      const soldBy = ownerType === "VENDOR" ? String(vendorDoc?.company?.name || "Vendor") : "Mechkart";
 
       return {
         _id: String(it._id || ""),
@@ -275,31 +280,36 @@ export const getCheckoutSummary = async (req: Request, res: Response) => {
         colorKey: it.colorKey ?? null,
         qty,
         title: String(it.title || product.title || "Product"),
-        mrp,
-        salePrice,
+
+        // ✅ payable shown to customer + used in totals/offers
+        mrp: payableMrp,
+        salePrice: payableSalePrice,
         lineTotal,
 
-        // ✅ ownership snapshot for checkout UI + later order split
+        pricingMeta: {
+          baseMrp,
+          baseSalePrice,
+          shippingMarkup,
+          weightKg: product?.ship?.weightKg ?? 0,
+        },
+
         ownerType,
         vendorId,
         soldBy,
 
-        product, // for UI image + category/subCategory eligibility
+        product,
       };
     });
 
-    // 4) base totals
+    // totals based on payable prices (customer payable)
     const subtotal = round2(items.reduce((s: number, i: any) => s + toNum(i.lineTotal, 0), 0));
-    const mrpTotal = round2(
-      items.reduce((s: number, i: any) => s + toNum(i.mrp, 0) * toNum(i.qty, 0), 0)
-    );
+    const mrpTotal = round2(items.reduce((s: number, i: any) => s + toNum(i.mrp, 0) * toNum(i.qty, 0), 0));
     const savings = Math.max(0, round2(mrpTotal - subtotal));
 
-    // 5) offer compute (AUTO if coupon empty; COUPON if coupon provided)
     const lines = items.map((it: any) => ({
       productId: oid(it.productId),
       qty: Number(it.qty || 0),
-      salePrice: Number(it.salePrice || 0),
+      salePrice: Number(it.salePrice || 0), // ✅ payable salePrice
     }));
 
     const offerResult = await validateAndComputeOffer({
@@ -308,7 +318,6 @@ export const getCheckoutSummary = async (req: Request, res: Response) => {
       lines,
     });
 
-    // if user entered coupon and invalid => show error
     if (couponCode && !offerResult.ok) {
       return res.status(400).json({ message: offerResult.reason || "Invalid coupon" });
     }
@@ -317,20 +326,17 @@ export const getCheckoutSummary = async (req: Request, res: Response) => {
     const discountRaw = offerResult.ok ? Number(offerResult.discount || 0) : 0;
     const discount = Math.max(0, Math.min(round2(discountRaw), subtotal));
 
-    // 6) allocate discount per-item so UI can show clear MRP -> final price
     const eligibleSet = appliedOffer ? buildEligibleSetFromItems(appliedOffer, items) : new Set<string>();
     const itemsWithOffer = allocateDiscountToItems(items, eligibleSet, discount);
 
     const grandTotal = Math.max(0, round2(subtotal - discount));
-
-    // ✅ seller-wise groups (post-offer)
     const groups = groupBySeller(itemsWithOffer);
 
     return res.status(200).json({
       message: "Checkout summary",
       data: {
         items: itemsWithOffer,
-        groups, // ✅ NEW
+        groups,
         totals: { subtotal, mrpTotal, savings, discount, grandTotal },
         appliedOffer: appliedOffer || null,
         couponCode: couponCode ? couponCode.toUpperCase() : null,
@@ -343,14 +349,9 @@ export const getCheckoutSummary = async (req: Request, res: Response) => {
   }
 };
 
-/**
- * Optional endpoint: Offer preview (coupon apply button).
- * It returns the SAME structure as checkout summary totals (and can be used by UI),
- * but typically UI can just call getCheckoutSummary with ?couponCode=XXXX.
- *
- * NOTE: offerPreview currently returns only totals; not grouping.
- * If you want grouping here too, call getCheckoutSummary from UI instead (recommended).
- */
+/** =========================
+ * OFFER PREVIEW
+ * ========================= */
 export const offerPreview = async (req: Request, res: Response) => {
   try {
     const userId = getUserId(req);
@@ -370,13 +371,13 @@ export const offerPreview = async (req: Request, res: Response) => {
       return res.status(400).json({ message: "No items selected for checkout" });
     }
 
-    // Use checkout summary logic: fetch products so scope eligibility stays correct
+    // ✅ MUST include ownerType + ship so vendor-only shipping applies correctly
     const productIds = Array.from(new Set(selectedItems.map((it: any) => String(it.productId))));
     const products = await Product.find({
       _id: { $in: productIds },
       isActive: true,
     })
-      .select("mrp salePrice variants baseStock stock quantity category subCategory isActive")
+      .select("mrp salePrice variants baseStock stock quantity category subCategory isActive ship ownerType")
       .lean();
 
     const productMap = new Map(products.map((p: any) => [String(p._id), p]));
@@ -393,22 +394,30 @@ export const offerPreview = async (req: Request, res: Response) => {
         ? (product.variants || []).find((v: any) => String(v._id) === String(it.variantId))
         : null;
 
-      const mrp = hasVariants
-        ? toNum(variant?.mrp ?? it.mrp ?? 0, 0)
-        : toNum(product.mrp ?? it.mrp ?? 0, 0);
+      const baseMrp = hasVariants ? toNum(variant?.mrp ?? it.mrp ?? 0, 0) : toNum(product.mrp ?? it.mrp ?? 0, 0);
 
-      const salePrice = hasVariants
-        ? toNum(variant?.salePrice ?? it.salePrice ?? mrp, mrp)
-        : toNum(product.salePrice ?? it.salePrice ?? mrp, mrp);
+      const baseSalePrice = hasVariants
+        ? toNum(variant?.salePrice ?? it.salePrice ?? baseMrp, baseMrp)
+        : toNum(product.salePrice ?? it.salePrice ?? baseMrp, baseMrp);
 
-      const lineTotal = round2(salePrice * qty);
+      const shippingMarkup = getShippingMarkupForProduct(product);
+
+      const payableMrp = round2(baseMrp + shippingMarkup);
+      const payableSalePrice = round2(baseSalePrice + shippingMarkup);
+      const lineTotal = round2(payableSalePrice * qty);
 
       return {
         productId: String(it.productId),
         qty,
-        mrp,
-        salePrice,
+        mrp: payableMrp,
+        salePrice: payableSalePrice,
         lineTotal,
+        pricingMeta: {
+          baseMrp,
+          baseSalePrice,
+          shippingMarkup,
+          weightKg: product?.ship?.weightKg ?? 0,
+        },
         product,
       };
     });
@@ -418,7 +427,7 @@ export const offerPreview = async (req: Request, res: Response) => {
     const lines = items.map((it: any) => ({
       productId: oid(it.productId),
       qty: Number(it.qty || 0),
-      salePrice: Number(it.salePrice || 0),
+      salePrice: Number(it.salePrice || 0), // ✅ payable salePrice
     }));
 
     const offerResult = await validateAndComputeOffer({

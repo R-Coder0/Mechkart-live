@@ -1,10 +1,9 @@
- 
 /* eslint-disable @next/next/no-img-element */
 "use client";
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 type NavItem = { label: string; href: string };
 
@@ -22,6 +21,37 @@ type VendorProfile = {
   email?: string;
 };
 
+function safeJSON<T>(raw: string | null): T | null {
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw) as T;
+  } catch {
+    return null;
+  }
+}
+
+// Decode JWT payload and read exp (seconds)
+function getJwtExp(token: string): number | null {
+  try {
+    const parts = token.split(".");
+    if (parts.length < 2) return null;
+    const payload = parts[1]
+      .replace(/-/g, "+")
+      .replace(/_/g, "/");
+    const json = JSON.parse(atob(payload));
+    return typeof json.exp === "number" ? json.exp : null;
+  } catch {
+    return null;
+  }
+}
+
+function isJwtExpired(token: string, skewSeconds = 10): boolean {
+  const exp = getJwtExp(token);
+  if (!exp) return false; // exp missing => can't decide; treat as not expired (or change to true if you want strict)
+  const now = Math.floor(Date.now() / 1000);
+  return now >= exp - skewSeconds;
+}
+
 export default function SupplierHeader() {
   const pathname = usePathname();
   const router = useRouter();
@@ -30,33 +60,60 @@ export default function SupplierHeader() {
   const [open, setOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
 
-  // Load vendor from localStorage
-useEffect(() => {
+  const clearVendorSession = () => {
+    localStorage.removeItem("vendor_token");
+    localStorage.removeItem("vendor_profile");
+    setVendor(null);
+    setOpen(false);
+    // broadcast so other components/pages update too
+    window.dispatchEvent(new Event("vendor-auth-change"));
+  };
+
   const loadVendor = () => {
     const token = localStorage.getItem("vendor_token");
-    const profile = localStorage.getItem("vendor_profile");
+    const profile = safeJSON<VendorProfile>(localStorage.getItem("vendor_profile"));
 
-    if (token && profile) {
-      try {
-        setVendor(JSON.parse(profile));
-      } catch {
-        setVendor(null);
-      }
-    } else {
+    // if missing session => logged out UI
+    if (!token || !profile) {
       setVendor(null);
+      return;
     }
+
+    // JWT expiry check
+    if (isJwtExpired(token)) {
+      clearVendorSession();
+      return;
+    }
+
+    // valid token (client-side) => show vendor
+    setVendor(profile);
   };
 
-  // initial load
-  loadVendor();
+  // Initial load + listen auth change + re-check when route changes
+  useEffect(() => {
+    loadVendor();
 
-  // listen login / logout
-  window.addEventListener("vendor-auth-change", loadVendor);
+    const onAuthChange = () => loadVendor();
+    window.addEventListener("vendor-auth-change", onAuthChange);
 
-  return () => {
-    window.removeEventListener("vendor-auth-change", loadVendor);
-  };
-}, []);
+    return () => {
+      window.removeEventListener("vendor-auth-change", onAuthChange);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    // whenever vendor page changes, re-validate
+    loadVendor();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pathname]);
+
+  // Optional: re-check every 30 seconds so UI flips even without navigation
+  useEffect(() => {
+    const id = window.setInterval(() => loadVendor(), 30000);
+    return () => window.clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Close dropdown on outside click
   useEffect(() => {
@@ -70,11 +127,21 @@ useEffect(() => {
   }, []);
 
   const logout = () => {
-localStorage.removeItem("vendor_token");
-localStorage.removeItem("vendor_profile");
-setVendor(null);
-router.push("/supplier/login");
+    clearVendorSession();
+    router.push("/supplier/login");
   };
+
+  const isSupplierArea = useMemo(() => pathname?.startsWith("/supplier"), [pathname]);
+
+  // Extra safety: if token expired and user is inside supplier area, push to login
+  useEffect(() => {
+    const token = localStorage.getItem("vendor_token");
+    if (isSupplierArea && token && isJwtExpired(token)) {
+      clearVendorSession();
+      router.push("/supplier/login");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSupplierArea, pathname]);
 
   return (
     <header className="sticky top-0 z-50 bg-white border-b border-[#e7e7ef]">
