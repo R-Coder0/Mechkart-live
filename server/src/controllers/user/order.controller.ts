@@ -30,7 +30,6 @@ const toStr = (v: any) => String(v ?? "").trim();
 const pad = (n: number, w = 2) => String(n).padStart(w, "0");
 const moneyNum = (n: any) => Math.round(Number(n || 0) * 100) / 100;
 const fmtRs = (n: any) => `Rs ${moneyNum(n).toFixed(2)}`;
-
 // -----------------------------
 // Razorpay setup
 // -----------------------------
@@ -47,6 +46,31 @@ function assertRazorpayConfigured() {
     throw new Error("Razorpay not configured. Set RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET");
   }
 }
+
+// =============================
+// Shipping Markup (Vendor-only)
+// =============================
+// 0.5kg => 60, every next 0.5kg => +30
+const calcShippingMarkup = (weightKg: any) => {
+  const w = Number(weightKg || 0);
+  if (!Number.isFinite(w) || w <= 0) return 0;
+
+  const step = 0.5;
+  const slabs = Math.ceil(w / step);
+  const base = 60;
+  const extra = Math.max(0, slabs - 1) * 30;
+  return base + extra;
+};
+
+const getShippingMarkupForProduct = (p: any) => {
+  // ✅ Only vendor products
+  const ownerType = String(p?.ownerType || "");
+  const isVendor = ownerType === "VENDOR" || Boolean(p?.vendorId);
+  if (!isVendor) return 0;
+
+  const weightKg = p?.ship?.weightKg ?? 0;
+  return calcShippingMarkup(weightKg);
+};
 
 // ✅ helper to compute variant text like your UI
 const computeVariantText = (p: any, variantId: any) => {
@@ -203,7 +227,7 @@ async function buildCheckoutSnapshot(req: Request, userId: any) {
   })
     // ✅ IMPORTANT: select vendorId (or your ownership field)
     .select(
-      "title productId variants colors galleryImages featureImage isActive mrp salePrice baseStock stock quantity vendorId vendorName ownerType ship"
+      "title productId variants colors galleryImages featureImage isActive mrp salePrice baseStock stock quantity vendorId vendorName ownerType ship  "
     )
     .lean();
 
@@ -295,7 +319,7 @@ async function buildCheckoutSnapshot(req: Request, userId: any) {
     let finalVariantId: any = null;
     let variantText = "";
 
-    if (hasVariants) {
+       if (hasVariants) {
       const v = (p.variants || []).find((x: any) => String(x._id) === String(it.variantId));
       if (!v) throw new Error("Selected variant no longer exists");
 
@@ -309,6 +333,23 @@ async function buildCheckoutSnapshot(req: Request, userId: any) {
       finalVariantId = null;
       variantText = "";
     }
+
+    // ✅ base pricing (without shipping)
+    const baseMrp = Number(mrp || 0);
+    const baseSalePrice = Number(salePrice || 0);
+
+    // ✅ vendor-only shipping markup
+    const shippingMarkup = getShippingMarkupForProduct(p);
+
+    // ✅ payable prices (customer sees this)
+    const payableMrp = moneyNum(baseMrp + shippingMarkup);
+    const payableSalePrice = moneyNum(baseSalePrice + shippingMarkup);
+
+    // ✅ use payable salePrice for totals/offers
+    mrp = payableMrp;
+    salePrice = payableSalePrice;
+
+    
 
     // ✅ Ownership snapshot (adjust if your Product uses different field)
     const vendorId = p?.vendorId ? String(p.vendorId) : null;
@@ -329,7 +370,6 @@ async function buildCheckoutSnapshot(req: Request, userId: any) {
     }
   : null;
     const lineTotal = Number(salePrice) * qty;
-
     return {
       productId: new Types.ObjectId(it.productId),
       productCode,
@@ -342,15 +382,22 @@ async function buildCheckoutSnapshot(req: Request, userId: any) {
       mrp,
       salePrice,
 
+      pricingMeta: {
+        baseMrp,
+        baseSalePrice,
+        shippingMarkup,
+        weightKg: p?.ship?.weightKg ?? 0,
+      },
+
       ownerType,
       ship: shipSnap,
       vendorId: vendorId ? new Types.ObjectId(vendorId) : null,
       soldBy,
 
-      // default allocation (will be overwritten below)
       offerDiscount: 0,
       finalLineTotal: lineTotal,
     };
+
   });
 
   const subtotal = orderItems.reduce(
@@ -377,14 +424,19 @@ async function buildCheckoutSnapshot(req: Request, userId: any) {
     lines,
   });
 
-  if (!offerResult.ok) {
-    const e: any = new Error(offerResult.reason || "Offer invalid");
+  // ✅ Only fail if user actually entered coupon
+  if (couponCode && !offerResult.ok) {
+    const e: any = new Error(offerResult.reason || "Invalid coupon");
     e.status = 400;
     throw e;
   }
 
-  const discountTotal = Math.min(Number(offerResult.discount || 0), subtotal);
+  const discountTotal = offerResult.ok
+    ? Math.min(Number(offerResult.discount || 0), subtotal)
+    : 0;
+
   const grandTotal = Math.max(0, subtotal - discountTotal);
+
 
   // ✅ Allocate discount per item proportionally (store on items)
   // This matters for vendor-wise subOrders totals.
@@ -513,18 +565,17 @@ export const createCodOrder = async (req: Request, res: Response) => {
       subOrders: snap.subOrders,
 
       totals: snap.totals,
-
-      appliedOffer: snap.offerResult.appliedOffer
-        ? {
-          offerId: snap.offerResult.appliedOffer._id,
-          name: snap.offerResult.appliedOffer.name,
-          mode: snap.offerResult.appliedOffer.mode,
-          couponCode: snap.offerResult.appliedOffer.couponCode || null,
-          offerType: snap.offerResult.appliedOffer.type,
-          value: snap.offerResult.appliedOffer.value,
-          discountAmount: snap.totals.discount,
-        }
-        : null,
+appliedOffer: snap.offerResult.ok && snap.offerResult.appliedOffer
+  ? {
+      offerId: snap.offerResult.appliedOffer._id,
+      name: snap.offerResult.appliedOffer.name,
+      mode: snap.offerResult.appliedOffer.mode,
+      couponCode: snap.offerResult.appliedOffer.couponCode || null,
+      offerType: snap.offerResult.appliedOffer.type,
+      value: snap.offerResult.appliedOffer.value,
+      discountAmount: snap.totals.discount,
+    }
+  : null,
 
       contact: {
         name: snap.contactName,
@@ -694,6 +745,28 @@ export const createRazorpayOrder = async (req: Request, res: Response) => {
         },
       }
     );
+    // ✅ Clear used cart items after successful payment
+    try {
+      const ownerKey = `u:${String(userId)}`;
+      const cart =
+        (await Cart.findOne({ ownerKey })) ||
+        (await Cart.findOne({ userId }));
+
+      if (cart?.items?.length) {
+        const used = (order as any).items || [];
+        cart.items = (cart.items as any[]).filter((ci: any) => {
+          return !used.some((oi: any) =>
+            String(ci.productId) === String(oi.productId) &&
+            String(ci.variantId || "") === String(oi.variantId || "") &&
+            String((ci.colorKey || "").toLowerCase()) === String((oi.colorKey || "").toLowerCase())
+          );
+        }) as any;
+
+        await cart.save();
+      }
+    } catch (e: any) {
+      console.error("Cart clear after payment failed:", e?.message || e);
+    }
 
     return res.status(201).json({
       message: "Razorpay order created",
@@ -1133,8 +1206,8 @@ const ship = order.address || null;
       const mrp = Number(it.mrp || 0);
       const sale = Number(it.salePrice || 0);
 
-      const gross = mrp * qty;
-      const lineTotal = sale * qty;
+  const gross = mrp * qty;
+      const lineTotal = Number((it as any).finalLineTotal ?? (sale * qty));
 
       const discount = Math.max(0, gross - lineTotal);
       const other = 0;

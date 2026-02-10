@@ -62,10 +62,8 @@ export const adminGetOrders = async (req: Request, res: Response) => {
 
     const [items, total] = await Promise.all([
       Order.find(filter)
-        .populate({
-          path: "items.productId",
-          select: "title variants colors galleryImages featureImage ship",
-        })
+.populate({ path: "items.productId", select: "title variants colors galleryImages featureImage ship ownerType vendorId" })
+.populate({ path: "subOrders.items.productId", select: "title variants colors galleryImages featureImage ship ownerType vendorId" })
         .select(
           [
             "orderCode",
@@ -84,6 +82,7 @@ export const adminGetOrders = async (req: Request, res: Response) => {
             "shipments",
             "return",
             "refund",
+            "ship",
             "createdAt",
             "updatedAt",
           ].join(" ")

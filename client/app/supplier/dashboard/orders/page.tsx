@@ -49,42 +49,38 @@ function calcItemsTotal(items: any[]) {
   const arr = Array.isArray(items) ? items : [];
   return arr.reduce((sum, it) => {
     const qty = Math.max(1, Number(it?.qty || 1));
-    const line =
-      Number(it?.finalLineTotal ?? NaN) ||
-      Number(it?.lineTotal ?? NaN) ||
-      Number(it?.total ?? NaN) ||
-      Number(it?.amount ?? NaN);
-    if (Number.isFinite(line) && line > 0) return sum + line;
 
-    const unit =
-      Number(it?.finalPrice ?? NaN) ||
-      Number(it?.salePrice ?? NaN) ||
-      Number(it?.price ?? NaN) ||
-      Number(it?.unitPrice ?? NaN);
-    if (Number.isFinite(unit) && unit > 0) return sum + unit * qty;
+    // ✅ best: finalLineTotal (already base - discount)
+    const finalLine = Number(it?.finalLineTotal);
+    if (Number.isFinite(finalLine) && finalLine >= 0) return sum + finalLine;
 
+    // ✅ next: baseLineTotal (baseSalePrice * qty)
+    const baseLine = Number(it?.baseLineTotal);
+    if (Number.isFinite(baseLine) && baseLine >= 0) return sum + baseLine;
+
+    // ✅ next: compute baseSalePrice * qty from pricingMeta
+    const baseSale = Number(it?.pricingMeta?.baseSalePrice);
+    if (Number.isFinite(baseSale) && baseSale > 0) return sum + baseSale * qty;
+
+    // ❌ do NOT fallback to it.salePrice because it might include shipping
     return sum;
   }, 0);
 }
 
-function pickSubOrderTotal(order: any, so: any) {
-  const direct =
-    toNum(so?.total, NaN) ||
-    toNum(so?.grandTotal, NaN) ||
-    (toNum(so?.subtotal, NaN) + toNum(so?.shipping, 0));
-  if (Number.isFinite(direct) && direct > 0) return direct;
 
+function pickSubOrderTotal(order: any, so: any) {
+  // ✅ prefer vendorTotals (controller se aa raha hoga)
+  const vt = order?.vendorTotals || null;
+  if (vt && Number(vt.grandTotal) >= 0) return toNum(vt.grandTotal, 0);
+
+  // ✅ compute from items (WITHOUT shipping)
   const computed = calcItemsTotal(so?.items || []);
   if (computed > 0) return computed;
 
-  const totals = order?.totals || {};
-  return (
-    toNum(totals?.grandTotal, NaN) ||
-    toNum(totals?.total, NaN) ||
-    toNum(totals?.subtotal, NaN) ||
-    toNum(order?.totalAmount, 0)
-  );
+  // fallback (very last)
+  return 0;
 }
+
 
 function getVariantTextFromItem(it: any) {
   const vid = it?.variantId?._id || it?.variantId || it?.variant?._id || it?.variant || "";
