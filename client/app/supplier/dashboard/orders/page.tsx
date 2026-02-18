@@ -69,17 +69,30 @@ function calcItemsTotal(items: any[]) {
 
 
 function pickSubOrderTotal(order: any, so: any) {
-  // ✅ prefer vendorTotals (controller se aa raha hoga)
-  const vt = order?.vendorTotals || null;
-  if (vt && Number(vt.grandTotal) >= 0) return toNum(vt.grandTotal, 0);
+  // ✅ FIRST preference: vendorTotals.total (without shipping)
+  const vtot = so?.vendorTotals || null;
+  const v = toNum(vtot?.total, NaN) || toNum(vtot?.subtotal, NaN);
+  if (Number.isFinite(v) && v >= 0) return v;
 
-  // ✅ compute from items (WITHOUT shipping)
+  // fallback (old)
+  const direct =
+    toNum(so?.total, NaN) ||
+    toNum(so?.grandTotal, NaN) ||
+    (toNum(so?.subtotal, NaN) + toNum(so?.shipping, 0));
+  if (Number.isFinite(direct) && direct > 0) return direct;
+
   const computed = calcItemsTotal(so?.items || []);
   if (computed > 0) return computed;
 
-  // fallback (very last)
-  return 0;
+  const totals = order?.totals || {};
+  return (
+    toNum(totals?.grandTotal, NaN) ||
+    toNum(totals?.total, NaN) ||
+    toNum(totals?.subtotal, NaN) ||
+    toNum(order?.totalAmount, 0)
+  );
 }
+
 
 
 function getVariantTextFromItem(it: any) {
@@ -635,14 +648,17 @@ export default function VendorOrdersPage() {
                           <Badge tone={toneForPaymentStatus(ps) as any}>{ps}</Badge>
                         </div>
 
-                        {pm === "ONLINE" ? (
+                        {/* {pm === "ONLINE" ? (
                           <div className="mt-2 text-[11px] text-gray-600">
                             {o?.pg?.paymentId ? "RZP captured" : "RZP pending"}
                             {o?.pg?.amount ? ` • ${moneyPaise(o.pg.amount)} ${o?.pg?.currency || "INR"}` : ""}
                           </div>
                         ) : (
                           <div className="mt-2 text-[11px] text-gray-600">COD</div>
-                        )}
+                        )} */}
+                        <div className="mt-2 text-[11px] text-gray-600">
+  {pm === "ONLINE" ? "Online payment" : "COD"}
+</div>
                       </td>
 
                       {/* Shipment */}
@@ -770,11 +786,10 @@ export default function VendorOrdersPage() {
                         const img = pickFirstImage(it);
 
                         const line =
+                          toNum(it?.vendorPricing?.baseFinalLineTotal, NaN) ||
                           toNum(it?.finalLineTotal, NaN) ||
                           toNum(it?.lineTotal, NaN) ||
-                          (toNum(it?.finalPrice, NaN)
-                            ? toNum(it?.finalPrice, 0) * Math.max(1, toNum(it?.qty, 1))
-                            : 0);
+                          (toNum(it?.finalPrice, NaN) ? toNum(it?.finalPrice, 0) * Math.max(1, toNum(it?.qty, 1)) : 0);
 
                         return (
                           <div key={idx} className="flex gap-3 rounded-2xl border p-3">
@@ -928,16 +943,11 @@ export default function VendorOrdersPage() {
                           <StatRow k="Status" v={<Badge tone={toneForPaymentStatus(ps) as any}>{ps}</Badge>} />
                           <StatRow k="Payable" v={money(pickSubOrderTotal(drawer.order, drawer.sub || {}))} />
 
-                          {pm === "ONLINE" ? (
-                            <>
-                              <StatRow k="RZP Order" v={<span className="font-mono">{pg?.orderId || "—"}</span>} />
-                              <StatRow k="RZP Payment" v={<span className="font-mono">{pg?.paymentId || "—"}</span>} />
-                              <StatRow k="Amount" v={pg?.amount ? `${moneyPaise(pg.amount)} ${pg?.currency || "INR"}` : "—"} />
-                              <StatRow k="Verified" v={pg?.verifiedAt ? fmtDateTime(pg.verifiedAt) : "—"} />
-                            </>
-                          ) : (
-                            <StatRow k="COD" v="Cash on Delivery" />
-                          )}
+{pm === "ONLINE" ? (
+  <StatRow k="Online" v="Paid via Online" />
+) : (
+  <StatRow k="COD" v="Cash on Delivery" />
+)}
                         </div>
                       );
                     })()}

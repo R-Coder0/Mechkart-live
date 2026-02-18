@@ -13,12 +13,30 @@ const toNum = (v: any, fb = 0) => {
 // ✅ get vendorId from middleware (assumed: verifyVendor)
 const getVendorId = (req: Request) => (req as any)?.vendor?._id || (req as any)?.vendorId;
 
-function buildSearchQuery(qRaw: string) {
+/** =========================
+ * Shipping Markup (Vendor-only) — SAME RULE AS CHECKOUT
+ * 0.5kg => 60, every next 0.5kg => +30
+ * ========================= */
+const calcShippingMarkup = (weightKg: any) => {
+  const w = Number(weightKg || 0);
+  if (!Number.isFinite(w) || w <= 0) return 0;
+
+  const step = 0.5;
+  const slabs = Math.ceil(w / step);
+  const base = 60;
+  const extra = Math.max(0, slabs - 1) * 30;
+  return base + extra;
+};
+
+function escapeRegex(input: string) {
+  return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function buildSearchMatch(qRaw: string) {
   const q = toStr(qRaw);
   if (!q) return null;
 
-  const safe = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const rx = new RegExp(safe, "i");
+  const rx = new RegExp(escapeRegex(q), "i");
 
   return {
     $or: [
@@ -34,78 +52,91 @@ function buildSearchQuery(qRaw: string) {
 }
 
 /**
- * ✅ Transform vendor subOrders items to show WITHOUT shipping
- * - mrp/salePrice => baseMrp/baseSalePrice from pricingMeta
- * - baseLineTotal => baseSalePrice * qty
- * - finalLineTotal => baseLineTotal - offerDiscount
+ * ✅ Convert payable(order stored) -> vendorView(without shipping)
+ * - order.items/subOrders store payable salePrice (shipping included)
+ * - vendor should see baseSalePrice = salePrice - shippingMarkup
+ * - vendor finalLineTotal = finalLineTotal - (shippingMarkup * qty)
  */
-function transformVendorSubOrders(subOrders: any[]) {
-  const out = (Array.isArray(subOrders) ? subOrders : []).map((so: any) => {
+function applyVendorPriceViewToOrder(order: any, vendorObjectId: Types.ObjectId) {
+  const subOrdersAll = Array.isArray(order?.subOrders) ? order.subOrders : [];
+  const vendorSubs = subOrdersAll.filter((so: any) => String(so?.vendorId || "") === String(vendorObjectId));
+
+  const patchedSubs = vendorSubs.map((so: any) => {
     const items = Array.isArray(so?.items) ? so.items : [];
 
-    const newItems = items.map((it: any) => {
-      const qty = toNum(it?.qty, 1) || 1;
+    const patchedItems = items.map((it: any) => {
+      const qty = Math.max(1, toNum(it?.qty, 1));
 
-      const baseMrp = toNum(it?.pricingMeta?.baseMrp ?? it?.mrp, 0);
-      const baseSalePrice = toNum(it?.pricingMeta?.baseSalePrice ?? it?.salePrice ?? baseMrp, baseMrp);
+      // order saved payable
+      const payableSale = toNum(it?.salePrice, 0);
+      const payableMrp = toNum(it?.mrp, 0);
 
-      const offerDiscount = toNum(it?.offerDiscount, 0);
+      // weight snapshot is in order item: it.ship.weightKg
+      const weightKg = it?.ship?.weightKg ?? 0;
+      const shipMarkupUnit = calcShippingMarkup(weightKg);
 
-      const baseLineTotal = Math.round(baseSalePrice * qty * 100) / 100;
-      const finalLineTotal = Math.max(
-        0,
-        Math.round((baseLineTotal - offerDiscount) * 100) / 100
-      );
+      // base(unit) = payable - markup
+      const baseSale = Math.max(0, payableSale - shipMarkupUnit);
+      const baseMrp = Math.max(0, payableMrp - shipMarkupUnit);
+
+      // payable line totals
+      const payableLine =
+        toNum(it?.finalLineTotal, NaN) ||
+        Math.max(0, payableSale * qty);
+
+      // vendor line totals (remove shipping part)
+      const baseLine = Math.max(0, payableLine - shipMarkupUnit * qty);
 
       return {
         ...it,
-
-        // ✅ override shown prices (WITHOUT shipping)
-        mrp: baseMrp,
-        salePrice: baseSalePrice,
-
-        // ✅ keep shipping separately for reference
-        shippingMarkup: toNum(it?.pricingMeta?.shippingMarkup, 0),
-        weightKg: toNum(it?.pricingMeta?.weightKg, 0),
-
-        baseLineTotal,
-        finalLineTotal,
+        vendorPricing: {
+          shippingMarkupUnit: shipMarkupUnit,
+          weightKg: toNum(weightKg, 0),
+          baseMrp,
+          baseSalePrice: baseSale,
+          baseLineTotal: baseSale * qty,
+          baseFinalLineTotal: baseLine,
+        },
       };
     });
 
-    const subtotal = Math.round(newItems.reduce((s: number, x: any) => s + toNum(x.finalLineTotal, 0), 0) * 100) / 100;
+    const vendorSubtotal = patchedItems.reduce((sum: number, it: any) => {
+      const v = toNum(it?.vendorPricing?.baseFinalLineTotal, NaN);
+      if (Number.isFinite(v)) return sum + v;
+      return sum;
+    }, 0);
 
     return {
       ...so,
-      items: newItems,
-
-      // ✅ override vendor totals WITHOUT shipping
-      subtotal,
-      shipping: 0,
-      total: subtotal,
+      items: patchedItems,
+      vendorTotals: {
+        subtotal: Math.round(vendorSubtotal * 100) / 100,
+        shipping: 0,
+        total: Math.round(vendorSubtotal * 100) / 100,
+      },
     };
   });
 
-  return out;
-}
-
-/**
- * ✅ Filter shipments for vendor only (by vendorId OR by subOrderId)
- */
-function filterVendorShipments(order: any, vendorObjectId: Types.ObjectId, vendorSubOrders: any[]) {
+  // shipments filter for vendor (same as your logic)
   const shipmentsAll = Array.isArray(order?.shipments) ? order.shipments : [];
-  const vendorSubIds = vendorSubOrders.map((x: any) => String(x?._id));
+  const vendorSubIds = patchedSubs.map((x: any) => String(x._id));
 
-  return shipmentsAll.filter((sh: any) => {
+  const vendorShipments = shipmentsAll.filter((sh: any) => {
     const byVendor = String(sh?.vendorId || "") === String(vendorObjectId);
     const bySub = vendorSubIds.includes(String(sh?.subOrderId || ""));
     return byVendor || bySub;
   });
+
+  return {
+    ...order,
+    subOrders: patchedSubs,
+    shipments: vendorShipments,
+  };
 }
 
 /**
  * ✅ List vendor orders (paginated)
- * Returns ONLY vendor's subOrders + vendor relevant shipments.
+ * Returns ONLY vendor subOrders + vendor relevant shipments.
  *
  * GET /api/vendor/orders?q=&status=&paymentMethod=&paymentStatus=&page=&limit=
  */
@@ -125,78 +156,100 @@ export const vendorFetchOrders = async (req: Request, res: Response) => {
     const limit = Math.min(50, Math.max(1, toNum((req.query as any)?.limit, 20)));
     const skip = (page - 1) * limit;
 
-    // base match: order contains vendor subOrder
-    const filter: any = {
+    const match: any = {
       "subOrders.vendorId": vendorObjectId,
     };
 
-    const search = buildSearchQuery(q);
-    if (search) Object.assign(filter, search);
+    const searchMatch = buildSearchMatch(q);
+    if (searchMatch) Object.assign(match, searchMatch);
 
-    if (paymentMethod) filter.paymentMethod = paymentMethod;
-    if (paymentStatus) filter.paymentStatus = paymentStatus;
+    if (paymentMethod) match.paymentMethod = paymentMethod;
+    if (paymentStatus) match.paymentStatus = paymentStatus;
 
-    // status filter: match either parent OR vendor subOrder
     if (status) {
-      filter.$or = filter.$or || [];
-      filter.$or.push({ status });
-      filter.$or.push({ subOrders: { $elemMatch: { vendorId: vendorObjectId, status } } });
+      match.$or = match.$or || [];
+      match.$or.push({ status });
+      match.$or.push({
+        subOrders: { $elemMatch: { vendorId: vendorObjectId, status } },
+      });
     }
 
-    const [orders, total] = await Promise.all([
-      Order.find(filter)
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit)
-        .select(
-          [
-            "orderCode",
-            "status",
-            "paymentMethod",
-            "paymentStatus",
-            "totals",
-            "contact",
-            "address",
-            "pg",
-            "cod",
-            "subOrders",
-            "shipments",
-            "return",
-            "refund",
-            "createdAt",
-            "updatedAt",
-          ].join(" ")
-        )
-        .lean(),
-      Order.countDocuments(filter),
-    ]);
+    // ✅ Aggregate: bring only needed fields + only vendor subOrders
+    const pipeline: any[] = [
+      { $match: match },
+      { $sort: { createdAt: -1 } },
+      {
+        $project: {
+          orderCode: 1,
+          status: 1,
+          paymentMethod: 1,
+          paymentStatus: 1,
+          totals: 1,
+          totalAmount: 1,
+          createdAt: 1,
+          updatedAt: 1,
 
-    // scope results to vendor
-    const items = (orders || []).map((order: any) => {
-      const subOrdersAll = Array.isArray(order?.subOrders) ? order.subOrders : [];
-      const vendorSubs = subOrdersAll.filter((so: any) => String(so?.vendorId || "") === String(vendorObjectId));
+          contact: 1,
+          address: 1,
+          pg: 1,
+          cod: 1,
 
-      const vendorSubsTransformed = transformVendorSubOrders(vendorSubs);
-      const vendorShipments = filterVendorShipments(order, vendorObjectId, vendorSubsTransformed);
+          subOrders: {
+            $filter: {
+              input: "$subOrders",
+              as: "so",
+              cond: { $eq: ["$$so.vendorId", vendorObjectId] },
+            },
+          },
 
-      // ✅ optional: vendorTotals from vendor subOrders
-      const vendorSubtotal = Math.round(
-        vendorSubsTransformed.reduce((s: number, so: any) => s + toNum(so?.subtotal, 0), 0) * 100
-      ) / 100;
-
-      return {
-        ...order,
-        subOrders: vendorSubsTransformed,
-        shipments: vendorShipments,
-
-        // ✅ vendor-centric totals (WITHOUT shipping)
-        vendorTotals: {
-          subtotal: vendorSubtotal,
-          shipping: 0,
-          grandTotal: vendorSubtotal,
+          shipments: 1,
+          return: 1,
+          refund: 1,
         },
-      };
-    });
+      },
+      {
+        $addFields: {
+          shipments: {
+            $filter: {
+              input: "$shipments",
+              as: "sh",
+              cond: {
+                $or: [
+                  { $eq: ["$$sh.vendorId", vendorObjectId] },
+                  {
+                    $in: [
+                      "$$sh.subOrderId",
+                      {
+                        $map: {
+                          input: "$subOrders",
+                          as: "so",
+                          in: "$$so._id",
+                        },
+                      },
+                    ],
+                  },
+                ],
+              },
+            },
+          },
+        },
+      },
+      {
+        $facet: {
+          items: [{ $skip: skip }, { $limit: limit }],
+          meta: [{ $count: "total" }],
+        },
+      },
+    ];
+
+    const out = await Order.aggregate(pipeline);
+
+    const rawItems = out?.[0]?.items || [];
+    const total = out?.[0]?.meta?.[0]?.total || 0;
+    const totalPages = Math.max(1, Math.ceil(total / limit));
+
+    // ✅ POST-PROCESS: apply vendor pricing view (shipping removed)
+    const items = rawItems.map((o: any) => applyVendorPriceViewToOrder(o, vendorObjectId));
 
     return res.json({
       data: {
@@ -204,7 +257,7 @@ export const vendorFetchOrders = async (req: Request, res: Response) => {
         page,
         limit,
         total,
-        totalPages: Math.max(1, Math.ceil(total / limit)),
+        totalPages,
       },
     });
   } catch (e: any) {
@@ -233,7 +286,7 @@ export const vendorGetOrderById = async (req: Request, res: Response) => {
     const order = await Order.findById(orderId)
       .populate({
         path: "subOrders.items.productId",
-        select: "title productCode variants colors featureImage galleryImages ship ownerType vendorId",
+        select: "title productCode variants colors featureImage galleryImages",
       })
       .lean();
 
@@ -244,25 +297,17 @@ export const vendorGetOrderById = async (req: Request, res: Response) => {
       (so: any) => String(so?.vendorId || "") === String(vendorObjectId)
     );
 
-    if (!vendorSubs.length) return res.status(403).json({ message: "Forbidden" });
+    if (!vendorSubs.length) {
+      return res.status(403).json({ message: "Forbidden" });
+    }
 
-    const vendorSubsTransformed = transformVendorSubOrders(vendorSubs);
-    const vendorShipments = filterVendorShipments(order, vendorObjectId, vendorSubsTransformed);
+    // ✅ Apply vendor view + shipment filter
+    const scoped = applyVendorPriceViewToOrder(order as any, vendorObjectId);
 
-    const vendorSubtotal = Math.round(
-      vendorSubsTransformed.reduce((s: number, so: any) => s + toNum(so?.subtotal, 0), 0) * 100
-    ) / 100;
-
+    // return/refund pass-through (you already wanted this)
     return res.json({
       data: {
-        ...(order as any),
-        subOrders: vendorSubsTransformed,
-        shipments: vendorShipments,
-        vendorTotals: {
-          subtotal: vendorSubtotal,
-          shipping: 0,
-          grandTotal: vendorSubtotal,
-        },
+        ...scoped,
         return: (order as any).return || null,
         refund: (order as any).refund || null,
       },
@@ -290,7 +335,7 @@ export const vendorGetOrderTracking = async (req: Request, res: Response) => {
       return res.status(400).json({ message: "Invalid order id" });
     }
 
-    const order = await Order.findById(orderId).select("orderCode status paymentMethod paymentStatus createdAt shipments subOrders").lean();
+    const order = await Order.findById(orderId).lean();
     if (!order) return res.status(404).json({ message: "Order not found" });
 
     const subOrdersAll = Array.isArray((order as any).subOrders) ? (order as any).subOrders : [];
@@ -299,7 +344,14 @@ export const vendorGetOrderTracking = async (req: Request, res: Response) => {
     );
     if (!vendorSubs.length) return res.status(403).json({ message: "Forbidden" });
 
-    const vendorShipments = filterVendorShipments(order, vendorObjectId, vendorSubs);
+    const vendorSubIds = vendorSubs.map((x: any) => String(x._id));
+    const shipmentsAll = Array.isArray((order as any).shipments) ? (order as any).shipments : [];
+
+    const shipments = shipmentsAll.filter((sh: any) => {
+      const byVendor = String(sh?.vendorId || "") === String(vendorObjectId);
+      const bySub = vendorSubIds.includes(String(sh?.subOrderId || ""));
+      return byVendor || bySub;
+    });
 
     return res.json({
       data: {
@@ -309,7 +361,7 @@ export const vendorGetOrderTracking = async (req: Request, res: Response) => {
         paymentMethod: (order as any).paymentMethod,
         paymentStatus: (order as any).paymentStatus,
         createdAt: (order as any).createdAt,
-        shipments: vendorShipments,
+        shipments,
       },
     });
   } catch (e: any) {

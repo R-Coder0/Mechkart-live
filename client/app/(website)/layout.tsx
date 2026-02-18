@@ -16,7 +16,7 @@ export default function WebsiteLayout({ children }: { children: ReactNode }) {
         <WebsiteHeader />
         <CategoryBar/>
         <main>{children}</main>
-        <WhatsAppFloatingButton/>
+        {/* <WhatsAppFloatingButton/> */}
         <Footer/>
       </body>
     </html>

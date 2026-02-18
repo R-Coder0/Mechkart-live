@@ -11,6 +11,7 @@ import {
   setCartSelectAll,
 } from "../controllers/common/cart.controller.js";
 import { authOptional } from "../middleware/authOptional.js";
+import { searchProducts } from "../controllers/common/product.search.controller.js";
 
 const router = Router();
 
@@ -26,7 +27,7 @@ router.delete("/cart/item/:itemId",authOptional, removeCartItem);
 router.delete("/cart/clear",authOptional, clearCart);
 router.patch("/cart/item/select",authOptional, setCartItemSelected);
 router.patch("/cart/select-all",authOptional, setCartSelectAll);
-
+router.get("/products/search", searchProducts);
 
 /**
  * BANNERS (KEEP THIS LAST)

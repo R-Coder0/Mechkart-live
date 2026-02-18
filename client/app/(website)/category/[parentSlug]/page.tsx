@@ -2,7 +2,7 @@
 
 export const dynamic = "force-dynamic"; // 🔥 IMPORTANT
 
-import ProductCard from "@/components/website/ProductCard";
+import CategoryProductsClient from "@/components/website/CategoryProductsClient";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL;
 
@@ -62,21 +62,13 @@ async function fetchCategories(): Promise<ApiCategory[]> {
   return (data.data || data.categories || []) as ApiCategory[];
 }
 
-function calcTotalStock(p: ApiProduct) {
-  if (p.variants && p.variants.length > 0) {
-    return p.variants.reduce((sum, v) => sum + Number(v.quantity ?? 0), 0);
-  }
-  return Number(p.totalStock ?? p.baseStock ?? 0);
-}
-
 async function fetchProductsByCategory(categoryId: string): Promise<ApiProduct[]> {
   if (!API_BASE) return [];
 
   const url = `${API_BASE}/admin/products?categoryId=${categoryId}`;
-
   const res = await fetch(url, {
     cache: "no-store",
-    next: { revalidate: 0 }, // 🔥 fresh data
+    next: { revalidate: 0 },
   });
 
   if (!res.ok) return [];
@@ -121,15 +113,11 @@ export default async function CategoryPage({
     return pid === parent._id;
   });
 
+  // ✅ fetch products for this parent category
   const allProducts = await fetchProductsByCategory(parent._id);
 
-  // ✅ PUBLIC FILTER (MOST IMPORTANT)
-  const visibleProducts = allProducts.filter(
-    (p) => p.approvalStatus === "APPROVED" && p.isActive !== false
-  );
-
   return (
-    <div className="max-w-7xl mx-auto px-4 py-6">
+    <div className="max-w-[1500px] mx-auto px-4 py-6">
       <h1 className="text-xl font-semibold text-gray-900 capitalize">
         {parent.name}
       </h1>
@@ -149,40 +137,8 @@ export default async function CategoryPage({
         </div>
       )}
 
-      {/* Products */}
-      {visibleProducts.length === 0 ? (
-        <p className="mt-5 text-sm text-gray-600">
-          No products found in this category.
-        </p>
-      ) : (
-        <div className="mt-5 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
-          {visibleProducts.map((p) => {
-            const totalStock = calcTotalStock(p);
-
-            return (
-              <ProductCard
-                key={p._id}
-                product={{
-                  _id: p._id,
-                  title: p.title,
-                  slug: p.slug,
-                  featureImage: p.featureImage,
-                  mrp: p.mrp,
-                  salePrice: p.salePrice,
-
-                  variants: p.variants || [],
-                  totalStock,
-                  inStock: totalStock > 0,
-
-                  // ✅ SOLD BY SUPPORT
-                  ownerType: p.ownerType,
-                  vendorId: p.vendorId || null,
-                }}
-              />
-            );
-          })}
-        </div>
-      )}
+      {/* ✅ Filters + Products grid (client component) */}
+      <CategoryProductsClient products={allProducts} />
     </div>
   );
 }

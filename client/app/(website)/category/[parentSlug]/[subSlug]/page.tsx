@@ -2,7 +2,7 @@
 
 export const dynamic = "force-dynamic"; // 🔥 IMPORTANT
 
-import ProductCard from "@/components/website/ProductCard";
+import CategoryProductsClient from "@/components/website/CategoryProductsClient";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL;
 
@@ -62,18 +62,10 @@ async function fetchCategories(): Promise<ApiCategory[]> {
   return (data.data || data.categories || []) as ApiCategory[];
 }
 
-function calcTotalStock(p: ApiProduct) {
-  if (p.variants && p.variants.length > 0) {
-    return p.variants.reduce((sum, v) => sum + Number(v.quantity ?? 0), 0);
-  }
-  return Number(p.totalStock ?? p.baseStock ?? 0);
-}
-
 async function fetchProductsBySubCategory(subCategoryId: string): Promise<ApiProduct[]> {
   if (!API_BASE) return [];
 
   const url = `${API_BASE}/admin/products?subCategoryId=${subCategoryId}`;
-
   const res = await fetch(url, {
     cache: "no-store",
     next: { revalidate: 0 },
@@ -93,9 +85,7 @@ export default async function SubCategoryPage({
 
   const categories = await fetchCategories();
 
-  const parent = categories.find(
-    (c) => !c.parentCategory && c.slug === parentSlug
-  );
+  const parent = categories.find((c) => !c.parentCategory && c.slug === parentSlug);
 
   if (!parent) {
     return (
@@ -119,12 +109,9 @@ export default async function SubCategoryPage({
   if (!sub) {
     return (
       <div className="max-w-7xl mx-auto px-4 py-8">
-        <h1 className="text-xl font-semibold text-gray-900">
-          Subcategory not found
-        </h1>
+        <h1 className="text-xl font-semibold text-gray-900">Subcategory not found</h1>
         <p className="mt-2 text-sm text-gray-600">
-          Invalid subcategory slug:{" "}
-          <span className="font-medium">{subSlug}</span>
+          Invalid subcategory slug: <span className="font-medium">{subSlug}</span>
         </p>
       </div>
     );
@@ -132,13 +119,9 @@ export default async function SubCategoryPage({
 
   const allProducts = await fetchProductsBySubCategory(sub._id);
 
-  // ✅ PUBLIC SAFE FILTER
-  const visibleProducts = allProducts.filter(
-    (p) => p.approvalStatus === "APPROVED" && p.isActive !== false
-  );
-
   return (
-    <div className="max-w-7xl mx-auto px-4 py-6">
+    <div className="max-w-[1500px] mx-auto px-4 py-6">
+      {/* Breadcrumb */}
       <div className="flex items-center gap-2 text-sm text-gray-600">
         <a className="hover:underline" href={`/category/${parent.slug}`}>
           {parent.name}
@@ -147,43 +130,10 @@ export default async function SubCategoryPage({
         <span className="text-gray-900 font-medium">{sub.name}</span>
       </div>
 
-      <h1 className="mt-2 text-xl font-semibold text-gray-900 capitalize">
-        {sub.name}
-      </h1>
+      <h1 className="mt-2 text-xl font-semibold text-gray-900 capitalize">{sub.name}</h1>
 
-      {visibleProducts.length === 0 ? (
-        <p className="mt-5 text-sm text-gray-600">
-          No products found in this sub category.
-        </p>
-      ) : (
-        <div className="mt-5 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
-          {visibleProducts.map((p) => {
-            const totalStock = calcTotalStock(p);
-
-            return (
-              <ProductCard
-                key={p._id}
-                product={{
-                  _id: p._id,
-                  title: p.title,
-                  slug: p.slug,
-                  featureImage: p.featureImage,
-                  mrp: p.mrp,
-                  salePrice: p.salePrice,
-
-                  variants: p.variants || [],
-                  totalStock,
-                  inStock: totalStock > 0,
-
-                  // ✅ SOLD BY FIX
-                  ownerType: p.ownerType,
-                  vendorId: p.vendorId || null,
-                }}
-              />
-            );
-          })}
-        </div>
-      )}
+      {/* ✅ Filters + Products grid */}
+      <CategoryProductsClient products={allProducts} />
     </div>
   );
 }
