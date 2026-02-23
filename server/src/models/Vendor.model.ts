@@ -38,7 +38,8 @@
       ifsc?: string;
       qrImage?: string;
     };
-
+resetPasswordTokenHash?: string;
+resetPasswordTokenExpires?: Date;
     status: VendorStatus;
     rejectReason?: string;
 
@@ -112,7 +113,8 @@
       },
 
       rejectReason: { type: String },
-
+resetPasswordTokenHash: { type: String },
+resetPasswordTokenExpires: { type: Date },
       // ✅ disable fields in schema
       disabledAt: { type: Date },
       disabledReason: { type: String },

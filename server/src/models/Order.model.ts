@@ -18,10 +18,10 @@ export interface IOrderItem {
   mrp: number;
   salePrice: number;
 
-  // ✅ optional (recommended for multi-vendor split)
   ownerType?: "ADMIN" | "VENDOR";
   vendorId?: Types.ObjectId | null;
   soldBy?: string | null;
+
   ship?: {
     lengthCm?: number | null;
     breadthCm?: number | null;
@@ -29,9 +29,8 @@ export interface IOrderItem {
     weightKg?: number | null;
   } | null;
 
-  // ✅ optional (if you want to persist offer allocation per line)
-  offerDiscount?: number;     // line offer discount
-  finalLineTotal?: number;    // lineTotal after offer discount
+  offerDiscount?: number;
+  finalLineTotal?: number;
 }
 
 /* =========================
@@ -114,6 +113,82 @@ export interface IOrderShipment {
 }
 
 /* =========================
+ * RETURN & REFUND (shared types)
+ * ========================= */
+export type ReturnStatus =
+  | "REQUESTED"
+  | "APPROVED"
+  | "REJECTED"
+  | "PICKUP_CREATED"
+  | "RECEIVED"
+  | "REFUNDED";
+
+export type RefundStatus = "PENDING" | "PROCESSED" | "FAILED";
+
+export interface IReturnBankDetails {
+  accountHolderName: string;
+  accountNumber: string;
+  ifsc: string;
+  bankName?: string | null;
+  upiId?: string | null;
+}
+
+/* =========================
+ * SubOrder Return & Refund (V2)
+ * ========================= */
+export interface ISubOrderReturnItem {
+  productId: Types.ObjectId;
+  qty: number;
+  variantId?: Types.ObjectId | null;
+  colorKey?: string | null;
+
+  reason?: string;
+  note?: string | null;
+  images?: string[];
+}
+
+export interface ISubOrderReturn {
+  requestedAt: Date;
+
+  reason: string;
+  note?: string | null;
+  images?: string[];
+
+  bankDetails?: IReturnBankDetails | null;
+
+  items: ISubOrderReturnItem[];
+
+  status: ReturnStatus;
+
+  handledByRole?: "ADMIN" | "VENDOR" | null;
+  handledById?: Types.ObjectId | null;
+
+  approvedAt?: Date | null;
+  rejectedAt?: Date | null;
+  rejectReason?: string | null;
+
+  receivedAt?: Date | null;
+
+  returnShipment?: IOrderShipment | null;
+}
+
+export interface ISubOrderRefund {
+  method: "COD" | "ONLINE";
+  amount: number;
+
+  status: RefundStatus;
+
+  provider?: "RAZORPAY" | "MANUAL";
+  reference?: string | null;
+
+  processedAt?: Date | null;
+
+  processedByAdminId?: Types.ObjectId | null;
+
+  raw?: any;
+}
+
+/* =========================
  * SubOrder (NEW)
  * ========================= */
 export type SubOrderStatus =
@@ -124,48 +199,35 @@ export type SubOrderStatus =
   | "CANCELLED";
 
 export interface ISubOrder {
-  // vendor-wise split
   ownerType: "ADMIN" | "VENDOR";
   vendorId?: Types.ObjectId | null;
-  vendorName?: string | null; // snapshot
+  vendorName?: string | null;
 
-  soldBy: string; // "Mechkart" or vendor company name snapshot
+  soldBy: string;
 
   items: IOrderItem[];
 
-  subtotal: number; // items sum (after offer allocation if you store it)
-  shipping: number; // for now 0
-  total: number;    // subtotal + shipping
+  subtotal: number;
+  shipping: number;
+  total: number;
 
   status: SubOrderStatus;
 
-  // shipment snapshot per subOrder (recommended)
   shipment?: IOrderShipment | null;
+
+  // ✅ multiple return requests over time
+  returns?: ISubOrderReturn[];
+
+  // ✅ suborder-level refund (optional)
+  refund?: ISubOrderRefund | null;
 
   createdAt: Date;
   updatedAt: Date;
 }
 
 /* =========================
- * RETURN & REFUND
+ * Order Return & Refund (legacy)
  * ========================= */
-
-export type ReturnStatus =
-  | "REQUESTED"
-  | "APPROVED"
-  | "REJECTED"
-  | "PICKUP_CREATED"
-  | "RECEIVED"
-  | "REFUNDED";
-
-export interface IReturnBankDetails {
-  accountHolderName: string;
-  accountNumber: string;
-  ifsc: string;
-  bankName?: string | null;
-  upiId?: string | null;
-}
-
 export interface IOrderReturn {
   requestedAt: Date;
   reason: string;
@@ -175,7 +237,6 @@ export interface IOrderReturn {
 
   bankDetails?: IReturnBankDetails | null;
 
-  // optional: partial return
   items?: {
     productId: Types.ObjectId;
     qty: number;
@@ -194,8 +255,6 @@ export interface IOrderReturn {
   returnShipment?: IOrderShipment | null;
 }
 
-export type RefundStatus = "PENDING" | "PROCESSED" | "FAILED";
-
 export interface IOrderRefund {
   method: "COD" | "ONLINE";
   amount: number;
@@ -210,65 +269,8 @@ export interface IOrderRefund {
 }
 
 /* =========================
- * Order
- * ========================= */
-export interface IOrder extends Document {
-  userId: Types.ObjectId;
-  orderCode: string;
-
-  parentOrderId?: Types.ObjectId | null;
-
-  // ✅ legacy flat items (keep for compatibility)
-  items: IOrderItem[];
-
-  // ✅ NEW: multi-vendor split
-  subOrders?: ISubOrder[];
-
-  totals: {
-    subtotal: number;
-    mrpTotal: number;
-    savings: number;
-    discount: number;
-    grandTotal: number;
-  };
-
-  appliedOffer?: {
-    offerId: Types.ObjectId;
-    name: string;
-    mode: "AUTO" | "COUPON";
-    couponCode?: string | null;
-    offerType: "FLAT" | "PERCENT";
-    value: number;
-    discountAmount: number;
-  } | null;
-
-  contact: IOrderContact;
-  address: IOrderAddress;
-
-  // ✅ keep existing
-  paymentMethod: "COD" | "ONLINE";
-  paymentStatus: "PENDING" | "PAID" | "FAILED" | "COD_PENDING_CONFIRMATION"; // ✅ added
-
-  status: "PLACED" | "CONFIRMED" | "SHIPPED" | "DELIVERED" | "CANCELLED";
-
-  // Razorpay + COD snapshots
-  pg?: any;
-  cod?: any;
-
-  // ✅ legacy shipments (keep)
-  shipments?: IOrderShipment[];
-
-  return?: IOrderReturn | null;
-  refund?: IOrderRefund | null;
-
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-/* =========================
  * Schemas
  * ========================= */
-
 const OrderItemSchema = new Schema<IOrderItem>(
   {
     productId: { type: Schema.Types.ObjectId, ref: "Product", required: true },
@@ -286,7 +288,6 @@ const OrderItemSchema = new Schema<IOrderItem>(
     mrp: { type: Number, required: true, min: 0 },
     salePrice: { type: Number, required: true, min: 0 },
 
-    // ✅ ownership snapshot (optional)
     ownerType: { type: String, enum: ["ADMIN", "VENDOR"], default: "ADMIN" },
     vendorId: { type: Schema.Types.ObjectId, ref: "Vendor", default: null },
     soldBy: { type: String, default: null, trim: true },
@@ -300,7 +301,7 @@ const OrderItemSchema = new Schema<IOrderItem>(
       },
       default: null,
     },
-    // ✅ offer allocation (optional)
+
     offerDiscount: { type: Number, default: 0, min: 0 },
     finalLineTotal: { type: Number, default: 0, min: 0 },
   },
@@ -319,7 +320,12 @@ const ShipmentItemRefSchema = new Schema<IShipmentItemRef>(
 
 const OrderShipmentSchema = new Schema<IOrderShipment>(
   {
-    provider: { type: String, enum: ["SHIPROCKET"], required: true, default: "SHIPROCKET" },
+    provider: {
+      type: String,
+      enum: ["SHIPROCKET"],
+      required: true,
+      default: "SHIPROCKET",
+    },
     vendorId: { type: Schema.Types.ObjectId, ref: "Vendor", default: null },
 
     items: { type: [ShipmentItemRefSchema], default: [] },
@@ -359,14 +365,125 @@ const OrderShipmentSchema = new Schema<IOrderShipment>(
 
     status: {
       type: String,
-      enum: ["CREATED", "AWB_ASSIGNED", "PICKUP_SCHEDULED", "IN_TRANSIT", "DELIVERED", "CANCELLED"],
+      enum: [
+        "CREATED",
+        "AWB_ASSIGNED",
+        "PICKUP_SCHEDULED",
+        "IN_TRANSIT",
+        "DELIVERED",
+        "CANCELLED",
+      ],
       default: "CREATED",
     },
   },
   { timestamps: true }
 );
 
-// ✅ SubOrder schema (NEW)
+/** ✅ Bank details schema for COD returns */
+const ReturnBankDetailsSchema = new Schema<IReturnBankDetails>(
+  {
+    accountHolderName: { type: String, required: true, trim: true },
+    accountNumber: { type: String, required: true, trim: true },
+    ifsc: { type: String, required: true, trim: true },
+    bankName: { type: String, default: null, trim: true },
+    upiId: { type: String, default: null, trim: true },
+  },
+  { _id: false }
+);
+
+/* =========================
+ * SubOrder Return/Refund Schemas (V2)
+ * (✅ MUST be before SubOrderSchema)
+ * ========================= */
+const SubOrderReturnItemSchema = new Schema<ISubOrderReturnItem>(
+  {
+    productId: { type: Schema.Types.ObjectId, ref: "Product", required: true },
+    qty: { type: Number, required: true, min: 1 },
+    variantId: { type: Schema.Types.ObjectId, default: null },
+    colorKey: { type: String, default: null, trim: true },
+
+    reason: { type: String, default: null, trim: true },
+    note: { type: String, default: null, trim: true },
+    images: { type: [String], default: [] },
+  },
+  { _id: false }
+);
+
+const SubOrderReturnSchema = new Schema<ISubOrderReturn>(
+  {
+    requestedAt: { type: Date, default: Date.now },
+
+    reason: { type: String, required: true, trim: true },
+    note: { type: String, default: null, trim: true },
+
+    images: {
+      type: [String],
+      default: [],
+      validate: {
+        validator: function (arr: any) {
+          if (!Array.isArray(arr)) return true;
+          return arr.length <= 5;
+        },
+        message: "You can upload up to 5 images only.",
+      },
+    },
+
+    bankDetails: { type: ReturnBankDetailsSchema, default: null },
+
+    items: { type: [SubOrderReturnItemSchema], required: true, default: [] },
+
+    status: {
+      type: String,
+      enum: [
+        "REQUESTED",
+        "APPROVED",
+        "REJECTED",
+        "PICKUP_CREATED",
+        "RECEIVED",
+        "REFUNDED",
+      ],
+      default: "REQUESTED",
+    },
+
+    handledByRole: { type: String, enum: ["ADMIN", "VENDOR"], default: null },
+    handledById: { type: Schema.Types.ObjectId, default: null },
+
+    approvedAt: { type: Date, default: null },
+    rejectedAt: { type: Date, default: null },
+    rejectReason: { type: String, default: null, trim: true },
+
+    receivedAt: { type: Date, default: null },
+
+    returnShipment: { type: OrderShipmentSchema, default: null },
+  },
+  { _id: true }
+);
+
+const SubOrderRefundSchema = new Schema<ISubOrderRefund>(
+  {
+    method: { type: String, enum: ["COD", "ONLINE"], required: true },
+    amount: { type: Number, required: true, min: 0 },
+
+    status: {
+      type: String,
+      enum: ["PENDING", "PROCESSED", "FAILED"],
+      default: "PENDING",
+    },
+
+    provider: { type: String, enum: ["RAZORPAY", "MANUAL"], default: null },
+    reference: { type: String, default: null, trim: true },
+
+    processedAt: { type: Date, default: null },
+    processedByAdminId: { type: Schema.Types.ObjectId, ref: "Admin", default: null },
+
+    raw: { type: Schema.Types.Mixed, default: null },
+  },
+  { _id: false }
+);
+
+/* =========================
+ * SubOrder schema (NEW)
+ * ========================= */
 const SubOrderSchema = new Schema<ISubOrder>(
   {
     ownerType: { type: String, enum: ["ADMIN", "VENDOR"], required: true },
@@ -388,22 +505,18 @@ const SubOrderSchema = new Schema<ISubOrder>(
     },
 
     shipment: { type: OrderShipmentSchema, default: null },
+
+    // ✅ now works because schema is already defined
+    returns: { type: [SubOrderReturnSchema], default: [] },
+
+    refund: { type: SubOrderRefundSchema, default: null },
   },
   { timestamps: true, _id: true }
 );
 
-/** ✅ Bank details schema for COD returns */
-const ReturnBankDetailsSchema = new Schema<IReturnBankDetails>(
-  {
-    accountHolderName: { type: String, required: true, trim: true },
-    accountNumber: { type: String, required: true, trim: true },
-    ifsc: { type: String, required: true, trim: true },
-    bankName: { type: String, default: null, trim: true },
-    upiId: { type: String, default: null, trim: true },
-  },
-  { _id: false }
-);
-
+/* =========================
+ * Legacy Order Return/Refund Schemas
+ * ========================= */
 const OrderReturnSchema = new Schema<IOrderReturn>(
   {
     requestedAt: { type: Date, default: Date.now },
@@ -439,7 +552,14 @@ const OrderReturnSchema = new Schema<IOrderReturn>(
 
     status: {
       type: String,
-      enum: ["REQUESTED", "APPROVED", "REJECTED", "PICKUP_CREATED", "RECEIVED", "REFUNDED"],
+      enum: [
+        "REQUESTED",
+        "APPROVED",
+        "REJECTED",
+        "PICKUP_CREATED",
+        "RECEIVED",
+        "REFUNDED",
+      ],
       default: "REQUESTED",
     },
 
@@ -470,6 +590,57 @@ const OrderRefundSchema = new Schema<IOrderRefund>(
   { _id: false }
 );
 
+/* =========================
+ * Order
+ * ========================= */
+export interface IOrder extends Document {
+  userId: Types.ObjectId;
+  orderCode: string;
+
+  parentOrderId?: Types.ObjectId | null;
+
+  items: IOrderItem[];
+
+  subOrders?: ISubOrder[];
+
+  totals: {
+    subtotal: number;
+    mrpTotal: number;
+    savings: number;
+    discount: number;
+    grandTotal: number;
+  };
+
+  appliedOffer?: {
+    offerId: Types.ObjectId;
+    name: string;
+    mode: "AUTO" | "COUPON";
+    couponCode?: string | null;
+    offerType: "FLAT" | "PERCENT";
+    value: number;
+    discountAmount: number;
+  } | null;
+
+  contact: IOrderContact;
+  address: IOrderAddress;
+
+  paymentMethod: "COD" | "ONLINE";
+  paymentStatus: "PENDING" | "PAID" | "FAILED" | "COD_PENDING_CONFIRMATION";
+
+  status: "PLACED" | "CONFIRMED" | "SHIPPED" | "DELIVERED" | "CANCELLED";
+
+  pg?: any;
+  cod?: any;
+
+  shipments?: IOrderShipment[];
+
+  return?: IOrderReturn | null;
+  refund?: IOrderRefund | null;
+
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 const OrderSchema = new Schema<IOrder>(
   {
     userId: { type: Schema.Types.ObjectId, ref: "User", required: true, index: true },
@@ -477,10 +648,8 @@ const OrderSchema = new Schema<IOrder>(
 
     parentOrderId: { type: Schema.Types.ObjectId, ref: "Order", default: null, index: true },
 
-    // ✅ legacy
     items: { type: [OrderItemSchema], required: true, default: [] },
 
-    // ✅ NEW
     subOrders: { type: [SubOrderSchema], default: [] },
 
     totals: {
@@ -535,7 +704,6 @@ const OrderSchema = new Schema<IOrder>(
     pg: { type: Schema.Types.Mixed, default: null },
     cod: { type: Schema.Types.Mixed, default: null },
 
-    // legacy shipments (keep)
     shipments: { type: [OrderShipmentSchema], default: [] },
 
     return: { type: OrderReturnSchema, default: null },

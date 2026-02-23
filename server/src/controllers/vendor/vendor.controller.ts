@@ -1,9 +1,11 @@
 import { Request, Response } from "express";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
+import crypto from "crypto";
 import { Vendor } from "../../models/Vendor.model";
 import { sendEmail } from "../../utils/sendEmail";
 import { VendorAuthRequest } from "../../middleware/vendor.middleware"; 
+import { sendVendorResetPasswordEmail } from "../../services/vendorForgotPassword.service";
 
 // ✅ normalize multer file path to web path
 // examples:
@@ -689,3 +691,60 @@ export const adminDeleteVendor = async (req: Request, res: Response) => {
   }
 };
 
+export const vendorForgotPassword = async (req: Request, res: Response) => {
+  try {
+    const { email } = req.body || {};
+    if (!email) return res.status(400).json({ message: "Email is required" });
+
+    await sendVendorResetPasswordEmail(String(email));
+
+    // always success message (security)
+    return res.json({
+      message: "If this email exists, a reset link has been sent.",
+    });
+  } catch (err) {
+    console.error("vendorForgotPassword error:", err);
+    return res.status(500).json({ message: "Something went wrong" });
+  }
+};
+export const vendorResetPassword = async (req: Request, res: Response) => {
+  try {
+    const { token, email, newPassword, confirmPassword } = req.body || {};
+
+    if (!token || !email || !newPassword || !confirmPassword) {
+      return res.status(400).json({ message: "All fields are required" });
+    }
+
+    if (newPassword !== confirmPassword) {
+      return res.status(400).json({ message: "Passwords do not match" });
+    }
+
+    if (String(newPassword).length < 6) {
+      return res.status(400).json({ message: "Password must be at least 6 characters" });
+    }
+
+    const emailNorm = String(email).toLowerCase().trim();
+    const tokenHash = crypto.createHash("sha256").update(String(token)).digest("hex");
+
+    const vendor = await Vendor.findOne({
+      email: emailNorm,
+      resetPasswordTokenHash: tokenHash,
+      resetPasswordTokenExpires: { $gt: new Date() },
+    });
+
+    if (!vendor) {
+      return res.status(400).json({ message: "Invalid or expired token" });
+    }
+
+    vendor.passwordHash = await bcrypt.hash(String(newPassword), 10);
+    vendor.resetPasswordTokenHash = undefined;
+    vendor.resetPasswordTokenExpires = undefined;
+
+    await vendor.save();
+
+    return res.json({ message: "Password reset successfully" });
+  } catch (err) {
+    console.error("vendorResetPassword error:", err);
+    return res.status(500).json({ message: "Something went wrong" });
+  }
+};

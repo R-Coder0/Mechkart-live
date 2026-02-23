@@ -5,6 +5,8 @@ import {
   vendorMe,
   vendorUpdateMe,
   vendorChangePassword,
+  vendorForgotPassword,
+  vendorResetPassword,
 } from "../controllers/vendor/vendor.controller";
 import { vendorAuth } from "../middleware/vendor.middleware";
 import { upload, uploadVendorKyc } from "../middleware/upload.middleware";
@@ -41,6 +43,9 @@ router.patch("/me", vendorAuth, vendorUpdateMe);
 router.patch("/me/password", vendorAuth, vendorChangePassword);
 
 
+// new
+router.post("/forgot-password", vendorForgotPassword);
+router.post("/reset-password", vendorResetPassword);
 
 
 
