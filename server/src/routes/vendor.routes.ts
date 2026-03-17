@@ -20,6 +20,7 @@ import {
 } from "../controllers/vendor/vendor.product.controller";
 import { vendorFetchOrders, vendorGetOrderById, vendorGetOrderTracking } from "../controllers/vendor/vendor.order.controller";
 import { vendorGetMyWallet } from "../controllers/vendor/vendor.wallet.controller";
+import { approveReturnByVendor, rejectReturnByVendor } from "../controllers/vendor/vendor.return.controller";
 const router = Router();
 
 /**
@@ -41,7 +42,17 @@ router.post("/login", loginVendor);
 router.get("/me", vendorAuth, vendorMe);
 router.patch("/me", vendorAuth, vendorUpdateMe);
 router.patch("/me/password", vendorAuth, vendorChangePassword);
+router.post(
+  "/orders/:orderId/suborders/:subOrderId/returns/:returnId/approve",
+  vendorAuth,
+  approveReturnByVendor
+);
 
+router.post(
+  "/orders/:orderId/suborders/:subOrderId/returns/:returnId/reject",
+  vendorAuth,
+  rejectReturnByVendor
+);
 
 // new
 router.post("/forgot-password", vendorForgotPassword);

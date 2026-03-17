@@ -127,6 +127,8 @@ function normalizeSubOrders(order: any) {
       status: String(so?.status || order?.status || "PLACED").toUpperCase(),
       items: Array.isArray(so?.items) ? so.items : [],
       shipment: so?.shipment || null,
+      returns: Array.isArray(so?.returns) ? so.returns : [],
+refund: so?.refund || null,
       subtotal: so?.subtotal,
       shipping: so?.shipping,
       total: so?.total,
@@ -447,9 +449,20 @@ export default function WebsiteUserOrderDetailsPage() {
     return computedSubOrders.reduce((sum: number, so: any) => sum + (so?.__uiItems?.length || 0), 0);
   }, [computedSubOrders]);
 
-  const returnReq = order?.return || null;
-  const returnReqStatus = String(returnReq?.status || "").toUpperCase();
+// ✅ Return is subOrder-wise now
+const activeSubOrder = useMemo(() => {
+  return computedSubOrders.length === 1 ? computedSubOrders[0] : null;
+}, [computedSubOrders]);
+const activeSubStatus = String(activeSubOrder?.status || "").toUpperCase();
+const isSubOrderDelivered = activeSubStatus === "DELIVERED";
+// show latest return for this subOrder (last item in returns[])
+const returnReq = useMemo(() => {
+  const rs = Array.isArray(activeSubOrder?.returns) ? activeSubOrder.returns : [];
+  if (!rs.length) return null;
+  return rs[rs.length - 1];
+}, [activeSubOrder]);
 
+const returnReqStatus = String(returnReq?.status || "").toUpperCase();
   const submitReturnRequest = async () => {
     try {
       setRrBusy(true);
@@ -471,30 +484,42 @@ export default function WebsiteUserOrderDetailsPage() {
           return;
         }
       }
+      if (!subOrderIdParam) { setRrErr("Please open a seller shipment to request return."); return; }
 
       // ✅ build partial return items (NOTE: computedSubOrders is scoped now if subOrderIdParam present)
-      const returnItems: any[] = [];
-      computedSubOrders.forEach((so: any) => {
-        (so.__uiItems || []).forEach((it: any) => {
-          const key = `${so._id}:${it.itemKey}`;
-          const qty = rrSelected[key] || 0;
-          if (qty > 0) {
-            returnItems.push({
-              subOrderId: so._id,
-              productId: it.raw?.productId?._id || it.raw?.productId || null,
-              variantId: it.raw?.variantId || null,
-              colorKey: it.raw?.colorKey || null,
-              qty,
-              title: it.title,
-            });
-          }
-        });
-      });
+ // ✅ build return items from rrSelected (prevents key mismatch)
+const returnItems: any[] = [];
 
-      if (returnItems.length === 0) {
-        setRrErr("Please select at least one item to return.");
-        return;
-      }
+for (const [key, qtyRaw] of Object.entries(rrSelected || {})) {
+  const qty = Number(qtyRaw || 0);
+  if (!qty || qty <= 0) continue;
+
+const fullKey = String(key);
+const idx = fullKey.indexOf(":");
+if (idx === -1) continue;
+
+const soId = fullKey.slice(0, idx);
+const itemKey = fullKey.slice(idx + 1); // ✅ keeps remaining ":" intact
+if (!soId || !itemKey) continue;
+
+  const so = computedSubOrders.find((x: any) => String(x._id) === String(soId));
+  if (!so) continue;
+
+  const it = (so.__uiItems || []).find((x: any) => String(x.itemKey) === String(itemKey));
+  if (!it) continue;
+
+  returnItems.push({
+    productId: it.raw?.productId?._id || it.raw?.productId || null,
+    variantId: it.raw?.variantId || null,
+    colorKey: it.raw?.colorKey || null,
+    qty,
+  });
+}
+
+if (returnItems.length === 0) {
+  setRrErr("Select at least one item for return");
+  return;
+}
 
       const files = rrFiles.slice(0, 5);
 
@@ -503,7 +528,7 @@ export default function WebsiteUserOrderDetailsPage() {
       if (note) fd.append("note", note);
 
       fd.append("items", JSON.stringify(returnItems));
-
+      fd.append("subOrderId", subOrderIdParam); 
       if (isCOD) {
         fd.append(
           "bankDetails",
@@ -822,7 +847,7 @@ export default function WebsiteUserOrderDetailsPage() {
             <div className="flex items-center justify-between gap-3">
               <div className="font-semibold text-gray-900">Return</div>
 
-              {isDelivered ? (
+              {subOrderIdParam && isSubOrderDelivered ? (
                 returnReqStatus ? (
                   <div className="text-xs font-semibold text-gray-700">
                     {returnReqStatus === "REQUESTED"
@@ -955,7 +980,7 @@ export default function WebsiteUserOrderDetailsPage() {
               </div>
             ) : (
               <div className="mt-3 text-sm text-gray-600">
-                {isDelivered
+                {subOrderIdParam && isSubOrderDelivered 
                   ? "You can request a return within the return window."
                   : "Return is available only after delivery."}
               </div>

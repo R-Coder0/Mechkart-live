@@ -9,9 +9,6 @@ import {
   adminUpdateOrderStatus,
   adminConfirmCod,
   adminCreateShiprocketShipment,
-  adminApproveReturn,
-  adminRejectReturn,
-  adminProcessRefund,
 } from "@/lib/adminOrdersApi";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL;
@@ -110,8 +107,8 @@ function normalizeSubOrders(order: any) {
       subtotal: so?.subtotal,
       shipping: so?.shipping,
       total: so?.total,
-      return: so?.return || null,
-      refund: so?.refund || null,
+      // NOTE: returns/refund intentionally NOT used in Orders page anymore
+      returns: Array.isArray(so?.returns) ? so.returns : [],
     }));
   }
 
@@ -129,8 +126,7 @@ function normalizeSubOrders(order: any) {
       subtotal: order?.totals?.subtotal,
       shipping: order?.totals?.shipping,
       total: order?.totals?.grandTotal ?? order?.totals?.total ?? order?.totalAmount,
-      return: order?.return || null,
-      refund: order?.refund || null,
+      returns: [],
     },
   ];
 }
@@ -307,14 +303,16 @@ function toneForOrderStatus(st: string) {
 
 function hasShiprocketShipment(o: any) {
   const subs = Array.isArray(o?.subOrders) ? o.subOrders : [];
-  return subs.some((so: any) => so?.shipment?.provider === "SHIPROCKET" && (so?.shipment?.shiprocket?.shipmentId || so?.shipment?.shiprocket?.awb));
+  return subs.some(
+    (so: any) =>
+      so?.shipment?.provider === "SHIPROCKET" &&
+      (so?.shipment?.shiprocket?.shipmentId || so?.shipment?.shiprocket?.awb)
+  );
 }
 
 function shiprocketShipments(o: any) {
   const subs = Array.isArray(o?.subOrders) ? o.subOrders : [];
-  const list = subs
-    .map((so: any) => so?.shipment)
-    .filter((s: any) => s?.provider === "SHIPROCKET");
+  const list = subs.map((so: any) => so?.shipment).filter((s: any) => s?.provider === "SHIPROCKET");
 
   return [...list].sort((a: any, b: any) => {
     const ta = a?.createdAt ? new Date(a.createdAt).getTime() : 0;
@@ -323,54 +321,29 @@ function shiprocketShipments(o: any) {
   });
 }
 
+/**
+ * ✅ Orders page only needs a simple indicator
+ * RETURNED badge if any subOrder has returns[] with status APPROVED/RECEIVED/REFUNDED
+ * (also supports legacy order.return / subOrder.return)
+ */
+function hasReturned(order: any) {
+  const ok = new Set(["APPROVED", "RECEIVED", "REFUNDED"]);
 
-/* --------- Return meta for table Alerts (critical UX) --------- */
-
-function getReturnMeta(order: any) {
-  const subs = normalizeSubOrders(order);
-
-  if (subs.length === 1) {
-    subs[0].return = subs[0].return || order?.return || null;
-    subs[0].refund = subs[0].refund || order?.refund || null;
+  const subs = Array.isArray(order?.subOrders) ? order.subOrders : [];
+  for (const so of subs) {
+    const rs = Array.isArray(so?.returns) ? so.returns : [];
+    for (const r of rs) {
+      const st = String(r?.status || "").toUpperCase();
+      if (ok.has(st)) return true;
+    }
+    const legacySo = String(so?.return?.status || "").toUpperCase();
+    if (ok.has(legacySo)) return true;
   }
 
-  const returns = subs
-    .map((so: any) => ({
-      soldBy: so?.soldBy,
-      status: String(so?.return?.status || "").toUpperCase(),
-      refundStatus: String(so?.refund?.status || "").toUpperCase(),
-    }))
-    .filter((x: any) => x.status);
+  const legacyRoot = String(order?.return?.status || "").toUpperCase();
+  if (ok.has(legacyRoot)) return true;
 
-  const hasAnyReturn = returns.length > 0;
-  const requestedCount = returns.filter((r: any) => r.status === "REQUESTED").length;
-  const approvedCount = returns.filter((r: any) => r.status === "APPROVED").length;
-  const receivedCount = returns.filter((r: any) => r.status === "RECEIVED").length;
-  const refundedCount = returns.filter((r: any) => r.status === "REFUNDED").length;
-
-  const refundPendingCount = returns.filter(
-    (r: any) => ["APPROVED", "RECEIVED"].includes(r.status) && r.refundStatus !== "PROCESSED"
-  ).length;
-
-  const mostCritical =
-    requestedCount > 0
-      ? "REQUESTED"
-      : refundPendingCount > 0
-        ? "REFUND_PENDING"
-        : hasAnyReturn
-          ? "RETURN_EXISTS"
-          : "";
-
-  return {
-    hasAnyReturn,
-    requestedCount,
-    approvedCount,
-    receivedCount,
-    refundedCount,
-    refundPendingCount,
-    mostCritical,
-    returns,
-  };
+  return false;
 }
 
 /* ------------------ Page ------------------ */
@@ -403,7 +376,7 @@ export default function AdminOrdersPage() {
 
   // Drawer state
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState<"items" | "shipments" | "returns" | "payment" | "customer">("items");
+  const [activeTab, setActiveTab] = useState<"items" | "shipments" | "payment" | "customer">("items");
   const [selectedOrder, setSelectedOrder] = useState<any>(null);
 
   const openOrder = (o: any, tab: typeof activeTab = "items") => {
@@ -497,101 +470,43 @@ export default function AdminOrdersPage() {
     }
   };
 
-const onCreateShipment = async (orderId: string) => {
-  try {
-    setBusyId(orderId);
-    setError(null);
-
-    // ✅ optimistic patch should also make COD "confirmed"
-    setData((prev: any) => ({
-      ...prev,
-      items: (prev.items || []).map((o: any) => {
-        if (String(o._id) !== String(orderId)) return o;
-
-        const pm = String(o?.paymentMethod || "COD").toUpperCase();
-        const next: any = { ...o, status: "SHIPPED" };
-
-        // ✅ if COD, ensure UI doesn't show "Confirm COD" after auto ship
-        if (pm === "COD") {
-          next.cod = {
-            ...(o.cod || {}),
-            confirmedAt: (o.cod && o.cod.confirmedAt) ? o.cod.confirmedAt : new Date().toISOString(),
-          };
-
-          // optional but good: if backend uses COD_PENDING_CONFIRMATION
-          next.paymentStatus = o.paymentStatus || "COD_PENDING_CONFIRMATION";
-        }
-
-        return next;
-      }),
-    }));
-
-    const updated = await adminCreateShiprocketShipment(orderId);
-    replaceLocalOrder(orderId, updated);
-  } catch (e: any) {
-    setError(e?.message || "Create shipment failed");
-    await load(page);
-  } finally {
-    setBusyId(null);
-  }
-};
-
-
-  const onApproveReturn = async (orderId: string) => {
+  const onCreateShipment = async (orderId: string) => {
     try {
       setBusyId(orderId);
       setError(null);
 
-      const updated = await adminApproveReturn(orderId);
+      // optimistic patch should also mark COD confirmed
+      setData((prev: any) => ({
+        ...prev,
+        items: (prev.items || []).map((o: any) => {
+          if (String(o._id) !== String(orderId)) return o;
+
+          const pm = String(o?.paymentMethod || "COD").toUpperCase();
+          const next: any = { ...o, status: "SHIPPED" };
+
+          if (pm === "COD") {
+            next.cod = {
+              ...(o.cod || {}),
+              confirmedAt: o?.cod?.confirmedAt ? o.cod.confirmedAt : new Date().toISOString(),
+            };
+            next.paymentStatus = o.paymentStatus || "COD_PENDING_CONFIRMATION";
+          }
+
+          return next;
+        }),
+      }));
+
+      const updated = await adminCreateShiprocketShipment(orderId);
       replaceLocalOrder(orderId, updated);
     } catch (e: any) {
-      setError(e?.message || "Approve return failed");
+      setError(e?.message || "Create shipment failed");
       await load(page);
     } finally {
       setBusyId(null);
     }
   };
 
-  const onRejectReturn = async (orderId: string) => {
-    try {
-      const reason = prompt("Reject reason?") || "";
-      if (!reason.trim()) return;
-
-      setBusyId(orderId);
-      setError(null);
-
-      const updated = await adminRejectReturn(orderId, reason.trim());
-      replaceLocalOrder(orderId, updated);
-    } catch (e: any) {
-      setError(e?.message || "Reject return failed");
-      await load(page);
-    } finally {
-      setBusyId(null);
-    }
-  };
-
-  const onProcessRefund = async (orderId: string) => {
-    try {
-      const ok = confirm("Process refund now?");
-      if (!ok) return;
-
-      const raw = prompt("Refund amount in RUPEES? (Leave blank for full refund)") || "";
-      const amt = raw.trim() ? Number(raw.trim()) : undefined;
-      const amount = Number.isFinite(amt as any) && (amt as number) > 0 ? (amt as number) : undefined;
-
-      setBusyId(orderId);
-      setError(null);
-
-      const updated = await adminProcessRefund(orderId, amount);
-      replaceLocalOrder(orderId, updated);
-    } catch (e: any) {
-      setError(e?.message || "Refund failed");
-      await load(page);
-    } finally {
-      setBusyId(null);
-    }
-  };
-
+  // ✅ attentionOnly now only COD not confirmed
   const items = useMemo(() => {
     if (!attentionOnly) return rawItems;
 
@@ -600,14 +515,11 @@ const onCreateShipment = async (orderId: string) => {
       const st = String(o?.status || "PLACED").toUpperCase();
       const cod = o?.cod || null;
       const codConfirmedAt = cod?.confirmedAt || null;
+
       const codIsConfirmed =
         pm === "COD" && (Boolean(codConfirmedAt) || ["CONFIRMED", "SHIPPED", "DELIVERED"].includes(st));
 
-      const rm = getReturnMeta(o);
-      const needsAttention = rm.mostCritical === "REQUESTED" || rm.mostCritical === "REFUND_PENDING";
-      const codAttention = pm === "COD" && !codIsConfirmed;
-
-      return needsAttention || codAttention;
+      return pm === "COD" && !codIsConfirmed;
     });
   }, [rawItems, attentionOnly]);
 
@@ -616,130 +528,6 @@ const onCreateShipment = async (orderId: string) => {
     const shown = items.length;
     return attentionOnly ? `Showing ${shown} of ${total} (Attention only)` : `${total} order(s)`;
   }, [data?.total, items.length, attentionOnly]);
-
-  // ✅ Return block (drawer only)
-  const ReturnBlock = ({ orderId, sub, isBusy }: { orderId: string; sub: any; isBusy: boolean }) => {
-    const ret = sub?.return || null;
-    const retStatus = String(ret?.status || "").toUpperCase();
-    const refund = sub?.refund || null;
-    const refundStatus = String(refund?.status || "").toUpperCase();
-
-    const canApproveReject = retStatus === "REQUESTED";
-    const canRefund = ["APPROVED", "RECEIVED"].includes(retStatus);
-    const refundProcessed = refundStatus === "PROCESSED" || retStatus === "REFUNDED";
-    const refundButtonDisabled = !canRefund || refundProcessed || isBusy;
-
-    const bank = ret?.bankDetails || null;
-    const imgs = Array.isArray(ret?.images) ? ret.images : [];
-
-    if (!retStatus) return <div className="text-[12px] text-gray-500">No return request.</div>;
-
-    return (
-      <div className="space-y-3">
-        <div className="flex items-center gap-2">
-          <Badge tone={retStatus === "REQUESTED" ? "amber" : retStatus === "REJECTED" ? "red" : "indigo"}>
-            {retStatus}
-          </Badge>
-          {ret?.requestedAt ? (
-            <span className="text-[12px] text-gray-600">Requested: {fmtDateTime(ret.requestedAt)}</span>
-          ) : null}
-        </div>
-
-        {ret?.reason ? (
-          <div className="text-[12px] text-gray-700">
-            Reason: <span className="font-semibold text-gray-900">{String(ret.reason)}</span>
-          </div>
-        ) : null}
-
-        {ret?.note ? (
-          <div className="text-[12px] text-gray-700">
-            Note: <span className="font-semibold text-gray-900">{String(ret.note)}</span>
-          </div>
-        ) : null}
-
-        {retStatus === "REJECTED" && ret?.rejectReason ? (
-          <div className="text-[12px] text-red-700">Reject: {String(ret.rejectReason)}</div>
-        ) : null}
-
-        {bank ? (
-          <div className="rounded-2xl border bg-gray-50 p-3 text-[12px] text-gray-700">
-            <div className="font-extrabold text-gray-900 mb-2">Bank details (COD)</div>
-            <div>
-              <span className="font-semibold">Holder:</span> {bank?.accountHolderName || "—"}
-            </div>
-            <div>
-              <span className="font-semibold">A/C:</span> {bank?.accountNumber || "—"}
-            </div>
-            <div>
-              <span className="font-semibold">IFSC:</span> {bank?.ifsc || "—"}
-            </div>
-            {bank?.bankName ? (
-              <div>
-                <span className="font-semibold">Bank:</span> {bank.bankName}
-              </div>
-            ) : null}
-            {bank?.upiId ? (
-              <div>
-                <span className="font-semibold">UPI:</span> {bank.upiId}
-              </div>
-            ) : null}
-          </div>
-        ) : null}
-
-        {imgs.length ? (
-          <div>
-            <div className="text-[12px] font-semibold text-gray-700 mb-2">Images</div>
-            <div className="flex flex-wrap gap-2">
-              {imgs.slice(0, 10).map((p: string, i: number) => {
-                const src = resolveImageUrl(p);
-                return (
-                  <a
-                    key={i}
-                    href={src || "#"}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="h-14 w-14 overflow-hidden rounded-xl border bg-white"
-                    title="Open"
-                  >
-                    {src ? <img src={src} alt={`ret-${i}`} className="h-full w-full object-cover" /> : null}
-                  </a>
-                );
-              })}
-            </div>
-          </div>
-        ) : null}
-
-        {canApproveReject ? (
-          <div className="flex gap-2">
-            <IconButton disabled={isBusy} onClick={() => onApproveReturn(orderId)} tone="primary">
-              {isBusy ? "..." : "Approve"}
-            </IconButton>
-            <IconButton disabled={isBusy} onClick={() => onRejectReturn(orderId)} tone="danger">
-              {isBusy ? "..." : "Reject"}
-            </IconButton>
-          </div>
-        ) : null}
-
-        {refund ? (
-          <div className="text-[12px] text-gray-700">
-            Refund: <span className="font-semibold">{refundStatus || "—"}</span>
-            {refund?.amount ? <span className="text-gray-500"> • {money(refund.amount)}</span> : null}
-            {refund?.processedAt ? <span className="text-gray-500"> • {fmtDateTime(refund.processedAt)}</span> : null}
-          </div>
-        ) : null}
-
-        {canRefund ? (
-          <IconButton disabled={refundButtonDisabled} onClick={() => onProcessRefund(orderId)} tone="primary">
-            {isBusy ? "Processing…" : refundProcessed ? "Refund Done" : "Process Refund"}
-          </IconButton>
-        ) : null}
-
-        {retStatus === "REFUNDED" ? (
-          <div className="text-[12px] font-semibold text-emerald-700">Refund Completed</div>
-        ) : null}
-      </div>
-    );
-  };
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-10">
@@ -853,7 +641,7 @@ const onCreateShipment = async (orderId: string) => {
                   <th className="px-5 py-3">Summary</th>
                   <th className="px-5 py-3">Payable</th>
                   <th className="px-5 py-3">Payment</th>
-                  <th className="px-5 py-3">Alerts</th>
+                  <th className="px-5 py-3">Flags</th>
                   <th className="px-5 py-3">Status</th>
                   <th className="px-5 py-3">Created</th>
                   <th className="px-5 py-3 text-right">Actions</th>
@@ -889,7 +677,7 @@ const onCreateShipment = async (orderId: string) => {
                   const lockedDelivered = st === "DELIVERED";
                   const lockedCancelled = st === "CANCELLED";
 
-               const isCodPlaced = pm === "COD" && st === "PLACED" && !codIsConfirmed;
+                  const isCodPlaced = pm === "COD" && st === "PLACED" && !codIsConfirmed;
                   const blockShipUntilConfirm = pm === "COD" && !codIsConfirmed;
 
                   const subOrders = normalizeSubOrders(o);
@@ -899,13 +687,6 @@ const onCreateShipment = async (orderId: string) => {
                     0
                   );
 
-                  // returns + row attention
-                  const returnMeta = getReturnMeta(o);
-                  const rowAttention =
-                    returnMeta.mostCritical === "REQUESTED" ||
-                    returnMeta.mostCritical === "REFUND_PENDING" ||
-                    (pm === "COD" && !codIsConfirmed);
-
                   // shipments
                   const shipmentExists = hasShiprocketShipment(o);
                   const canCreateShipment =
@@ -913,6 +694,11 @@ const onCreateShipment = async (orderId: string) => {
                     !shipmentExists &&
                     !(pm === "COD" && !codIsConfirmed) &&
                     !(pm === "ONLINE" && ps !== "PAID");
+
+                  // row attention ONLY for COD not confirmed
+                  const rowAttention = pm === "COD" && !codIsConfirmed;
+
+                  const returned = hasReturned(o);
 
                   return (
                     <tr
@@ -951,8 +737,13 @@ const onCreateShipment = async (orderId: string) => {
                           <Badge tone={shipmentExists ? "green" : "gray"}>
                             {shipmentExists ? "Shipment: Yes" : "Shipment: No"}
                           </Badge>
-                          {vendorsCount > 1 ? <Badge tone="indigo">{vendorsCount} vendors</Badge> : <Badge tone="gray">Single vendor</Badge>}
+                          {vendorsCount > 1 ? (
+                            <Badge tone="indigo">{vendorsCount} vendors</Badge>
+                          ) : (
+                            <Badge tone="gray">Single vendor</Badge>
+                          )}
                         </div>
+
                         <div className="mt-2 flex flex-wrap gap-3">
                           <button
                             type="button"
@@ -961,25 +752,6 @@ const onCreateShipment = async (orderId: string) => {
                           >
                             View details
                           </button>
-
-                          {returnMeta.hasAnyReturn ? (
-                            <button
-                              type="button"
-                              onClick={() => openOrder(o, "returns")}
-                              className={
-                                "text-[12px] font-semibold hover:underline " +
-                                (returnMeta.mostCritical === "REQUESTED" || returnMeta.mostCritical === "REFUND_PENDING"
-                                  ? "text-red-700"
-                                  : "text-amber-700")
-                              }
-                            >
-                              {returnMeta.mostCritical === "REQUESTED"
-                                ? "Action return"
-                                : returnMeta.mostCritical === "REFUND_PENDING"
-                                  ? "Refund pending"
-                                  : "View returns"}
-                            </button>
-                          ) : null}
                         </div>
                       </td>
 
@@ -1025,22 +797,12 @@ const onCreateShipment = async (orderId: string) => {
                         ) : null}
                       </td>
 
-                      {/* Alerts (THIS FIXES YOUR PROBLEM) */}
+                      {/* Flags */}
                       <td className="px-5 py-3">
                         <div className="flex flex-wrap gap-2">
-                          {returnMeta.requestedCount > 0 ? (
-                            <Badge tone="amber">Return Requested ({returnMeta.requestedCount})</Badge>
-                          ) : null}
-
-                          {returnMeta.refundPendingCount > 0 ? (
-                            <Badge tone="red">Refund Pending ({returnMeta.refundPendingCount})</Badge>
-                          ) : null}
-
                           {pm === "COD" && !codIsConfirmed ? <Badge tone="amber">COD Not Confirmed</Badge> : null}
-
-                          {returnMeta.requestedCount === 0 &&
-                          returnMeta.refundPendingCount === 0 &&
-                          !(pm === "COD" && !codIsConfirmed) ? (
+                          {returned ? <Badge tone="indigo">RETURNED</Badge> : null}
+                          {!(pm === "COD" && !codIsConfirmed) && !returned ? (
                             <span className="text-[12px] text-gray-500">—</span>
                           ) : null}
                         </div>
@@ -1083,14 +845,6 @@ const onCreateShipment = async (orderId: string) => {
                       <td className="px-5 py-3">
                         <div className="flex justify-end gap-2">
                           <IconButton onClick={() => openOrder(o, "items")}>View</IconButton>
-
-                          {(returnMeta.mostCritical === "REQUESTED" || returnMeta.mostCritical === "REFUND_PENDING") ? (
-                            <IconButton onClick={() => openOrder(o, "returns")} tone="danger">
-                              Action Return
-                            </IconButton>
-                          ) : returnMeta.hasAnyReturn ? (
-                            <IconButton onClick={() => openOrder(o, "returns")}>Returns</IconButton>
-                          ) : null}
 
                           {!shipmentExists ? (
                             <IconButton
@@ -1156,7 +910,6 @@ const onCreateShipment = async (orderId: string) => {
               items={[
                 { key: "items", label: "Items" },
                 { key: "shipments", label: "Shipments" },
-                { key: "returns", label: "Returns" },
                 { key: "payment", label: "Payment" },
                 { key: "customer", label: "Customer" },
               ]}
@@ -1242,39 +995,6 @@ const onCreateShipment = async (orderId: string) => {
                   </div>
                 ) : null}
 
-                {activeTab === "returns" ? (
-                  <div className="rounded-3xl border bg-white p-4">
-                    <div className="mb-3 text-sm font-extrabold text-gray-900">Returns (Vendor-wise)</div>
-
-                    {(() => {
-                      const subs = normalizeSubOrders(selectedOrder);
-                      if (subs.length === 1) {
-                        subs[0].return = subs[0].return || selectedOrder?.return || null;
-                        subs[0].refund = subs[0].refund || selectedOrder?.refund || null;
-                      }
-
-                      const any = subs.some((s: any) => s?.return);
-                      if (!any) return <div className="text-sm text-gray-600">No return requests.</div>;
-
-                      const isBusy = busyId === String(selectedOrder._id);
-
-                      return (
-                        <div className="space-y-3">
-                          {subs.map((so: any, idx: number) => (
-                            <div key={so._id || idx} className="rounded-2xl border p-4">
-                              <div className="mb-2 flex items-center justify-between">
-                                <div className="font-extrabold text-gray-900">{so.soldBy}</div>
-                                <Badge tone="amber">{String(so?.return?.status || "—").toUpperCase()}</Badge>
-                              </div>
-                              <ReturnBlock orderId={String(selectedOrder._id)} sub={so} isBusy={isBusy} />
-                            </div>
-                          ))}
-                        </div>
-                      );
-                    })()}
-                  </div>
-                ) : null}
-
                 {activeTab === "payment" ? (
                   <div className="rounded-3xl border bg-white p-4">
                     <div className="mb-3 text-sm font-extrabold text-gray-900">Payment</div>
@@ -1355,6 +1075,7 @@ const onCreateShipment = async (orderId: string) => {
                     />
                     <StatRow k="Created" v={fmtDateTime(selectedOrder?.createdAt)} />
                     <StatRow k="Payable" v={money(selectedOrder?.totals?.grandTotal ?? selectedOrder?.totalAmount ?? 0)} />
+                    <StatRow k="Returned" v={hasReturned(selectedOrder) ? <Badge tone="indigo">YES</Badge> : "—"} />
                   </div>
                 </div>
 
@@ -1380,13 +1101,14 @@ const onCreateShipment = async (orderId: string) => {
                       !(pm === "COD" && !codIsConfirmed) &&
                       !(pm === "ONLINE" && ps !== "PAID");
 
-                    const isCodPlaced = pm === "COD" && st === "PLACED";
+                    const isCodPlaced = pm === "COD" && st === "PLACED" && !codIsConfirmed;
 
                     return (
                       <div className="flex flex-wrap gap-2">
                         <IconButton onClick={() => setActiveTab("items")}>Items</IconButton>
                         <IconButton onClick={() => setActiveTab("shipments")}>Shipments</IconButton>
-                        <IconButton onClick={() => setActiveTab("returns")}>Returns</IconButton>
+                        <IconButton onClick={() => setActiveTab("payment")}>Payment</IconButton>
+                        <IconButton onClick={() => setActiveTab("customer")}>Customer</IconButton>
 
                         {isCodPlaced ? (
                           <IconButton disabled={isBusy} onClick={() => onConfirmCod(orderId)} tone="primary">

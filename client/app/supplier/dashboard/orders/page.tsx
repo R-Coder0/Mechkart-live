@@ -18,12 +18,6 @@ function money(n: number) {
   return `₹${Math.round(Number(n || 0))}`;
 }
 
-function moneyPaise(paise: any) {
-  const p = Number(paise || 0);
-  if (!Number.isFinite(p) || p <= 0) return "—";
-  return money(p / 100);
-}
-
 function fmtDateTime(v?: any) {
   if (!v) return "—";
   try {
@@ -50,35 +44,26 @@ function calcItemsTotal(items: any[]) {
   return arr.reduce((sum, it) => {
     const qty = Math.max(1, Number(it?.qty || 1));
 
-    // ✅ best: finalLineTotal (already base - discount)
     const finalLine = Number(it?.finalLineTotal);
     if (Number.isFinite(finalLine) && finalLine >= 0) return sum + finalLine;
 
-    // ✅ next: baseLineTotal (baseSalePrice * qty)
     const baseLine = Number(it?.baseLineTotal);
     if (Number.isFinite(baseLine) && baseLine >= 0) return sum + baseLine;
 
-    // ✅ next: compute baseSalePrice * qty from pricingMeta
     const baseSale = Number(it?.pricingMeta?.baseSalePrice);
     if (Number.isFinite(baseSale) && baseSale > 0) return sum + baseSale * qty;
 
-    // ❌ do NOT fallback to it.salePrice because it might include shipping
     return sum;
   }, 0);
 }
 
-
 function pickSubOrderTotal(order: any, so: any) {
-  // ✅ FIRST preference: vendorTotals.total (without shipping)
   const vtot = so?.vendorTotals || null;
   const v = toNum(vtot?.total, NaN) || toNum(vtot?.subtotal, NaN);
   if (Number.isFinite(v) && v >= 0) return v;
 
-  // fallback (old)
   const direct =
-    toNum(so?.total, NaN) ||
-    toNum(so?.grandTotal, NaN) ||
-    (toNum(so?.subtotal, NaN) + toNum(so?.shipping, 0));
+    toNum(so?.total, NaN) || toNum(so?.grandTotal, NaN) || (toNum(so?.subtotal, NaN) + toNum(so?.shipping, 0));
   if (Number.isFinite(direct) && direct > 0) return direct;
 
   const computed = calcItemsTotal(so?.items || []);
@@ -92,8 +77,6 @@ function pickSubOrderTotal(order: any, so: any) {
     toNum(order?.totalAmount, 0)
   );
 }
-
-
 
 function getVariantTextFromItem(it: any) {
   const vid = it?.variantId?._id || it?.variantId || it?.variant?._id || it?.variant || "";
@@ -131,15 +114,89 @@ function pickFirstImage(it: any) {
   return resolveImageUrl(img);
 }
 
+/* =========================
+ * ✅ SHIPMENT HELPERS
+ * ========================= */
+
+function getVendorSub(order: any) {
+  return Array.isArray(order?.subOrders) ? order.subOrders[0] : null;
+}
+
+function shipmentHasProof(sh: any) {
+  const sr = sh?.shiprocket || {};
+  return Boolean(sr?.shipmentId || sr?.awb || sr?.orderId);
+}
+
 function pickVendorShipment(order: any) {
+  const sub = getVendorSub(order);
+  if (!sub) return null;
+
+  if (sub?.shipment && shipmentHasProof(sub.shipment)) return sub.shipment;
+
+  const subId = String(sub?._id || "");
   const list = Array.isArray(order?.shipments) ? order.shipments : [];
-  const sorted = [...list].sort((a: any, b: any) => {
+
+  const scoped = list.filter((sh: any) => String(sh?.subOrderId || "") === subId);
+
+  const sorted = [...scoped].sort((a: any, b: any) => {
     const ta = a?.createdAt ? new Date(a.createdAt).getTime() : 0;
     const tb = b?.createdAt ? new Date(b.createdAt).getTime() : 0;
     return tb - ta;
   });
-  const sr = sorted.find((x: any) => x?.provider === "SHIPROCKET");
-  return sr || sorted[0] || null;
+
+  const sr = sorted.find((x: any) => x?.provider === "SHIPROCKET" && shipmentHasProof(x));
+  return sr || (sorted.find((x: any) => shipmentHasProof(x)) || null);
+}
+
+function shipmentCreatedForVendor(order: any) {
+  return Boolean(pickVendorShipment(order));
+}
+
+/* =========================
+ * ✅ RETURN META (DISPLAY ONLY)
+ * ========================= */
+
+function getLatestReturnFromSub(sub: any) {
+  const rs = Array.isArray(sub?.returns) ? sub.returns : [];
+  if (!rs.length) return null;
+  return rs[rs.length - 1];
+}
+
+function getReturnMetaVendor(order: any) {
+  const sub = Array.isArray(order?.subOrders) ? order.subOrders[0] : null;
+
+  const ret = getLatestReturnFromSub(sub);
+  const refund = sub?.refund || null;
+
+  const retStatus = String(ret?.status || "").toUpperCase();
+  const refundStatus = String(refund?.status || "").toUpperCase();
+
+  const requested = retStatus === "REQUESTED";
+  const approved = retStatus === "APPROVED";
+  const rejected = retStatus === "REJECTED";
+  const received = retStatus === "RECEIVED";
+  const refunded = retStatus === "REFUNDED";
+
+  const refundPending = (approved || received) && refundStatus !== "PROCESSED" && !refunded;
+  const anyReturn = Boolean(retStatus);
+
+  const mostCritical = requested ? "REQUESTED" : refundPending ? "REFUND_PENDING" : anyReturn ? "RETURN_EXISTS" : "";
+
+  return {
+    anyReturn,
+    requested,
+    approved,
+    rejected,
+    received,
+    refunded,
+    refundPending,
+    ret,
+    refund,
+    retStatus,
+    refundStatus,
+    mostCritical,
+    sub,
+  };
 }
 
 // ✅ Vendor orders API (Bearer token)
@@ -173,7 +230,20 @@ async function vendorFetchOrders(params: {
   return json?.data ?? json;
 }
 
-/* ---------------- UI components (admin-style) ---------------- */
+async function vendorFetchOrderById(orderId: string) {
+  const token = getToken();
+  if (!token) throw new Error("Vendor token missing. Please login again.");
+  const res = await fetch(`${API_BASE}/vendors/orders/${orderId}`, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${token}` },
+    cache: "no-store",
+  });
+  if (!res.ok) throw new Error("Order refetch route missing");
+  const json = await res.json().catch(() => ({}));
+  return json?.data ?? json;
+}
+
+/* ---------------- UI components ---------------- */
 
 function Badge({
   children,
@@ -210,14 +280,13 @@ function IconButton({
   title?: string;
   tone?: "default" | "primary" | "danger";
 }) {
-  const base =
-    "inline-flex h-9 items-center justify-center gap-2 rounded-xl border px-3 text-[12px] font-semibold disabled:opacity-60";
+  const base = "inline-flex h-9 items-center justify-center gap-2 rounded-xl border px-3 text-[12px] font-semibold disabled:opacity-60";
   const styles =
     tone === "primary"
       ? "bg-gray-900 text-white hover:bg-black border-gray-900"
       : tone === "danger"
-        ? "bg-red-600 text-white hover:bg-red-700 border-red-600"
-        : "bg-white text-gray-800 hover:bg-gray-50";
+      ? "bg-red-600 text-white hover:bg-red-700 border-red-600"
+      : "bg-white text-gray-800 hover:bg-gray-50";
   return (
     <button type="button" title={title} onClick={onClick} disabled={disabled} className={`${base} ${styles}`}>
       {children}
@@ -313,34 +382,12 @@ function toneForOrderStatus(st: string) {
   return "gray";
 }
 
-/* -------- Return meta for alerts + row highlight -------- */
-function getReturnMetaVendor(order: any) {
-  const sub = Array.isArray(order?.subOrders) ? order.subOrders[0] : null;
-  const ret = sub?.return || null;
-  const refund = sub?.refund || null;
-
-  const retStatus = String(ret?.status || "").toUpperCase();
-  const refundStatus = String(refund?.status || "").toUpperCase();
-
-  const requested = retStatus === "REQUESTED";
-  const refundPending = ["APPROVED", "RECEIVED"].includes(retStatus) && refundStatus !== "PROCESSED";
-  const anyReturn = Boolean(retStatus);
-
-  const mostCritical = requested ? "REQUESTED" : refundPending ? "REFUND_PENDING" : anyReturn ? "RETURN_EXISTS" : "";
-
-  return {
-    anyReturn,
-    requested,
-    refundPending,
-    ret,
-    refund,
-    retStatus,
-    refundStatus,
-    mostCritical,
-  };
-}
-
-type DrawerState = { open: boolean; order: any | null; sub: any | null; tab: "items" | "shipments" | "returns" | "payment" | "customer" };
+type DrawerState = {
+  open: boolean;
+  order: any | null;
+  sub: any | null;
+  tab: "items" | "shipments" | "returns" | "payment" | "customer";
+};
 
 export default function VendorOrdersPage() {
   const [loading, setLoading] = useState(true);
@@ -395,6 +442,25 @@ export default function VendorOrdersPage() {
     }
   };
 
+  const refreshDrawerOrder = async () => {
+    const orderId = String(drawer.order?._id || "");
+    if (!orderId) return;
+
+    try {
+      const fresh = await vendorFetchOrderById(orderId);
+      const sub = Array.isArray(fresh?.subOrders) ? fresh.subOrders[0] : null;
+      setDrawer((p) => ({ ...p, order: fresh, sub }));
+      return;
+    } catch {
+      await load(page);
+      const found = (rawItems || []).find((x: any) => String(x?._id) === orderId);
+      if (found) {
+        const sub = Array.isArray(found?.subOrders) ? found.subOrders[0] : null;
+        setDrawer((p) => ({ ...p, order: found, sub }));
+      }
+    }
+  };
+
   useEffect(() => {
     load(1);
   }, []);
@@ -417,11 +483,11 @@ export default function VendorOrdersPage() {
     const sub = Array.isArray(order?.subOrders) ? order.subOrders[0] : null;
     setDrawer({ open: true, order, sub, tab });
   };
+
   const closeOrder = () => setDrawer({ open: false, order: null, sub: null, tab: "items" });
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-10">
-      {/* Header */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-2xl font-extrabold text-gray-900">Vendor · Orders</h1>
@@ -431,22 +497,18 @@ export default function VendorOrdersPage() {
           <Link href="/vendors" className="rounded-xl border bg-white px-4 py-2 text-sm font-semibold hover:bg-gray-50">
             Vendor Home
           </Link>
-          <button
-            onClick={() => load(page)}
-            className="rounded-xl border bg-white px-4 py-2 text-sm font-semibold hover:bg-gray-50"
-          >
+          <button onClick={() => load(page)} className="rounded-xl border bg-white px-4 py-2 text-sm font-semibold hover:bg-gray-50">
             Refresh
           </button>
         </div>
       </div>
 
-      {/* Filters */}
       <div className="mt-6 rounded-3xl border bg-white p-4 shadow-sm">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-7">
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="Search: order code / customer / phone / RZP id"
+            placeholder="Search: order code / customer / phone"
             className="h-11 rounded-2xl border px-4 text-sm outline-none focus:border-gray-400 sm:col-span-2"
           />
 
@@ -487,12 +549,7 @@ export default function VendorOrdersPage() {
           </select>
 
           <label className="flex h-11 items-center gap-2 rounded-2xl border bg-white px-3 text-sm">
-            <input
-              type="checkbox"
-              checked={attentionOnly}
-              onChange={(e) => setAttentionOnly(e.target.checked)}
-              className="h-4 w-4"
-            />
+            <input type="checkbox" checked={attentionOnly} onChange={(e) => setAttentionOnly(e.target.checked)} className="h-4 w-4" />
             <span className="font-semibold text-gray-800">Attention only</span>
           </label>
 
@@ -507,12 +564,9 @@ export default function VendorOrdersPage() {
       </div>
 
       {error ? (
-        <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
-          {error}
-        </div>
+        <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{error}</div>
       ) : null}
 
-      {/* Table */}
       <div className="mt-6 overflow-hidden rounded-3xl border bg-white shadow-sm">
         <div className="border-b bg-gray-50 px-5 py-3 text-sm font-extrabold text-gray-900">Orders</div>
 
@@ -533,7 +587,7 @@ export default function VendorOrdersPage() {
                   <th className="px-5 py-3">Payable</th>
                   <th className="px-5 py-3">Payment</th>
                   <th className="px-5 py-3">Shipment</th>
-                  <th className="px-5 py-3">Alerts</th>
+                  <th className="px-5 py-3">Return</th>
                   <th className="px-5 py-3">Status</th>
                   <th className="px-5 py-3">Created</th>
                   <th className="px-5 py-3 text-right">Actions</th>
@@ -560,6 +614,7 @@ export default function VendorOrdersPage() {
                   const payable = money(pickSubOrderTotal(o, sub || {}));
 
                   const ship = pickVendorShipment(o);
+                  const shipmentExists = shipmentCreatedForVendor(o);
                   const awb = ship?.shiprocket?.awb || "";
                   const shipmentId = ship?.shiprocket?.shipmentId ?? null;
 
@@ -570,30 +625,20 @@ export default function VendorOrdersPage() {
                   const img = first ? pickFirstImage(first) : "";
 
                   return (
-                    <tr
-                      key={orderId}
-                      className={
-                        "border-b last:border-b-0 hover:bg-gray-50/60 " + (rowAttention ? "bg-amber-50/50" : "")
-                      }
-                    >
-                      {/* Order */}
+                    <tr key={orderId} className={"border-b last:border-b-0 hover:bg-gray-50/60 " + (rowAttention ? "bg-amber-50/50" : "")}>
                       <td className="px-5 py-3">
                         <div className={"relative " + (rowAttention ? "pl-3" : "")}>
-                          {rowAttention ? (
-                            <span className="absolute left-0 top-1 h-10 w-1 rounded-full bg-amber-500" />
-                          ) : null}
+                          {rowAttention ? <span className="absolute left-0 top-1 h-10 w-1 rounded-full bg-amber-500" /> : null}
                           <div className="font-bold text-gray-900">{orderCode}</div>
                           <div className="text-[11px] text-gray-500">ID: {orderId.slice(-8)}</div>
                         </div>
                       </td>
 
-                      {/* Customer */}
                       <td className="px-5 py-3">
                         <div className="font-semibold text-gray-900">{customerName}</div>
                         <div className="text-[11px] text-gray-500">{phone}</div>
                       </td>
 
-                      {/* Summary */}
                       <td className="px-5 py-3">
                         <div className="flex items-center gap-3">
                           <div className="h-10 w-10 overflow-hidden rounded-xl bg-gray-100 shrink-0">
@@ -606,7 +651,7 @@ export default function VendorOrdersPage() {
                             </div>
                             <div className="mt-1 flex flex-wrap gap-2">
                               <Badge tone="blue">{itemsCount} item(s)</Badge>
-                              {ship ? <Badge tone="green">Shipment: Yes</Badge> : <Badge tone="gray">Shipment: No</Badge>}
+                              {shipmentExists ? <Badge tone="green">Shipment: Yes</Badge> : <Badge tone="gray">Shipment: No</Badge>}
                             </div>
                           </div>
                         </div>
@@ -619,62 +664,33 @@ export default function VendorOrdersPage() {
                           >
                             View details
                           </button>
-
-                          {rm.anyReturn ? (
-                            <button
-                              type="button"
-                              onClick={() => openOrder(o, "returns")}
-                              className={
-                                "text-[12px] font-semibold hover:underline " +
-                                (rm.requested || rm.refundPending ? "text-red-700" : "text-amber-700")
-                              }
-                            >
-                              {rm.requested ? "Action return" : rm.refundPending ? "Refund pending" : "View returns"}
-                            </button>
-                          ) : null}
                         </div>
                       </td>
 
-                      {/* Payable */}
                       <td className="px-5 py-3">
                         <div className="text-base font-bold text-gray-900">{payable}</div>
                         <div className="text-[11px] text-gray-500">Vendor share</div>
                       </td>
 
-                      {/* Payment */}
                       <td className="px-5 py-3">
                         <div className="flex items-center gap-2">
                           <Badge tone="gray">{pm}</Badge>
                           <Badge tone={toneForPaymentStatus(ps) as any}>{ps}</Badge>
                         </div>
-
-                        {/* {pm === "ONLINE" ? (
-                          <div className="mt-2 text-[11px] text-gray-600">
-                            {o?.pg?.paymentId ? "RZP captured" : "RZP pending"}
-                            {o?.pg?.amount ? ` • ${moneyPaise(o.pg.amount)} ${o?.pg?.currency || "INR"}` : ""}
-                          </div>
-                        ) : (
-                          <div className="mt-2 text-[11px] text-gray-600">COD</div>
-                        )} */}
-                        <div className="mt-2 text-[11px] text-gray-600">
-  {pm === "ONLINE" ? "Online payment" : "COD"}
-</div>
+                        <div className="mt-2 text-[11px] text-gray-600">{pm === "ONLINE" ? "Online payment" : "COD"}</div>
                       </td>
 
-                      {/* Shipment */}
                       <td className="px-5 py-3">
-                        {ship ? (
+                        {shipmentExists && ship ? (
                           <div className="text-[11px] text-gray-700 space-y-1">
                             <div>
                               <span className="font-semibold">Provider:</span> {ship?.provider || "—"}
                             </div>
                             <div>
-                              <span className="font-semibold">Shipment:</span>{" "}
-                              <span className="font-mono">{shipmentId ?? "—"}</span>
+                              <span className="font-semibold">Shipment:</span> <span className="font-mono">{shipmentId ?? "—"}</span>
                             </div>
                             <div>
-                              <span className="font-semibold">AWB:</span>{" "}
-                              <span className="font-mono">{awb || "—"}</span>
+                              <span className="font-semibold">AWB:</span> <span className="font-mono">{awb || "—"}</span>
                             </div>
                           </div>
                         ) : (
@@ -682,36 +698,30 @@ export default function VendorOrdersPage() {
                         )}
                       </td>
 
-                      {/* Alerts */}
                       <td className="px-5 py-3">
-                        <div className="flex flex-wrap gap-2">
-                          {rm.requested ? <Badge tone="amber">Return Requested</Badge> : null}
-                          {rm.refundPending ? <Badge tone="red">Refund Pending</Badge> : null}
-                          {!rm.anyReturn && !rm.refundPending && !rm.requested ? (
-                            <span className="text-[12px] text-gray-500">—</span>
-                          ) : null}
-                        </div>
+                        {rm.anyReturn ? (
+                          <div className="flex flex-wrap gap-2">
+                            {rm.requested ? <Badge tone="amber">REQUESTED</Badge> : null}
+                            {rm.approved ? <Badge tone="indigo">APPROVED</Badge> : null}
+                            {rm.received ? <Badge tone="blue">RECEIVED</Badge> : null}
+                            {rm.rejected ? <Badge tone="red">REJECTED</Badge> : null}
+                            {rm.refunded ? <Badge tone="green">REFUNDED</Badge> : null}
+                            {rm.refundPending ? <Badge tone="red">REFUND PENDING</Badge> : null}
+                          </div>
+                        ) : (
+                          <span className="text-[12px] text-gray-500">—</span>
+                        )}
                       </td>
 
-                      {/* Status */}
                       <td className="px-5 py-3">
                         <Badge tone={toneForOrderStatus(st) as any}>{st}</Badge>
                       </td>
 
-                      {/* Created */}
                       <td className="px-5 py-3 text-gray-700">{created}</td>
 
-                      {/* Actions */}
                       <td className="px-5 py-3">
                         <div className="flex justify-end gap-2">
                           <IconButton onClick={() => openOrder(o, "items")}>View</IconButton>
-                          {(rm.requested || rm.refundPending) ? (
-                            <IconButton onClick={() => openOrder(o, "returns")} tone="danger">
-                              Action Return
-                            </IconButton>
-                          ) : rm.anyReturn ? (
-                            <IconButton onClick={() => openOrder(o, "returns")}>Returns</IconButton>
-                          ) : null}
                           <IconButton onClick={() => openOrder(o, "shipments")}>Ship</IconButton>
                         </div>
                       </td>
@@ -726,7 +736,6 @@ export default function VendorOrdersPage() {
         )}
       </div>
 
-      {/* Pagination */}
       <div className="mt-6 flex items-center justify-between">
         <div className="text-sm text-gray-600">
           Page <span className="font-semibold text-gray-900">{page}</span> of{" "}
@@ -751,7 +760,6 @@ export default function VendorOrdersPage() {
         </div>
       </div>
 
-      {/* Drawer */}
       <Drawer
         open={drawer.open}
         onClose={closeOrder}
@@ -773,7 +781,6 @@ export default function VendorOrdersPage() {
             />
 
             <div className="mt-5 grid grid-cols-1 gap-4 lg:grid-cols-3">
-              {/* Left */}
               <div className="lg:col-span-2 space-y-4">
                 {drawer.tab === "items" ? (
                   <div className="rounded-3xl border bg-white p-4">
@@ -802,7 +809,7 @@ export default function VendorOrdersPage() {
                                 {it?.title || it?.productId?.title || "Product"}
                               </div>
                               {it?.productCode ? (
-                                <div className="text-[11px] text-gray-500 font-semibold">Code: {it.productCode}</div>
+                                <div className="text-[11px] text-gray-500 font-semibold">SKU: {it.productCode}</div>
                               ) : null}
 
                               <div className="mt-1 text-[12px] text-gray-700">
@@ -817,9 +824,7 @@ export default function VendorOrdersPage() {
                         );
                       })}
 
-                      {!(drawer.sub?.items || []).length ? (
-                        <div className="text-sm text-gray-600">No items found.</div>
-                      ) : null}
+                      {!(drawer.sub?.items || []).length ? <div className="text-sm text-gray-600">No items found.</div> : null}
                     </div>
                   </div>
                 ) : null}
@@ -852,7 +857,7 @@ export default function VendorOrdersPage() {
 
                 {drawer.tab === "returns" ? (
                   <div className="rounded-3xl border bg-white p-4">
-                    <div className="mb-3 text-sm font-extrabold text-gray-900">Return</div>
+                    <div className="mb-3 text-sm font-extrabold text-gray-900">Return Status</div>
 
                     {(() => {
                       const rm = getReturnMetaVendor(drawer.order);
@@ -860,17 +865,21 @@ export default function VendorOrdersPage() {
 
                       const ret = rm.ret;
                       const refund = rm.refund;
-
                       const imgs = Array.isArray(ret?.images) ? ret.images : [];
-                      const bank = ret?.bankDetails || null;
+                      const items = Array.isArray(ret?.items) ? ret.items : [];
 
                       return (
                         <div className="space-y-4">
                           <div className="flex items-center gap-2">
-                            <Badge tone={rm.retStatus === "REQUESTED" ? "amber" : rm.retStatus === "REJECTED" ? "red" : "indigo"}>
-                              {rm.retStatus || "—"}
-                            </Badge>
-                            {ret?.requestedAt ? <span className="text-[12px] text-gray-600">Requested: {fmtDateTime(ret.requestedAt)}</span> : null}
+                            {rm.requested ? <Badge tone="amber">REQUESTED</Badge> : null}
+                            {rm.approved ? <Badge tone="indigo">APPROVED</Badge> : null}
+                            {rm.received ? <Badge tone="blue">RECEIVED</Badge> : null}
+                            {rm.rejected ? <Badge tone="red">REJECTED</Badge> : null}
+                            {rm.refunded ? <Badge tone="green">REFUNDED</Badge> : null}
+                            {rm.refundPending ? <Badge tone="red">REFUND PENDING</Badge> : null}
+                            {ret?.requestedAt ? (
+                              <span className="text-[12px] text-gray-600">Requested: {fmtDateTime(ret.requestedAt)}</span>
+                            ) : null}
                           </div>
 
                           {ret?.reason ? (
@@ -886,35 +895,32 @@ export default function VendorOrdersPage() {
                           ) : null}
 
                           {rm.retStatus === "REJECTED" && ret?.rejectReason ? (
-                            <div className="text-sm text-red-700">Reject: {String(ret.rejectReason)}</div>
-                          ) : null}
-
-                          {bank ? (
-                            <div className="rounded-2xl border bg-gray-50 p-4 text-sm text-gray-700">
-                              <div className="font-extrabold text-gray-900 mb-2">Bank details (COD)</div>
-                              <div><span className="font-semibold">Holder:</span> {bank?.accountHolderName || "—"}</div>
-                              <div><span className="font-semibold">A/C:</span> {bank?.accountNumber || "—"}</div>
-                              <div><span className="font-semibold">IFSC:</span> {bank?.ifsc || "—"}</div>
-                              {bank?.bankName ? <div><span className="font-semibold">Bank:</span> {bank.bankName}</div> : null}
-                              {bank?.upiId ? <div><span className="font-semibold">UPI:</span> {bank.upiId}</div> : null}
+                            <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+                              Reject reason: {String(ret.rejectReason)}
                             </div>
                           ) : null}
 
-                          {imgs.length ? (
-                            <div>
-                              <div className="text-[12px] font-semibold text-gray-700 mb-2">Images</div>
-                              <div className="flex flex-wrap gap-2">
-                                {imgs.slice(0, 12).map((p: string, i: number) => {
-                                  const src = resolveImageUrl(p);
-                                  return (
-                                    <a key={i} href={src || "#"} target="_blank" rel="noreferrer" className="h-14 w-14 overflow-hidden rounded-xl border bg-white">
-                                      {src ? <img src={src} alt={`ret-${i}`} className="h-full w-full object-cover" /> : null}
-                                    </a>
-                                  );
-                                })}
+                          <div className="rounded-2xl border p-4">
+                            <div className="text-[12px] font-extrabold text-gray-900 mb-2">Return Items</div>
+                            {items.length ? (
+                              <div className="space-y-2 text-sm">
+                                {items.map((it: any, idx: number) => (
+                                  <div key={idx} className="flex items-center justify-between border-b py-2 last:border-b-0">
+                                    <div className="text-gray-700">
+                                      <span className="font-semibold text-gray-900">
+                                        {String(it?.title || it?.productTitle || it?.productId?.title || it?.productId || "Item")}
+                                      </span>
+                                      {it?.variantId ? <span className="text-gray-500"> • Var: {String(it.variantId)}</span> : null}
+                                      {it?.colorKey ? <span className="text-gray-500"> • Color: {String(it.colorKey)}</span> : null}
+                                    </div>
+                                    <div className="font-extrabold text-gray-900">Qty: {Number(it?.qty || 1)}</div>
+                                  </div>
+                                ))}
                               </div>
-                            </div>
-                          ) : null}
+                            ) : (
+                              <div className="text-sm text-gray-600">—</div>
+                            )}
+                          </div>
 
                           {refund ? (
                             <div className="rounded-2xl border p-4 text-sm">
@@ -922,6 +928,28 @@ export default function VendorOrdersPage() {
                               <StatRow k="Status" v={<Badge tone={rm.refundStatus === "PROCESSED" ? "green" : "amber"}>{rm.refundStatus || "—"}</Badge>} />
                               <StatRow k="Amount" v={refund?.amount ? money(refund.amount) : "—"} />
                               <StatRow k="Processed" v={refund?.processedAt ? fmtDateTime(refund.processedAt) : "—"} />
+                            </div>
+                          ) : null}
+
+                          {imgs.length ? (
+                            <div>
+                              <div className="text-[12px] font-semibold text-gray-700 mb-2">Uploaded images</div>
+                              <div className="flex flex-wrap gap-2">
+                                {imgs.slice(0, 12).map((p: string, i: number) => {
+                                  const src = resolveImageUrl(p);
+                                  return (
+                                    <a
+                                      key={i}
+                                      href={src || "#"}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="h-14 w-14 overflow-hidden rounded-xl border bg-white"
+                                    >
+                                      {src ? <img src={src} alt={`ret-${i}`} className="h-full w-full object-cover" /> : null}
+                                    </a>
+                                  );
+                                })}
+                              </div>
                             </div>
                           ) : null}
                         </div>
@@ -936,18 +964,12 @@ export default function VendorOrdersPage() {
                     {(() => {
                       const pm = String(drawer.order?.paymentMethod || "COD").toUpperCase();
                       const ps = String(drawer.order?.paymentStatus || "PENDING").toUpperCase();
-                      const pg = drawer.order?.pg || {};
                       return (
                         <div className="space-y-2 text-sm">
                           <StatRow k="Method" v={pm} />
                           <StatRow k="Status" v={<Badge tone={toneForPaymentStatus(ps) as any}>{ps}</Badge>} />
                           <StatRow k="Payable" v={money(pickSubOrderTotal(drawer.order, drawer.sub || {}))} />
-
-{pm === "ONLINE" ? (
-  <StatRow k="Online" v="Paid via Online" />
-) : (
-  <StatRow k="COD" v="Cash on Delivery" />
-)}
+                          {pm === "ONLINE" ? <StatRow k="Online" v="Paid via Online" /> : <StatRow k="COD" v="Cash on Delivery" />}
                         </div>
                       );
                     })()}
@@ -967,13 +989,15 @@ export default function VendorOrdersPage() {
                 ) : null}
               </div>
 
-              {/* Right */}
               <div className="space-y-4">
                 <div className="rounded-3xl border bg-white p-4">
                   <div className="mb-2 text-sm font-extrabold text-gray-900">Quick Summary</div>
                   <div className="space-y-2 text-sm">
                     <StatRow k="Order" v={drawer.order?.orderCode || "—"} />
-                    <StatRow k="Status" v={<Badge tone={toneForOrderStatus(drawer.order?.status) as any}>{String(drawer.order?.status || "—").toUpperCase()}</Badge>} />
+                    <StatRow
+                      k="Status"
+                      v={<Badge tone={toneForOrderStatus(drawer.order?.status) as any}>{String(drawer.order?.status || "—").toUpperCase()}</Badge>}
+                    />
                     <StatRow k="Created" v={fmtDateTime(drawer.order?.createdAt)} />
                     <StatRow k="Payable" v={money(pickSubOrderTotal(drawer.order, drawer.sub || {}))} />
                   </div>
@@ -984,14 +1008,16 @@ export default function VendorOrdersPage() {
                   {(() => {
                     const rm = getReturnMetaVendor(drawer.order);
                     const sh = pickVendorShipment(drawer.order);
+                    const shipmentExists = shipmentCreatedForVendor(drawer.order);
                     const pm = String(drawer.order?.paymentMethod || "COD").toUpperCase();
                     const ps = String(drawer.order?.paymentStatus || "PENDING").toUpperCase();
                     return (
                       <div className="flex flex-wrap gap-2">
-                        {rm.requested ? <Badge tone="amber">Return Requested</Badge> : null}
-                        {rm.refundPending ? <Badge tone="red">Refund Pending</Badge> : null}
-                        {sh ? <Badge tone="green">Shipment Created</Badge> : <Badge tone="gray">No Shipment</Badge>}
-                        <Badge tone={toneForPaymentStatus(ps) as any}>{pm} · {ps}</Badge>
+                        {rm.anyReturn ? <Badge tone="amber">Return Status Available</Badge> : null}
+                        {shipmentExists && sh ? <Badge tone="green">Shipment Created</Badge> : <Badge tone="gray">No Shipment</Badge>}
+                        <Badge tone={toneForPaymentStatus(ps) as any}>
+                          {pm} · {ps}
+                        </Badge>
                       </div>
                     );
                   })()}

@@ -116,10 +116,28 @@ router.patch("/discount/offers/:id/toggle", verifyAdmin, toggleOffer);
 router.get("/discount/offers", verifyAdmin, listOffers);
 
 // ---------- Return & Refund ----------
+// ---------- Return & Refund ----------
 router.get("/returns", verifyAdmin, adminListReturnRequests);
-router.post("/returns/:orderId/approve", verifyAdmin, adminApproveReturn);
-router.post("/returns/:orderId/reject", verifyAdmin, adminRejectReturn);
-router.post("/returns/:orderId/process-refund", verifyAdmin, adminProcessRefund);
+
+// ✅ approve/reject: same signature as controller expects
+router.post(
+  "/orders/:orderId/suborders/:subOrderId/returns/:returnId/approve",
+  verifyAdmin,
+  adminApproveReturn
+);
+
+router.post(
+  "/orders/:orderId/suborders/:subOrderId/returns/:returnId/reject",
+  verifyAdmin,
+  adminRejectReturn
+);
+
+// ✅ refund: keep naming consistent with your controller (refund.controller.ts)
+router.post(
+  "/orders/:orderId/suborders/:subOrderId/returns/:returnId/refund",
+  verifyAdmin,
+  adminProcessRefund
+);
 
 // ==============================
 // ✅ VENDORS (Admin)

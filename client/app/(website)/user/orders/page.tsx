@@ -27,12 +27,7 @@ function getVariantText(product?: any, variantId?: string) {
   return String(v.label || v.comboText || v.size || v.weight || "").trim();
 }
 
-function resolveOrderItemImage(
-  product?: any,
-  variantId?: string,
-  colorKey?: string | null,
-  fallback?: string
-) {
+function resolveOrderItemImage(product?: any, variantId?: string, colorKey?: string | null, fallback?: string) {
   // If product populated: Color > Variant > Gallery > Feature
   if (product) {
     const v = (product.variants || []).find((x: any) => String(x._id) === String(variantId));
@@ -60,14 +55,7 @@ function formatDate(d: Date) {
 }
 
 function pickStatusDate(o: any) {
-  const iso =
-    o?.deliveredAt ||
-    o?.cancelledAt ||
-    o?.statusUpdatedAt ||
-    o?.updatedAt ||
-    o?.createdAt ||
-    null;
-
+  const iso = o?.deliveredAt || o?.cancelledAt || o?.statusUpdatedAt || o?.updatedAt || o?.createdAt || null;
   return iso ? new Date(iso) : null;
 }
 
@@ -102,9 +90,7 @@ function pickOrderTotal(order: any, subOrder?: any, mode?: "SINGLE" | "SPLIT") {
   // ✅ SPLIT: prefer subOrder.total, else compute from subOrder.items
   if (mode === "SPLIT") {
     const direct =
-      Number(subOrder?.total ?? NaN) ||
-      Number(subOrder?.grandTotal ?? NaN) ||
-      Number(subOrder?.subtotal ?? NaN);
+      Number(subOrder?.total ?? NaN) || Number(subOrder?.grandTotal ?? NaN) || Number(subOrder?.subtotal ?? NaN);
 
     if (Number.isFinite(direct) && direct > 0) return direct;
 
@@ -125,7 +111,6 @@ function pickOrderTotal(order: any, subOrder?: any, mode?: "SINGLE" | "SPLIT") {
   );
 }
 
-
 function normalizeSubOrdersForList(order: any) {
   const subs = Array.isArray(order?.subOrders) ? order.subOrders : [];
 
@@ -142,6 +127,10 @@ function normalizeSubOrdersForList(order: any) {
       status: String(so?.status || order?.status || "PLACED").toUpperCase(),
       items: Array.isArray(so?.items) ? so.items : [],
       shipment: so?.shipment || null,
+
+      // ✅ MULTI-VENDOR RETURN (subOrder wise)
+      returns: Array.isArray(so?.returns) ? so.returns : [],
+      refund: so?.refund || null,
     }));
   }
 
@@ -157,6 +146,8 @@ function normalizeSubOrdersForList(order: any) {
       status: String(order?.status || "PLACED").toUpperCase(),
       items: legacyItems,
       shipment: null,
+      returns: [],
+      refund: null,
     },
   ];
 }
@@ -192,6 +183,24 @@ function buildOrderRows(orders: any[]) {
   });
 
   return rows;
+}
+
+function getLatestReturn(so: any) {
+  const rs = Array.isArray(so?.returns) ? so.returns : [];
+  if (!rs.length) return null;
+  return rs[rs.length - 1];
+}
+
+function returnBadgeTone(status: string) {
+  const s = String(status || "").toUpperCase();
+  if (!s) return "border bg-gray-50 text-gray-700";
+  if (s === "REQUESTED") return "border bg-yellow-50 text-yellow-800";
+  if (s === "APPROVED") return "border bg-blue-50 text-blue-800";
+  if (s === "REJECTED") return "border bg-red-50 text-red-800";
+  if (s === "PICKUP_CREATED") return "border bg-indigo-50 text-indigo-800";
+  if (s === "RECEIVED") return "border bg-purple-50 text-purple-800";
+  if (s === "REFUNDED") return "border bg-emerald-50 text-emerald-800";
+  return "border bg-gray-50 text-gray-700";
 }
 
 export default function WebsiteUserOrdersPage() {
@@ -250,9 +259,7 @@ export default function WebsiteUserOrdersPage() {
       const id = String(o?._id || "").toLowerCase();
 
       const firstItem = so?.items?.[0] || o?.items?.[0] || null;
-      const firstTitle = String(
-        firstItem?.title || firstItem?.productId?.title || firstItem?.product?.title || ""
-      ).toLowerCase();
+      const firstTitle = String(firstItem?.title || firstItem?.productId?.title || firstItem?.product?.title || "").toLowerCase();
 
       const soldBy = String(so?.soldBy || "").toLowerCase();
 
@@ -288,9 +295,7 @@ export default function WebsiteUserOrdersPage() {
       </div>
 
       {error ? (
-        <div className="mt-4 border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
-          {error}
-        </div>
+        <div className="mt-4 border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{error}</div>
       ) : null}
 
       {/* List */}
@@ -313,7 +318,8 @@ export default function WebsiteUserOrdersPage() {
             const status = String(so?.status || o?.status || "PLACED").toUpperCase();
             const createdAt = o?.createdAt ? new Date(o.createdAt) : new Date();
 
-            const items = Array.isArray(so?.items) && so.items.length ? so.items : Array.isArray(o?.items) ? o.items : [];
+            const items =
+              Array.isArray(so?.items) && so.items.length ? so.items : Array.isArray(o?.items) ? o.items : [];
             const previewItems = items.slice(0, 2);
             const moreCount = Math.max(0, items.length - previewItems.length);
 
@@ -338,21 +344,24 @@ export default function WebsiteUserOrdersPage() {
             }
 
             const dotClass =
-              status === "CANCELLED"
-                ? "bg-red-500"
-                : status === "DELIVERED"
-                ? "bg-green-600"
-                : "bg-green-600";
+              status === "CANCELLED" ? "bg-red-500" : status === "DELIVERED" ? "bg-green-600" : "bg-green-600";
 
-            const sellerLabel =
-              r.mode === "SPLIT" ? `Sold by: ${String(so?.soldBy || "Mechkart")}` : "";
+            const sellerLabel = r.mode === "SPLIT" ? `Sold by: ${String(so?.soldBy || "Mechkart")}` : "";
+
+            // ✅ Return status (subOrder-wise)
+            const latestRet = getLatestReturn(so);
+            const retStatus = String(latestRet?.status || "").toUpperCase();
+
+            if (status === "DELIVERED" && retStatus) {
+              rightSub = retStatus === "REQUESTED" ? "Return request submitted." : `Return ${retStatus.toLowerCase()}.`;
+            }
+
+            const href = `/user/orders/${String(o._id)}${
+              r.mode === "SPLIT" ? `?subOrderId=${encodeURIComponent(String(so?._id || ""))}` : ""
+            }`;
 
             return (
-              <Link
-                key={r.rowId}
-                href={`/user/orders/${String(o._id)}${r.mode === "SPLIT" ? `?subOrderId=${encodeURIComponent(String(so?._id || ""))}` : ""}`}
-                className="block border bg-white p-5 hover:bg-gray-50 transition"
-              >
+              <Link key={r.rowId} href={href} className="block border bg-white p-5 hover:bg-gray-50 transition">
                 <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
                   {/* Left: thumbnails + titles */}
                   <div className="flex gap-4">
@@ -377,8 +386,17 @@ export default function WebsiteUserOrdersPage() {
 
                     {/* Titles */}
                     <div className="min-w-0">
-                      {sellerLabel ? (
-                        <div className="text-xs font-bold text-gray-800">{sellerLabel}</div>
+                      {sellerLabel ? <div className="text-xs font-bold text-gray-800">{sellerLabel}</div> : null}
+
+                      {/* ✅ Return badge */}
+                      {retStatus ? (
+                        <div
+                          className={`mt-1 inline-flex items-center gap-2 text-[11px] font-bold px-2 py-1 ${returnBadgeTone(
+                            retStatus
+                          )}`}
+                        >
+                          Return: {retStatus}
+                        </div>
                       ) : null}
 
                       {previewItems.map((it: any, idx: number) => {
@@ -392,7 +410,7 @@ export default function WebsiteUserOrdersPage() {
                           <div key={idx} className={idx ? "mt-2" : "mt-1"}>
                             <div className="text-sm font-semibold text-gray-900 line-clamp-2">{title}</div>
 
-                            {(color || variantText || qty) ? (
+                            {color || variantText || qty ? (
                               <div className="mt-1 text-xs text-gray-600">
                                 Qty: {qty}
                                 {color ? ` • Color: ${color}` : ""}
@@ -407,13 +425,9 @@ export default function WebsiteUserOrdersPage() {
                         );
                       })}
 
-                      {moreCount > 0 ? (
-                        <div className="mt-2 text-[11px] text-gray-500">+{moreCount} more item(s)</div>
-                      ) : null}
+                      {moreCount > 0 ? <div className="mt-2 text-[11px] text-gray-500">+{moreCount} more item(s)</div> : null}
 
-                      {o?.orderCode ? (
-                        <div className="mt-2 text-[11px] text-gray-500">Order: {o.orderCode}</div>
-                      ) : null}
+                      {o?.orderCode ? <div className="mt-2 text-[11px] text-gray-500">Order: {o.orderCode}</div> : null}
                     </div>
                   </div>
 
