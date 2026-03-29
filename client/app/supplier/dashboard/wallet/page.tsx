@@ -58,6 +58,66 @@ function typeLabel(t: string) {
   }
 }
 
+function toNum(v: any, fb = 0) {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fb;
+}
+
+function normalizeBalances(b: any) {
+  return {
+    hold: toNum(b?.hold, 0),
+    available: toNum(b?.available, 0),
+    paid: toNum(b?.paid, 0),
+    deduction: toNum(b?.deduction, 0),
+  };
+}
+
+function getWalletSummary(data: any) {
+  const balances = normalizeBalances(data?.wallet?.balances || data?.balances || {});
+  const apiSummary = data?.wallet?.summary || {};
+
+  const grossAvailable = toNum(apiSummary?.grossAvailable, balances.available);
+  const deduction = toNum(apiSummary?.deduction, balances.deduction);
+  const netReleasable = Math.max(0, toNum(apiSummary?.netReleasable, grossAvailable - deduction));
+
+  return {
+    balances,
+    summary: {
+      hold: toNum(apiSummary?.hold, balances.hold),
+      grossAvailable,
+      deduction,
+      netReleasable,
+      paid: toNum(apiSummary?.paid, balances.paid),
+    },
+  };
+}
+
+function txnExtraNote(t: any) {
+  const type = String(t?.type || "").toUpperCase();
+  const meta = t?.meta || {};
+
+if (type === "RETURN_DEDUCT" || type === "CANCEL_DEDUCT") {
+  const vendorReverseAmount = toNum(meta?.vendorReverseAmount, 0);
+  const deductionAmount = toNum(meta?.deductionAmount, 0);
+
+  return {
+    label: "Breakup",
+    text: `Amount reversed ${money(vendorReverseAmount)} • Penalty deduction ${money(deductionAmount)}`,
+  };
+}
+  if (type === "PAYOUT_RELEASED") {
+    const deductionApplied = toNum(meta?.deductionApplied, 0);
+    const grossConsumed = toNum(meta?.grossConsumed, 0);
+
+    return {
+      label: "Settlement",
+      text: `Deduction adjusted ${money(deductionApplied)} • Gross consumed ${money(grossConsumed)}`,
+    };
+  }
+
+  return null;
+}
+
 async function vendorFetchWallet(params: { type?: string; status?: string; page?: number; limit?: number }) {
   const qs = new URLSearchParams();
   if (params.type) qs.set("type", params.type);
@@ -105,10 +165,13 @@ export default function VendorWalletPage() {
   const [page, setPage] = useState(1);
   const limit = 20;
 
-  // ✅ match backend response shape
   const [data, setData] = useState<any>({
     vendorId: "",
-    wallet: { balances: { hold: 0, available: 0, paid: 0 }, stats: {} },
+    wallet: {
+      balances: { hold: 0, available: 0, paid: 0, deduction: 0 },
+      stats: {},
+      summary: {},
+    },
     transactions: [],
     page: 1,
     limit,
@@ -118,12 +181,17 @@ export default function VendorWalletPage() {
 
   const [modal, setModal] = useState<ModalState>({ open: false, txn: null });
 
-const items: Txn[] =
-  Array.isArray(data?.txns) ? data.txns :
-  Array.isArray(data?.transactions) ? data.transactions :
-  [];
+  const items: Txn[] = Array.isArray(data?.txns)
+    ? data.txns
+    : Array.isArray(data?.transactions)
+      ? data.transactions
+      : [];
 
   const totalPages = Number(data?.totalPages || 1);
+
+  const walletInfo = getWalletSummary(data);
+  const balances = walletInfo.balances;
+  const summary = walletInfo.summary;
 
   const load = async (nextPage = 1) => {
     try {
@@ -146,23 +214,15 @@ const items: Txn[] =
   }, []);
 
   const summaryText = useMemo(() => {
-   const total = Number(data?.totalTxns ?? data?.total ?? 0);
-
+    const total = Number(data?.totalTxns ?? data?.total ?? 0);
     return `${total} transaction(s)`;
   }, [data?.total, data?.totalTxns]);
-
-const balances =
-  data?.balances ||
-  data?.wallet?.balances ||
-  { hold: 0, available: 0, paid: 0 };
-
 
   const openTxn = (txn: Txn) => setModal({ open: true, txn });
   const closeTxn = () => setModal({ open: false, txn: null });
 
   return (
     <div className="mx-auto max-w-7xl px-4 py-10">
-      {/* Header */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Vendor · Wallet</h1>
@@ -173,37 +233,49 @@ const balances =
           <Link href="/vendors" className="rounded-xl border px-4 py-2 text-sm font-semibold hover:bg-gray-50">
             Vendor Home
           </Link>
-          <button onClick={() => load(page)} className="rounded-xl bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-black">
+          <button
+            onClick={() => load(page)}
+            className="rounded-xl bg-gray-900 px-4 py-2 text-sm font-semibold text-white hover:bg-black"
+          >
             Refresh
           </button>
         </div>
       </div>
 
-      {/* Balance Cards */}
-      <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <div className="rounded-3xl border bg-white p-5">
           <div className="text-sm font-semibold text-gray-700">Hold Balance</div>
-          <div className="mt-2 text-3xl font-extrabold text-gray-900">{money(balances.hold)}</div>
-          <div className="mt-1 text-[12px] text-gray-500">Locked amount (unlock after 10 days)</div>
+          <div className="mt-2 text-3xl font-extrabold text-gray-900">{money(summary.hold)}</div>
+          <div className="mt-1 text-[12px] text-gray-500">Product earning only • unlock after 10 days</div>
         </div>
 
         <div className="rounded-3xl border bg-white p-5">
-          <div className="text-sm font-semibold text-gray-700">Available Balance</div>
-          <div className="mt-2 text-3xl font-extrabold text-gray-900">{money(balances.available)}</div>
-          <div className="mt-1 text-[12px] text-gray-500">Eligible for payout</div>
+          <div className="text-sm font-semibold text-gray-700">Gross Available</div>
+          <div className="mt-2 text-3xl font-extrabold text-gray-900">{money(summary.grossAvailable)}</div>
+          <div className="mt-1 text-[12px] text-gray-500">Before deduction cut</div>
         </div>
 
         <div className="rounded-3xl border bg-white p-5">
-          <div className="text-sm font-semibold text-gray-700">Paid</div>
-          <div className="mt-2 text-3xl font-extrabold text-gray-900">{money(balances.paid)}</div>
-          <div className="mt-1 text-[12px] text-gray-500">Already paid by admin</div>
+          <div className="text-sm font-semibold text-gray-700">Deduction</div>
+          <div className="mt-2 text-3xl font-extrabold text-red-700">{money(summary.deduction)}</div>
+          <div className="mt-1 text-[12px] text-gray-500">Penalty / adjustment deduction</div>
+        </div>
+
+        <div className="rounded-3xl border bg-emerald-50 p-5">
+          <div className="text-sm font-semibold text-emerald-800">Net Releasable</div>
+          <div className="mt-2 text-3xl font-extrabold text-emerald-700">{money(summary.netReleasable)}</div>
+          <div className="mt-1 text-[12px] text-emerald-700">Actual payout eligible</div>
+          <div className="mt-2 text-[12px] text-gray-600">Paid till now: {money(summary.paid)}</div>
         </div>
       </div>
 
-      {/* Filters */}
       <div className="mt-6 rounded-3xl border bg-white p-4">
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-4">
-          <select value={type} onChange={(e) => setType(e.target.value)} className="h-11 rounded-2xl border px-4 text-sm outline-none focus:border-gray-400 bg-white">
+          <select
+            value={type}
+            onChange={(e) => setType(e.target.value)}
+            className="h-11 rounded-2xl border px-4 text-sm outline-none focus:border-gray-400 bg-white"
+          >
             <option value="">All Types</option>
             {TYPE_OPTIONS.filter(Boolean).map((t) => (
               <option key={t} value={t}>
@@ -212,7 +284,11 @@ const balances =
             ))}
           </select>
 
-          <select value={status} onChange={(e) => setStatus(e.target.value)} className="h-11 rounded-2xl border px-4 text-sm outline-none focus:border-gray-400 bg-white">
+          <select
+            value={status}
+            onChange={(e) => setStatus(e.target.value)}
+            className="h-11 rounded-2xl border px-4 text-sm outline-none focus:border-gray-400 bg-white"
+          >
             <option value="">All Status</option>
             {STATUS_OPTIONS.filter(Boolean).map((s) => (
               <option key={s} value={s}>
@@ -221,7 +297,11 @@ const balances =
             ))}
           </select>
 
-          <button type="button" onClick={() => load(1)} className="h-11 rounded-2xl bg-gray-900 px-4 text-sm font-semibold text-white hover:bg-black">
+          <button
+            type="button"
+            onClick={() => load(1)}
+            className="h-11 rounded-2xl bg-gray-900 px-4 text-sm font-semibold text-white hover:bg-black"
+          >
             Apply
           </button>
 
@@ -243,12 +323,15 @@ const balances =
         <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">{error}</div>
       ) : null}
 
-      {/* Table */}
       <div className="mt-6 rounded-3xl border bg-white overflow-hidden">
         <div className="border-b bg-gray-50 px-5 py-3 text-sm font-semibold text-gray-900">Transactions</div>
 
         {loading ? (
-          <div className="p-5 space-y-3">{Array.from({ length: 6 }).map((_, i) => <div key={i} className="h-10 rounded-2xl bg-gray-100 animate-pulse" />)}</div>
+          <div className="p-5 space-y-3">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} className="h-10 rounded-2xl bg-gray-100 animate-pulse" />
+            ))}
+          </div>
         ) : items.length ? (
           <div className="overflow-x-auto">
             <table className="min-w-[1100px] w-full text-sm">
@@ -271,6 +354,7 @@ const balances =
                   const dir = String(t?.direction || "").toUpperCase();
                   const amt = Number(t?.amount || 0);
                   const signed = dir === "DEBIT" ? -Math.abs(amt) : Math.abs(amt);
+                  const extra = txnExtraNote(t);
 
                   return (
                     <tr key={t?._id || t?.idempotencyKey || idx} className="border-b last:border-b-0">
@@ -283,7 +367,9 @@ const balances =
 
                       <td className="px-5 py-3">
                         <div className="font-semibold text-gray-900">{t?.orderCode || "—"}</div>
-                        {t?.subOrderId ? <div className="text-[11px] text-gray-500">Sub: {String(t.subOrderId).slice(-8)}</div> : null}
+                        {t?.subOrderId ? (
+                          <div className="text-[11px] text-gray-500">Sub: {String(t.subOrderId).slice(-8)}</div>
+                        ) : null}
                       </td>
 
                       <td className="px-5 py-3">
@@ -295,7 +381,9 @@ const balances =
                       </td>
 
                       <td className="px-5 py-3">
-                        <span className={`inline-flex rounded-xl border px-3 py-1 text-[12px] font-semibold ${badgeClass(st)}`}>{st || "—"}</span>
+                        <span className={`inline-flex rounded-xl border px-3 py-1 text-[12px] font-semibold ${badgeClass(st)}`}>
+                          {st || "—"}
+                        </span>
                       </td>
 
                       <td className="px-5 py-3">
@@ -305,10 +393,18 @@ const balances =
                             Ref: <span className="font-mono">{String(t.meta.reference)}</span>
                           </div>
                         ) : null}
+                        {extra ? (
+                          <div className="mt-1 text-[11px] text-gray-500">
+                            {extra.label}: <span className="font-medium text-gray-700">{extra.text}</span>
+                          </div>
+                        ) : null}
                       </td>
 
                       <td className="px-5 py-3">
-                        <button onClick={() => openTxn(t)} className="h-9 rounded-xl border px-3 text-[12px] font-semibold hover:bg-gray-50">
+                        <button
+                          onClick={() => openTxn(t)}
+                          className="h-9 rounded-xl border px-3 text-[12px] font-semibold hover:bg-gray-50"
+                        >
                           View
                         </button>
                       </td>
@@ -323,23 +419,30 @@ const balances =
         )}
       </div>
 
-      {/* Pagination */}
       <div className="mt-6 flex items-center justify-between">
         <div className="text-sm text-gray-600">
-          Page <span className="font-semibold text-gray-900">{page}</span> of <span className="font-semibold text-gray-900">{totalPages}</span>
+          Page <span className="font-semibold text-gray-900">{page}</span> of{" "}
+          <span className="font-semibold text-gray-900">{totalPages}</span>
         </div>
 
         <div className="flex gap-2">
-          <button disabled={loading || page <= 1} onClick={() => load(page - 1)} className="rounded-xl border px-4 py-2 text-sm font-semibold hover:bg-gray-50 disabled:opacity-50">
+          <button
+            disabled={loading || page <= 1}
+            onClick={() => load(page - 1)}
+            className="rounded-xl border px-4 py-2 text-sm font-semibold hover:bg-gray-50 disabled:opacity-50"
+          >
             Prev
           </button>
-          <button disabled={loading || page >= totalPages} onClick={() => load(page + 1)} className="rounded-xl border px-4 py-2 text-sm font-semibold hover:bg-gray-50 disabled:opacity-50">
+          <button
+            disabled={loading || page >= totalPages}
+            onClick={() => load(page + 1)}
+            className="rounded-xl border px-4 py-2 text-sm font-semibold hover:bg-gray-50 disabled:opacity-50"
+          >
             Next
           </button>
         </div>
       </div>
 
-      {/* Txn Modal */}
       {modal.open ? (
         <div className="fixed inset-0 z-[60]">
           <div className="absolute inset-0 bg-black/40" onClick={closeTxn} />
@@ -392,6 +495,13 @@ const balances =
                   ) : null}
                 </div>
 
+                {txnExtraNote(modal.txn) ? (
+                  <div className="mt-3 rounded-xl bg-gray-50 p-3 text-[12px] text-gray-700">
+                    <span className="font-semibold text-gray-900">{txnExtraNote(modal.txn)?.label}:</span>{" "}
+                    {txnExtraNote(modal.txn)?.text}
+                  </div>
+                ) : null}
+
                 {modal.txn?.note ? (
                   <div className="mt-3 text-sm text-gray-700">
                     <span className="font-semibold text-gray-900">Note:</span> {String(modal.txn.note)}
@@ -400,11 +510,28 @@ const balances =
               </div>
 
               <div className="rounded-2xl border p-4">
-                <div className="text-sm font-semibold text-gray-900">Meta</div>
-                <pre className="mt-3 whitespace-pre-wrap break-words rounded-xl bg-gray-50 p-3 text-[12px] text-gray-800">
-                  {JSON.stringify(modal.txn?.meta || {}, null, 2)}
-                </pre>
+                <div className="text-sm font-semibold text-gray-900">Current Wallet Snapshot</div>
+                <div className="mt-3 grid grid-cols-2 gap-3 text-sm">
+                  <div>
+                    <div className="text-[11px] text-gray-500">Hold</div>
+                    <div className="font-bold text-gray-900">{money(summary.hold)}</div>
+                  </div>
+                  <div>
+                    <div className="text-[11px] text-gray-500">Gross Available</div>
+                    <div className="font-bold text-gray-900">{money(summary.grossAvailable)}</div>
+                  </div>
+                  <div>
+                    <div className="text-[11px] text-gray-500">Deduction</div>
+                    <div className="font-bold text-red-700">{money(summary.deduction)}</div>
+                  </div>
+                  <div>
+                    <div className="text-[11px] text-gray-500">Net Releasable</div>
+                    <div className="font-bold text-emerald-700">{money(summary.netReleasable)}</div>
+                  </div>
+                </div>
               </div>
+
+
             </div>
           </div>
         </div>

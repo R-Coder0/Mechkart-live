@@ -1,4 +1,5 @@
-/* eslint-disable @next/next/no-img-element */
+/* eslint-disable @typescript-eslint/no-unused-vars */
+/* eslint-disable react-hooks/exhaustive-deps */
 /* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
@@ -414,7 +415,7 @@ export default function AdminOrdersPage() {
 
   useEffect(() => {
     load(1);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    
   }, []);
 
   const onApplyFilters = async () => load(1);
@@ -530,7 +531,7 @@ export default function AdminOrdersPage() {
   }, [data?.total, items.length, attentionOnly]);
 
   return (
-    <div className="mx-auto max-w-7xl px-4 py-10">
+    <div className="mx-auto max-w-[1700px] px-4 py-10">
       {/* Header */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>

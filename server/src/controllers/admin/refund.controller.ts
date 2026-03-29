@@ -3,6 +3,7 @@ import { Request, Response } from "express";
 import { Types } from "mongoose";
 import Razorpay from "razorpay";
 import { Order } from "../../models/Order.model";
+import { applyWalletEffectsForOrder } from "../../services/vendorWallet.service";
 
 const RZP_KEY_ID = process.env.RAZORPAY_KEY_ID || "";
 const RZP_KEY_SECRET = process.env.RAZORPAY_KEY_SECRET || "";
@@ -46,13 +47,12 @@ function computeSubOrderRefundAmount(subOrder: any, ret: any) {
 
     const qty = Math.max(1, toNum(r.qty, 1));
     const line = toNum(orderItem.finalLineTotal, orderItem.salePrice * orderItem.qty);
-
     const unit = line / Math.max(1, toNum(orderItem.qty, 1));
 
     total += unit * qty;
   }
 
-  return Math.round(total * 100) / 100; // rupees
+  return Math.round(total * 100) / 100;
 }
 
 /**
@@ -63,9 +63,11 @@ export const adminProcessRefund = async (req: Request, res: Response) => {
   try {
     const { orderId, subOrderId, returnId } = req.params;
 
-    if (!Types.ObjectId.isValid(orderId) ||
-        !Types.ObjectId.isValid(subOrderId) ||
-        !Types.ObjectId.isValid(returnId)) {
+    if (
+      !Types.ObjectId.isValid(orderId) ||
+      !Types.ObjectId.isValid(subOrderId) ||
+      !Types.ObjectId.isValid(returnId)
+    ) {
       return res.status(400).json({ message: "Invalid parameters" });
     }
 
@@ -91,16 +93,12 @@ export const adminProcessRefund = async (req: Request, res: Response) => {
 
     const pm = String(order.paymentMethod || "").toUpperCase();
 
-    // Compute refund amount for this subOrder
     const refundAmount = computeSubOrderRefundAmount(subOrder, ret);
-
     if (refundAmount <= 0) {
       return res.status(400).json({ message: "Invalid refund amount" });
     }
 
-    // ========================
     // COD => Manual refund
-    // ========================
     if (pm === "COD") {
       subOrder.refund = {
         method: "COD",
@@ -116,13 +114,16 @@ export const adminProcessRefund = async (req: Request, res: Response) => {
       ret.status = "REFUNDED";
 
       await order.save();
+      const walletSync = await applyWalletEffectsForOrder(order);
 
-      return res.json({ message: "COD refund marked processed", amount: refundAmount });
+      return res.json({
+        message: "COD refund marked processed",
+        amount: refundAmount,
+        walletSync,
+      });
     }
 
-    // ========================
     // ONLINE => Razorpay
-    // ========================
     if (!RZP_KEY_ID || !RZP_KEY_SECRET) {
       return res.status(500).json({ message: "Razorpay keys missing" });
     }
@@ -163,13 +164,14 @@ export const adminProcessRefund = async (req: Request, res: Response) => {
       ret.status = "REFUNDED";
 
       await order.save();
+      const walletSync = await applyWalletEffectsForOrder(order);
 
       return res.json({
         message: "Refund processed",
         amount: refundAmount,
         refundId: refund?.id,
+        walletSync,
       });
-
     } catch (err: any) {
       subOrder.refund = {
         method: "ONLINE",
@@ -189,7 +191,6 @@ export const adminProcessRefund = async (req: Request, res: Response) => {
         error: err?.message || "Unknown error",
       });
     }
-
   } catch (err: any) {
     console.error("adminProcessRefund error:", err);
     return res.status(500).json({

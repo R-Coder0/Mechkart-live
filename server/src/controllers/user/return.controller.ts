@@ -70,7 +70,6 @@ function buildItemMap(subOrders: any[]) {
 
       map.get(key)!.orderedQty += Math.max(1, toNum(it.qty, 1));
 
-      // already returned qty (exclude rejected)
       for (const ret of so.returns || []) {
         if (ret.status === "REJECTED") continue;
 
@@ -92,7 +91,6 @@ function buildItemMap(subOrders: any[]) {
 }
 
 function parseItems(rawItems: any) {
-  // supports array OR JSON-stringified array
   if (Array.isArray(rawItems)) return rawItems;
 
   if (typeof rawItems === "string" && rawItems.trim()) {
@@ -100,7 +98,7 @@ function parseItems(rawItems: any) {
       const parsed = JSON.parse(rawItems);
       return Array.isArray(parsed) ? parsed : [];
     } catch {
-      return null; // invalid JSON
+      return null;
     }
   }
 
@@ -137,59 +135,136 @@ function findSubOrderItemByKey(subOrder: any, pid: string, vid: string, ck: stri
   });
 }
 
+function pickFirstNonEmpty(...vals: any[]) {
+  for (const v of vals) {
+    const s = toStr(v);
+    if (s) return s;
+  }
+  return "";
+}
+
+function pickFirstImage(...vals: any[]) {
+  for (const v of vals) {
+    if (Array.isArray(v)) {
+      const first = v.find((x) => toStr(x));
+      if (first) return toStr(first);
+      continue;
+    }
+    const s = toStr(v);
+    if (s) return s;
+  }
+  return "";
+}
+
+function findVariantSnapshot(productObj: any, variantId: any) {
+  if (!productObj || !variantId) return null;
+  const arr = Array.isArray(productObj?.variants) ? productObj.variants : [];
+  return arr.find((x: any) => String(x?._id) === String(variantId)) || null;
+}
+
+function findColorSnapshot(productObj: any, colorKey: any) {
+  if (!productObj || !colorKey) return null;
+  const arr = Array.isArray(productObj?.colors) ? productObj.colors : [];
+  return (
+    arr.find((x: any) => toStr(x?.name).toLowerCase() === toStr(colorKey).toLowerCase()) ||
+    null
+  );
+}
+
 function pickReturnItemSnapshot(orderItem: any) {
   const productObj =
     orderItem?.productId && typeof orderItem.productId === "object"
       ? orderItem.productId
+      : orderItem?.product && typeof orderItem.product === "object"
+      ? orderItem.product
       : null;
 
-  const title =
-    toStr(orderItem?.title) ||
-    toStr(orderItem?.name) ||
-    toStr(productObj?.title) ||
-    toStr(productObj?.name) ||
-    "";
+  const variantObj =
+    (orderItem?.variantId && typeof orderItem.variantId === "object" ? orderItem.variantId : null) ||
+    orderItem?.selectedVariant ||
+    findVariantSnapshot(productObj, orderItem?.variantId);
 
-  const productCode =
-    toStr(orderItem?.productCode) ||
-    toStr(orderItem?.sku) ||
-    toStr(productObj?.productCode) ||
-    toStr(productObj?.sku) ||
-    "";
+  const colorObj = findColorSnapshot(productObj, orderItem?.colorKey);
 
-  const image =
-    toStr(orderItem?.image) ||
-    toStr(orderItem?.featureImage) ||
-    toStr(productObj?.featureImage) ||
-    (Array.isArray(productObj?.galleryImages)
-      ? toStr(productObj.galleryImages[0])
-      : "") ||
-    "";
+  const qty = Math.max(1, toNum(orderItem?.qty, 1));
 
-  const variantLabel =
-    toStr(orderItem?.variantLabel) ||
-    toStr(orderItem?.variantName) ||
-    toStr(orderItem?.variantText) ||
-    toStr(orderItem?.variantSnapshot?.label) ||
-    toStr(orderItem?.variantSnapshot?.comboText) ||
-    toStr(orderItem?.variantSnapshot?.size) ||
-    toStr(orderItem?.variantSnapshot?.weight) ||
-    "";
+  const title = pickFirstNonEmpty(
+    orderItem?.title,
+    orderItem?.name,
+    orderItem?.productTitle,
+    orderItem?.productName,
+    orderItem?.snapshot?.title,
+    orderItem?.snapshot?.name,
+    productObj?.title,
+    productObj?.name
+  );
+
+  const productCode = pickFirstNonEmpty(
+    orderItem?.productCode,
+    orderItem?.sku,
+    orderItem?.code,
+    orderItem?.productSku,
+    orderItem?.snapshot?.productCode,
+    orderItem?.snapshot?.sku,
+    productObj?.productCode,
+    productObj?.sku
+  );
+
+  const image = pickFirstImage(
+    orderItem?.image,
+    orderItem?.featureImage,
+    orderItem?.snapshot?.image,
+    orderItem?.selectedVariant?.image,
+    orderItem?.selectedVariant?.images,
+    colorObj?.images,
+    variantObj?.images,
+    productObj?.featureImage,
+    productObj?.galleryImages
+  );
+
+  const variantLabel = pickFirstNonEmpty(
+    orderItem?.variantLabel,
+    orderItem?.variantName,
+    orderItem?.variantText,
+    orderItem?.variantSnapshot?.label,
+    orderItem?.variantSnapshot?.comboText,
+    orderItem?.variantSnapshot?.size,
+    orderItem?.variantSnapshot?.weight,
+    orderItem?.selectedVariant?.label,
+    orderItem?.selectedVariant?.comboText,
+    orderItem?.selectedVariant?.size,
+    orderItem?.selectedVariant?.weight,
+    variantObj?.label,
+    variantObj?.comboText,
+    variantObj?.size,
+    variantObj?.weight
+  );
+
+  const unitPrice =
+    toNum(orderItem?.finalUnitPrice, NaN) ||
+    toNum(orderItem?.unitFinalPrice, NaN) ||
+    toNum(orderItem?.finalPrice, NaN) ||
+    toNum(orderItem?.salePrice, NaN) ||
+    toNum(orderItem?.price, NaN) ||
+    toNum(orderItem?.unitPrice, NaN) ||
+    toNum(orderItem?.pricingMeta?.finalUnitPrice, NaN) ||
+    toNum(orderItem?.pricingMeta?.salePrice, NaN) ||
+    toNum(orderItem?.pricingMeta?.baseSalePrice, NaN) ||
+    0;
 
   const finalLineTotal =
-    Number.isFinite(Number(orderItem?.finalLineTotal))
-      ? Number(orderItem.finalLineTotal)
-      : Number.isFinite(Number(orderItem?.lineTotal))
-      ? Number(orderItem.lineTotal)
-      : Number.isFinite(Number(orderItem?.baseLineTotal))
-      ? Number(orderItem.baseLineTotal)
-      : 0;
+    toNum(orderItem?.finalLineTotal, NaN) ||
+    toNum(orderItem?.lineTotal, NaN) ||
+    toNum(orderItem?.baseLineTotal, NaN) ||
+    toNum(orderItem?.amount, NaN) ||
+    (unitPrice > 0 ? unitPrice * qty : 0);
 
   return {
     title: title || null,
     productCode: productCode || null,
     image: image || null,
     variantLabel: variantLabel || null,
+    unitPrice: unitPrice || 0,
     finalLineTotal: finalLineTotal || 0,
   };
 }
@@ -223,7 +298,6 @@ export const createReturnRequest = async (req: Request, res: Response) => {
     if (!Array.isArray(order.subOrders) || !order.subOrders.length)
       return res.status(400).json({ message: "Invalid order structure" });
 
-    // items parsing
     const rawItems = (req.body as any)?.items;
     const bodyItems = parseItems(rawItems);
 
@@ -239,7 +313,6 @@ export const createReturnRequest = async (req: Request, res: Response) => {
     const itemMap = buildItemMap(order.subOrders);
     const vendorBuckets = new Map<string, any[]>();
 
-    // Validate + bucket items vendor-wise (subOrder-wise)
     for (const r of bodyItems) {
       const pid = idStr(r?.productId);
       const vid = r?.variantId ? idStr(r.variantId) : "";
@@ -270,6 +343,14 @@ export const createReturnRequest = async (req: Request, res: Response) => {
       const matchedOrderItem = findSubOrderItemByKey(entry.subOrder, pid, vid, ck);
       const snap = matchedOrderItem ? pickReturnItemSnapshot(matchedOrderItem) : null;
 
+      const unitPrice = snap?.unitPrice || 0;
+      const lineTotal =
+        snap?.finalLineTotal && reqQty > 0 && matchedOrderItem?.qty
+          ? (snap.finalLineTotal / Math.max(1, toNum(matchedOrderItem.qty, 1))) * reqQty
+          : unitPrice > 0
+          ? unitPrice * reqQty
+          : 0;
+
       vendorBuckets.get(soId)!.push({
         productId: new Types.ObjectId(pid),
         qty: reqQty,
@@ -277,16 +358,15 @@ export const createReturnRequest = async (req: Request, res: Response) => {
           vid && Types.ObjectId.isValid(vid) ? new Types.ObjectId(vid) : null,
         colorKey: ck || null,
 
-        // snapshot fields for admin/vendor/user UI
         title: snap?.title || null,
         productCode: snap?.productCode || null,
         image: snap?.image || null,
         variantLabel: snap?.variantLabel || null,
-        finalLineTotal: snap?.finalLineTotal || 0,
+        unitPrice: unitPrice || 0,
+        finalLineTotal: lineTotal || 0,
       });
     }
 
-    // Payment method / bank details (COD only)
     const pm = String(order.paymentMethod || "").toUpperCase();
     let bankDetails: any = null;
 
@@ -301,7 +381,6 @@ export const createReturnRequest = async (req: Request, res: Response) => {
       if (bankErr) return res.status(400).json({ message: bankErr });
     }
 
-    // Create return inside each subOrder
     for (const [soId, items] of vendorBuckets.entries()) {
       const subOrder = order.subOrders.id(soId);
       if (!subOrder)

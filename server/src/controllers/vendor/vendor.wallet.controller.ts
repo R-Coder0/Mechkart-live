@@ -8,11 +8,22 @@ const toNum = (v: any, fb = 0) => {
   return Number.isFinite(n) ? n : fb;
 };
 
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
 function toObjectId(id: any) {
   if (!id) return null;
   const s = String(id);
   if (!Types.ObjectId.isValid(s)) return null;
   return new Types.ObjectId(s);
+}
+
+function normalizeBalances(balances: any) {
+  return {
+    hold: toNum(balances?.hold, 0),
+    available: toNum(balances?.available, 0),
+    paid: toNum(balances?.paid, 0),
+    deduction: toNum(balances?.deduction, 0),
+  };
 }
 
 /**
@@ -36,24 +47,34 @@ export const vendorGetMyWallet = async (req: Request, res: Response) => {
     const status = String(req.query.status || "").toUpperCase().trim();
     const type = String(req.query.type || "").toUpperCase().trim();
 
-    // ensure wallet exists
     let wallet: any = await VendorWallet.findOne({ vendorId: vid }).lean();
+
     if (!wallet) {
       const created = await VendorWallet.create({
         vendorId: vid,
-        balances: { hold: 0, available: 0, paid: 0 },
+        balances: { hold: 0, available: 0, paid: 0, deduction: 0 },
         transactions: [],
         stats: { totalCredits: 0, totalDebits: 0, lastTxnAt: new Date() },
       });
       wallet = created.toObject();
     }
 
-    const allTxns = Array.isArray(wallet.transactions) ? wallet.transactions : [];
+    const balances = normalizeBalances(wallet?.balances);
+    const stats = wallet?.stats || { totalCredits: 0, totalDebits: 0, lastTxnAt: null };
 
-    // filtering in-memory (simple)
+    const grossAvailable = balances.available;
+    const deduction = balances.deduction;
+    const netReleasable = round2(Math.max(0, grossAvailable - deduction));
+
+    const allTxns = Array.isArray(wallet?.transactions) ? wallet.transactions : [];
+
     let filtered = allTxns;
-    if (status) filtered = filtered.filter((t: any) => String(t?.status || "").toUpperCase() === status);
-    if (type) filtered = filtered.filter((t: any) => String(t?.type || "").toUpperCase() === type);
+    if (status) {
+      filtered = filtered.filter((t: any) => String(t?.status || "").toUpperCase() === status);
+    }
+    if (type) {
+      filtered = filtered.filter((t: any) => String(t?.type || "").toUpperCase() === type);
+    }
 
     const totalTxns = filtered.length;
     const totalPages = Math.max(1, Math.ceil(totalTxns / limit));
@@ -64,10 +85,16 @@ export const vendorGetMyWallet = async (req: Request, res: Response) => {
       data: {
         vendorId: vid.toString(),
 
-        // ✅ keep same shape as admin: { wallet: { balances, stats }, transactions: [] }
         wallet: {
-          balances: wallet.balances || { hold: 0, available: 0, paid: 0 },
-          stats: wallet.stats || { totalCredits: 0, totalDebits: 0, lastTxnAt: null },
+          balances,
+          stats,
+          summary: {
+            hold: balances.hold,
+            grossAvailable,
+            deduction,
+            netReleasable,
+            paid: balances.paid,
+          },
         },
 
         transactions,

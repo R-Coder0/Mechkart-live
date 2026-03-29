@@ -22,23 +22,35 @@ const toObjectId = (id: any) => {
   }
 };
 
+const idStr = (v: any) => {
+  if (!v) return "";
+  if (typeof v === "string") return v;
+  if (v instanceof Types.ObjectId) return String(v);
+  if (typeof v === "object" && v._id) return String(v._id);
+  return String(v);
+};
+
+const strLower = (v: any) => String(v ?? "").trim().toLowerCase();
+
 /** =========================
- * ✅ Shipping Markup (same rule)
- * 0.5kg => 60, every next 0.5kg => +30
+ * ✅ Shipping Markup
+ * Rule:
+ * - 500gm ya usse kam => 60
+ * - uske baad har 500gm => +30
  * ========================= */
 const calcShippingMarkup = (weightKg: any) => {
   const w = Number(weightKg || 0);
   if (!Number.isFinite(w) || w <= 0) return 0;
 
-  const step = 0.5;
-  const slabs = Math.ceil(w / step);
-  const base = 60;
-  const extra = Math.max(0, slabs - 1) * 30;
-  return base + extra;
+  if (w <= 0.5) return 60;
+
+  const extraWeight = w - 0.5;
+  const extraSlabs = Math.ceil(extraWeight / 0.5);
+
+  return 60 + extraSlabs * 30;
 };
 
 function getItemShippingMarkupPerUnit(it: any) {
-  // vendor items only
   const ownerType = String(it?.ownerType || "").toUpperCase();
   if (ownerType && ownerType !== "VENDOR") return 0;
 
@@ -52,15 +64,14 @@ function getItemShippingMarkupPerUnit(it: any) {
 }
 
 /**
- * ✅ Compute vendor-earning for one item:
- * - Order stores salePrice = payable (base + shippingMarkup)
- * - Vendor should earn base only
- * - Offer discount should be applied proportionally on base (not on shipping markup)
+ * Compute vendor-earning for one item:
+ * - salePrice = payable (base + shippingMarkup)
+ * - vendor earning = base only
+ * - offer discount allocated proportionally on base
  */
 function computeVendorNetForItem(it: any) {
   const qty = Math.max(1, toNum(it?.qty, 1));
 
-  // payable unit price stored in order
   const payableUnit =
     toNum(it?.salePrice, NaN) ||
     toNum(it?.unitPrice, NaN) ||
@@ -68,17 +79,13 @@ function computeVendorNetForItem(it: any) {
 
   const payableLine = Math.max(0, round2(payableUnit * qty));
 
-  // shipping markup per unit derived from ship.weightKg
   const shipMarkupUnit = getItemShippingMarkupPerUnit(it);
   const shipMarkupLine = Math.max(0, round2(shipMarkupUnit * qty));
 
-  // base line (what vendor should be paid on, before discount)
   const baseLine = Math.max(0, round2(payableLine - shipMarkupLine));
 
-  // offer discount allocated on line (order snapshot)
   const offerDiscount = Math.max(0, toNum(it?.offerDiscount, 0));
 
-  // Allocate discount to base by ratio (base/payable)
   let vendorDiscount = 0;
   if (offerDiscount > 0 && payableLine > 0 && baseLine > 0) {
     vendorDiscount = round2(offerDiscount * (baseLine / payableLine));
@@ -99,23 +106,38 @@ function computeVendorNetForItem(it: any) {
   };
 }
 
-/**
- * ✅ Vendor SubOrder net total (WITHOUT shipping markup)
- * Use subOrder.items (order snapshot) and compute accurately.
- */
-function pickVendorSubOrderNet(order: any, so: any) {
+function pickVendorSubOrderAmounts(_order: any, so: any) {
   const items = Array.isArray(so?.items) ? so.items : [];
-  if (!items.length) return 0;
+  if (!items.length) {
+    return {
+      vendorNet: 0,
+      shipping: 0,
+      payable: 0,
+    };
+  }
 
-  return round2(
-    items.reduce((sum: number, it: any) => {
+  return items.reduce(
+    (acc: any, it: any) => {
       const ownerType = String(it?.ownerType || so?.ownerType || "").toUpperCase();
-      // only vendor items should exist in vendor subOrder, but keep safe
-      if (ownerType && ownerType !== "VENDOR") return sum;
+      if (ownerType && ownerType !== "VENDOR") return acc;
+
       const r = computeVendorNetForItem(it);
-      return sum + r.vendorNet;
-    }, 0)
+      acc.vendorNet += r.vendorNet;
+      acc.shipping += r.shipMarkupLine;
+      acc.payable += r.payableLine;
+      return acc;
+    },
+    { vendorNet: 0, shipping: 0, payable: 0 }
   );
+}
+
+function normalizeBalances(wallet: any) {
+  wallet.balances = wallet.balances || { hold: 0, available: 0, paid: 0, deduction: 0 };
+  wallet.balances.hold = toNum(wallet.balances.hold, 0);
+  wallet.balances.available = toNum(wallet.balances.available, 0);
+  wallet.balances.paid = toNum(wallet.balances.paid, 0);
+  wallet.balances.deduction = toNum(wallet.balances.deduction, 0);
+  return wallet.balances;
 }
 
 // ---------- wallet core ----------
@@ -128,17 +150,13 @@ async function ensureWallet(vendorId: string) {
   if (!w) {
     w = await VendorWallet.create({
       vendorId: vid,
-      balances: { hold: 0, available: 0, paid: 0 },
+      balances: { hold: 0, available: 0, paid: 0, deduction: 0 },
       transactions: [],
       stats: { totalCredits: 0, totalDebits: 0, lastTxnAt: new Date() },
     });
   }
 
-  (w as any).balances = (w as any).balances || { hold: 0, available: 0, paid: 0 };
-  (w as any).balances.hold = toNum((w as any).balances.hold, 0);
-  (w as any).balances.available = toNum((w as any).balances.available, 0);
-  (w as any).balances.paid = toNum((w as any).balances.paid, 0);
-
+  normalizeBalances(w as any);
   return w;
 }
 
@@ -162,7 +180,7 @@ function pushTxn(wallet: any, txn: any) {
   if (txn.direction === "DEBIT") wallet.stats.totalDebits = toNum(wallet.stats.totalDebits, 0) + amt;
 }
 
-// ✅ STEP-1: DELIVERED => HOLD CREDIT
+// STEP-1: DELIVERED => HOLD CREDIT
 export async function walletCreditHoldOnDelivered(opts: {
   vendorId: string;
   orderId: string;
@@ -188,12 +206,13 @@ export async function walletCreditHoldOnDelivered(opts: {
   const idempotencyKey = `DELIVERED:${vid.toString()}:${soid.toString()}`;
 
   const wallet = await ensureWallet(vendorId);
+  normalizeBalances(wallet as any);
 
   if (hasTxn(wallet, idempotencyKey)) {
     return { ok: true, already: true };
   }
 
-  (wallet as any).balances.hold = toNum((wallet as any).balances.hold, 0) + amount;
+  (wallet as any).balances.hold = round2(toNum((wallet as any).balances.hold, 0) + amount);
 
   pushTxn(wallet, {
     idempotencyKey,
@@ -206,6 +225,7 @@ export async function walletCreditHoldOnDelivered(opts: {
     direction: "CREDIT",
     status: "HOLD",
     amount,
+    currency: "INR",
 
     effectiveAt: opts.deliveredAt || new Date(),
     unlockAt: opts.unlockAt || new Date(Date.now() + 10 * 24 * 60 * 60 * 1000),
@@ -217,20 +237,24 @@ export async function walletCreditHoldOnDelivered(opts: {
   return { ok: true };
 }
 
-// ✅ STEP-1: CANCELLED => DEBIT (hold first, then available)
-export async function walletDeductOnCancelled(opts: {
+async function reverseVendorAmountAndAddDeduction(opts: {
   vendorId: string;
   orderId: string;
   subOrderId: string;
   orderCode?: string;
   amount: number;
+  deductionAmount?: number;
+  idempotencyKey: string;
+  type: string;
   meta?: any;
 }) {
   const { vendorId, orderId, subOrderId } = opts;
 
   const amount = Math.max(0, toNum(opts.amount, 0));
+  const deductionAmount = Math.max(0, toNum(opts.deductionAmount, 0));
+
   if (!vendorId || !orderId || !subOrderId) return { ok: false, reason: "missing_ids" };
-  if (amount <= 0) return { ok: false, reason: "amount_zero" };
+  if (amount <= 0 && deductionAmount <= 0) return { ok: false, reason: "amount_zero" };
 
   const vid = toObjectId(vendorId);
   const oid = toObjectId(orderId);
@@ -238,67 +262,264 @@ export async function walletDeductOnCancelled(opts: {
 
   if (!vid || !oid || !soid) return { ok: false, reason: "invalid_objectid" };
 
-  const idempotencyKey = `CANCEL:${vid.toString()}:${soid.toString()}`;
-
   const wallet = await ensureWallet(vendorId);
+  normalizeBalances(wallet as any);
 
-  if (hasTxn(wallet, idempotencyKey)) {
+  if (hasTxn(wallet, opts.idempotencyKey)) {
     return { ok: true, already: true };
   }
 
-  const beforeHold = toNum((wallet as any).balances?.hold, 0);
-  const beforeAvail = toNum((wallet as any).balances?.available, 0);
-
-  let remaining = amount;
   let fromHold = 0;
-  let fromAvail = 0;
-  let recovery = 0;
+  let shortfall = 0;
 
-  if (beforeHold > 0) {
-    fromHold = Math.min(beforeHold, remaining);
-    (wallet as any).balances.hold = beforeHold - fromHold;
-    remaining -= fromHold;
+  const beforeHold = toNum((wallet as any).balances.hold, 0);
+
+  if (amount > 0) {
+    fromHold = Math.min(beforeHold, amount);
+    (wallet as any).balances.hold = round2(beforeHold - fromHold);
+    shortfall = round2(amount - fromHold);
   }
 
-  if (remaining > 0 && beforeAvail > 0) {
-    fromAvail = Math.min(beforeAvail, remaining);
-    (wallet as any).balances.available = beforeAvail - fromAvail;
-    remaining -= fromAvail;
-  }
-
-  if (remaining > 0) {
-    recovery = remaining;
-    remaining = 0;
+  if (deductionAmount > 0) {
+    (wallet as any).balances.deduction = round2(
+      toNum((wallet as any).balances.deduction, 0) + deductionAmount
+    );
   }
 
   pushTxn(wallet, {
-    idempotencyKey,
+    idempotencyKey: opts.idempotencyKey,
     vendorId: vid,
     orderId: oid,
     subOrderId: soid,
     orderCode: opts.orderCode || "",
 
-    type: "CANCEL_DEDUCT",
+    type: opts.type,
     direction: "DEBIT",
     status: "REVERSED",
-    amount,
+    amount: round2(amount),
+    currency: "INR",
 
     effectiveAt: new Date(),
     unlockAt: null,
 
     meta: {
+      vendorReverseAmount: amount,
+      deductionAmount,
       fromHold,
-      fromAvail,
-      recovery,
+      shortfall,
       ...(opts.meta || {}),
     },
   });
 
   await wallet.save();
-  return { ok: true, meta: { fromHold, fromAvail, recovery } };
+
+  return {
+    ok: true,
+    meta: {
+      fromHold,
+      shortfall,
+      deductionAdded: deductionAmount,
+    },
+  };
 }
 
-// ✅ helper: apply wallet effects for an order (process vendor subOrders only)
+// CANCELLED => base reverse + shipping deduction add
+export async function walletDeductOnCancelled(opts: {
+  vendorId: string;
+  orderId: string;
+  subOrderId: string;
+  orderCode?: string;
+  amount: number;
+  deductionAmount?: number;
+  meta?: any;
+}) {
+  const vid = toObjectId(opts.vendorId);
+  const soid = toObjectId(opts.subOrderId);
+  if (!vid || !soid) return { ok: false, reason: "invalid_objectid" };
+
+  return reverseVendorAmountAndAddDeduction({
+    vendorId: opts.vendorId,
+    orderId: opts.orderId,
+    subOrderId: opts.subOrderId,
+    orderCode: opts.orderCode,
+    amount: opts.amount,
+    deductionAmount: opts.deductionAmount || 0,
+    idempotencyKey: `CANCEL:${vid.toString()}:${soid.toString()}`,
+    type: "CANCEL_DEDUCT",
+    meta: opts.meta,
+  });
+}
+
+// RETURNED => base reverse + shipping deduction add
+export async function walletDeductOnReturned(opts: {
+  vendorId: string;
+  orderId: string;
+  subOrderId: string;
+  returnId: string;
+  orderCode?: string;
+  amount: number;
+  deductionAmount?: number;
+  meta?: any;
+}) {
+  const vid = toObjectId(opts.vendorId);
+  const soid = toObjectId(opts.subOrderId);
+  const rid = toObjectId(opts.returnId);
+
+  if (!vid || !soid || !rid) return { ok: false, reason: "invalid_objectid" };
+
+  return reverseVendorAmountAndAddDeduction({
+    vendorId: opts.vendorId,
+    orderId: opts.orderId,
+    subOrderId: opts.subOrderId,
+    orderCode: opts.orderCode,
+    amount: opts.amount,
+    deductionAmount: opts.deductionAmount || 0,
+    idempotencyKey: `RETURN:${vid.toString()}:${soid.toString()}:${rid.toString()}`,
+    type: "RETURN_DEDUCT",
+    meta: {
+      returnId: rid,
+      ...(opts.meta || {}),
+    },
+  });
+}
+
+function isReturnApprovedLike(ret: any, subOrder: any) {
+  const st = String(ret?.status || ret?.returnStatus || "").toUpperCase();
+  const refundSt = String(ret?.refundStatus || subOrder?.refund?.status || "").toUpperCase();
+
+  return (
+    st === "APPROVED" ||
+    st === "RECEIVED" ||
+    st === "RETURN_APPROVED" ||
+    st === "REFUND_APPROVED" ||
+    st === "REFUNDED" ||
+    refundSt === "APPROVED" ||
+    refundSt === "PROCESSED" ||
+    refundSt === "REFUNDED"
+  );
+}
+
+function pickReturnItems(ret: any, subOrder: any) {
+  if (Array.isArray(ret?.items) && ret.items.length) return ret.items;
+  if (Array.isArray(ret?.products) && ret.products.length) return ret.products;
+  if (Array.isArray(ret?.returnItems) && ret.returnItems.length) return ret.returnItems;
+
+  if (!ret?.items && !ret?.products && !ret?.returnItems) {
+    if (Array.isArray(subOrder?.items) && subOrder.items.length) return subOrder.items;
+  }
+
+  return [];
+}
+
+function findMatchingSubOrderItem(subOrder: any, raw: any) {
+  const items = Array.isArray(subOrder?.items) ? subOrder.items : [];
+  if (!items.length) return null;
+
+  const rawPid = idStr(raw?.productId);
+  const rawVid = idStr(raw?.variantId);
+  const rawCk = strLower(raw?.colorKey);
+
+  let found = items.find((it: any) => {
+    return (
+      rawPid &&
+      idStr(it?.productId) === rawPid &&
+      idStr(it?.variantId) === rawVid &&
+      strLower(it?.colorKey) === rawCk
+    );
+  });
+  if (found) return found;
+
+  found = items.find((it: any) => {
+    return rawPid && idStr(it?.productId) === rawPid && idStr(it?.variantId) === rawVid;
+  });
+  if (found) return found;
+
+  found = items.find((it: any) => {
+    return rawPid && idStr(it?.productId) === rawPid;
+  });
+  if (found) return found;
+
+  return null;
+}
+
+function buildReturnComputeItem(raw: any, matchedOrderItem: any, subOrder: any) {
+  const source = matchedOrderItem || raw || {};
+  const orderQty = Math.max(1, toNum(source?.qty, 1));
+  const returnQty = Math.max(
+    1,
+    toNum(raw?.qty, NaN) ||
+      toNum(raw?.quantity, NaN) ||
+      toNum(raw?.returnQty, NaN) ||
+      1
+  );
+
+  const safeQty = Math.min(orderQty, returnQty);
+
+  return {
+    ...source,
+    qty: safeQty,
+    ownerType: source?.ownerType || subOrder?.ownerType || "VENDOR",
+
+    productId: source?.productId || raw?.productId,
+    variantId: source?.variantId || raw?.variantId,
+    colorKey: source?.colorKey || raw?.colorKey,
+
+    salePrice:
+      toNum(source?.salePrice, NaN) ||
+      toNum(source?.unitPrice, NaN) ||
+      toNum(source?.price, NaN) ||
+      toNum(raw?.salePrice, NaN) ||
+      toNum(raw?.unitPrice, NaN) ||
+      toNum(raw?.price, 0),
+
+    price:
+      toNum(source?.price, NaN) ||
+      toNum(source?.unitPrice, NaN) ||
+      toNum(source?.salePrice, NaN) ||
+      toNum(raw?.price, NaN) ||
+      toNum(raw?.unitPrice, NaN) ||
+      toNum(raw?.salePrice, 0),
+
+    unitPrice:
+      toNum(source?.unitPrice, NaN) ||
+      toNum(source?.salePrice, NaN) ||
+      toNum(source?.price, NaN) ||
+      toNum(raw?.unitPrice, NaN) ||
+      toNum(raw?.salePrice, NaN) ||
+      toNum(raw?.price, 0),
+
+    offerDiscount:
+      toNum(source?.offerDiscount, NaN) ||
+      toNum(raw?.offerDiscount, NaN) ||
+      0,
+
+    ship: source?.ship || raw?.ship,
+    shipSnapshot: source?.shipSnapshot || raw?.shipSnapshot,
+    pricingMeta: source?.pricingMeta || raw?.pricingMeta,
+  };
+}
+
+function computeReturnAmountsFromReturn(ret: any, so: any) {
+  const items = pickReturnItems(ret, so);
+  if (!items.length) return { vendorNet: 0, shipping: 0, payable: 0 };
+
+  return items.reduce(
+    (acc: any, raw: any) => {
+      const matchedOrderItem = findMatchingSubOrderItem(so, raw);
+      const it = buildReturnComputeItem(raw, matchedOrderItem, so);
+
+      const r = computeVendorNetForItem(it);
+
+      acc.vendorNet += r.vendorNet;
+      acc.shipping += r.shipMarkupLine;
+      acc.payable += r.payableLine;
+      return acc;
+    },
+    { vendorNet: 0, shipping: 0, payable: 0 }
+  );
+}
+
+// helper: apply wallet effects for an order (process vendor subOrders only)
 export async function applyWalletEffectsForOrder(order: any) {
   const subOrders = Array.isArray(order?.subOrders) ? order.subOrders : [];
   const orderId = String(order?._id || "");
@@ -308,13 +529,12 @@ export async function applyWalletEffectsForOrder(order: any) {
   const results: any[] = [];
 
   for (const so of subOrders) {
-    // ✅ vendorId can be ObjectId OR populated object { _id: ... }
     const vendorIdRaw =
       so?.vendorId && typeof so.vendorId === "object" && so.vendorId._id ? so.vendorId._id : so?.vendorId;
 
     const vendorId = vendorIdRaw ? String(vendorIdRaw) : "";
-
     const ownerType = String(so?.ownerType || "").toUpperCase();
+
     if (!vendorId) continue;
     if (ownerType && ownerType !== "VENDOR") continue;
 
@@ -322,10 +542,97 @@ export async function applyWalletEffectsForOrder(order: any) {
     if (!subOrderId) continue;
 
     const subStatus = String(so?.status || orderStatus || "").toUpperCase();
+    const amounts = pickVendorSubOrderAmounts(order, so);
+    const vendorAmt = round2(amounts.vendorNet);
+    const shippingAmt = round2(amounts.shipping);
 
-    // ✅ IMPORTANT: vendor amount WITHOUT shipping markup
-    const amt = pickVendorSubOrderNet(order, so);
+    // 1) returns first
+    const returns = Array.isArray(so?.returns) ? so.returns : [];
+    let hasApprovedReturn = false;
 
+    for (const ret of returns) {
+      if (!isReturnApprovedLike(ret, so)) continue;
+      hasApprovedReturn = true;
+
+      const returnId = ret?._id ? String(ret._id) : "";
+      if (!returnId) continue;
+
+      const retAmounts = computeReturnAmountsFromReturn(ret, so);
+      const returnVendorAmt = round2(retAmounts.vendorNet);
+      const returnShippingAmt = round2(retAmounts.shipping);
+
+      if (returnVendorAmt <= 0 && returnShippingAmt <= 0) {
+        results.push({
+          subOrderId,
+          returnId,
+          action: "RETURN_DEDUCT_SKIPPED",
+          reason: "return_amount_zero",
+          returnStatus: String(ret?.status || ret?.returnStatus || ""),
+        });
+        continue;
+      }
+
+      const r = await walletDeductOnReturned({
+        vendorId,
+        orderId,
+        subOrderId,
+        returnId,
+        orderCode,
+        amount: returnVendorAmt,
+        deductionAmount: returnShippingAmt,
+        meta: {
+          source: "applyWalletEffectsForOrder",
+          pricing: "without_shipping_markup",
+          shippingAmount: returnShippingAmt,
+          payableAmount: round2(retAmounts.payable),
+          returnStatus: String(ret?.status || ret?.returnStatus || ""),
+          refundStatus: String(ret?.refundStatus || so?.refund?.status || ""),
+        },
+      });
+
+      results.push({
+        subOrderId,
+        returnId,
+        action: "RETURN_DEDUCT",
+        amount: returnVendorAmt,
+        deductionAmount: returnShippingAmt,
+        ...r,
+      });
+    }
+
+    // approved/refunded return ho chuka hai to delivered credit dobara mat chalao
+    if (hasApprovedReturn) {
+      continue;
+    }
+
+    // 2) cancelled
+    if (subStatus === "CANCELLED") {
+      const r = await walletDeductOnCancelled({
+        vendorId,
+        orderId,
+        subOrderId,
+        orderCode,
+        amount: vendorAmt,
+        deductionAmount: shippingAmt,
+        meta: {
+          source: "applyWalletEffectsForOrder",
+          pricing: "without_shipping_markup",
+          shippingAmount: shippingAmt,
+          payableAmount: round2(amounts.payable),
+        },
+      });
+
+      results.push({
+        subOrderId,
+        action: "CANCEL_DEDUCT",
+        amount: vendorAmt,
+        deductionAmount: shippingAmt,
+        ...r,
+      });
+      continue;
+    }
+
+    // 3) delivered
     if (subStatus === "DELIVERED") {
       const deliveredAt = order?.updatedAt ? new Date(order.updatedAt) : new Date();
       const unlockAt = new Date(deliveredAt.getTime() + 10 * 24 * 60 * 60 * 1000);
@@ -335,27 +642,23 @@ export async function applyWalletEffectsForOrder(order: any) {
         orderId,
         subOrderId,
         orderCode,
-        amount: amt,
+        amount: vendorAmt,
         deliveredAt,
         unlockAt,
-        meta: { source: "applyWalletEffectsForOrder", pricing: "without_shipping_markup" },
+        meta: {
+          source: "applyWalletEffectsForOrder",
+          pricing: "without_shipping_markup",
+          shippingAmount: shippingAmt,
+          payableAmount: round2(amounts.payable),
+        },
       });
 
-      results.push({ subOrderId, action: "DELIVERED_HOLD_CREDIT", amount: amt, ...r });
-      continue;
-    }
-
-    if (subStatus === "CANCELLED") {
-      const r = await walletDeductOnCancelled({
-        vendorId,
-        orderId,
+      results.push({
         subOrderId,
-        orderCode,
-        amount: amt,
-        meta: { source: "applyWalletEffectsForOrder", pricing: "without_shipping_markup" },
+        action: "DELIVERED_HOLD_CREDIT",
+        amount: vendorAmt,
+        ...r,
       });
-
-      results.push({ subOrderId, action: "CANCEL_DEDUCT", amount: amt, ...r });
       continue;
     }
   }

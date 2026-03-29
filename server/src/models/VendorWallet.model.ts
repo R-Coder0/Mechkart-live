@@ -12,7 +12,6 @@ export type WalletTxnType =
 
 export type WalletTxnStatus = "HOLD" | "AVAILABLE" | "PAID" | "REVERSED" | "FAILED";
 
-// ----- Schemas (same as yours) -----
 const WalletTxnSchema = new Schema(
   {
     vendorId: { type: Schema.Types.ObjectId, ref: "Vendor", required: true, index: true },
@@ -71,6 +70,7 @@ const VendorWalletSchema = new Schema(
       hold: { type: Number, default: 0 },
       available: { type: Number, default: 0 },
       paid: { type: Number, default: 0 },
+      deduction: { type: Number, default: 0 },
     },
 
     stats: {
@@ -91,17 +91,15 @@ VendorWalletSchema.index({ "transactions.subOrderId": 1 });
 VendorWalletSchema.index({ "transactions.unlockAt": 1 });
 VendorWalletSchema.index({ "transactions.status": 1 });
 
-// ----- Types (important) -----
 export type VendorWalletShape = {
   vendorId: mongoose.Types.ObjectId;
-  balances: { hold: number; available: number; paid: number };
+  balances: { hold: number; available: number; paid: number; deduction: number };
   stats: { totalCredits: number; totalDebits: number; lastTxnAt: Date | null };
   transactions: any[];
 };
 
 export type VendorWalletDoc = HydratedDocument<VendorWalletShape>;
 
-// ✅ KEY FIX: force a single Model type (no union)
 export const VendorWallet: Model<VendorWalletDoc> =
   (mongoose.models.VendorWallet as Model<VendorWalletDoc>) ||
   mongoose.model<VendorWalletDoc>("VendorWallet", VendorWalletSchema);

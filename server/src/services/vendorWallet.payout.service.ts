@@ -7,6 +7,8 @@ const toNum = (v: any, fb = 0) => {
   return Number.isFinite(n) ? n : fb;
 };
 
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
 const toObjectId = (id: any) => {
   try {
     if (!id) return null;
@@ -19,6 +21,15 @@ const toObjectId = (id: any) => {
   }
 };
 
+function normalizeBalances(wallet: any) {
+  wallet.balances = wallet.balances || { hold: 0, available: 0, paid: 0, deduction: 0 };
+  wallet.balances.hold = toNum(wallet.balances.hold, 0);
+  wallet.balances.available = toNum(wallet.balances.available, 0);
+  wallet.balances.paid = toNum(wallet.balances.paid, 0);
+  wallet.balances.deduction = toNum(wallet.balances.deduction, 0);
+  return wallet.balances;
+}
+
 async function ensureWallet(vendorId: string) {
   const vid = toObjectId(vendorId);
   if (!vid) throw new Error("Invalid vendorId");
@@ -27,17 +38,13 @@ async function ensureWallet(vendorId: string) {
   if (!w) {
     w = await VendorWallet.create({
       vendorId: vid,
-      balances: { hold: 0, available: 0, paid: 0 },
+      balances: { hold: 0, available: 0, paid: 0, deduction: 0 },
       transactions: [],
       stats: { totalCredits: 0, totalDebits: 0, lastTxnAt: new Date() },
     });
   }
 
-  (w as any).balances = (w as any).balances || { hold: 0, available: 0, paid: 0 };
-  (w as any).balances.hold = toNum((w as any).balances.hold, 0);
-  (w as any).balances.available = toNum((w as any).balances.available, 0);
-  (w as any).balances.paid = toNum((w as any).balances.paid, 0);
-
+  normalizeBalances(w as any);
   return w;
 }
 
@@ -60,17 +67,15 @@ function pushTxn(wallet: any, txn: any) {
 
 /**
  * Admin releases payout from vendor AVAILABLE -> PAID
- * - amount optional: if not provided => full available payout
- * - idempotency:
- *    - reference present => vendor+reference
- *    - else manualKey required (frontend should send uuid)
+ * - amount optional: if not provided => full net releasable payout
+ * - net releasable = available - deduction
  */
 export async function adminReleaseVendorPayout(opts: {
   vendorId: string;
-  amount?: number; // ✅ optional (blank => full available)
+  amount?: number;
   method?: "UPI" | "BANK" | "MANUAL";
-  reference?: string; // UTR / TxnId
-  manualKey?: string; // ✅ if no reference, send this (uuid)
+  reference?: string;
+  manualKey?: string;
   note?: string;
   meta?: any;
 }) {
@@ -84,26 +89,41 @@ export async function adminReleaseVendorPayout(opts: {
   const reference = String(opts.reference || "").trim();
   const manualKey = String(opts.manualKey || "").trim();
 
-  // ✅ load wallet first to compute full payout if amount not provided
   const w = await ensureWallet(vendorId);
+  normalizeBalances(w as any);
+
   const availableBefore = toNum((w as any).balances.available, 0);
+  const deductionBefore = toNum((w as any).balances.deduction, 0);
+
+  const deductionAppliedMax = Math.min(availableBefore, deductionBefore);
+  const releasableBefore = round2(Math.max(0, availableBefore - deductionAppliedMax));
 
   const amt =
     opts.amount === undefined || opts.amount === null || (typeof opts.amount === "string" && !String(opts.amount).trim())
-      ? availableBefore
+      ? releasableBefore
       : Math.max(0, toNum(opts.amount, 0));
 
-  if (amt <= 0) return { ok: false, reason: "amount_invalid" };
-
-  if (availableBefore < amt) {
+  if (amt <= 0) {
     return {
       ok: false,
-      reason: "insufficient_available",
-      meta: { available: availableBefore, requested: amt },
+      reason: "amount_invalid",
+      meta: { available: availableBefore, deduction: deductionBefore, releasable: releasableBefore },
     };
   }
 
-  // ✅ idempotency: prefer reference; else require manualKey (ui uuid)
+  if (amt > releasableBefore) {
+    return {
+      ok: false,
+      reason: "insufficient_releasable",
+      meta: {
+        available: availableBefore,
+        deduction: deductionBefore,
+        releasable: releasableBefore,
+        requested: amt,
+      },
+    };
+  }
+
   const idempotencyKey = reference
     ? `PAYOUT:${vid.toString()}:${reference}`
     : manualKey
@@ -122,9 +142,11 @@ export async function adminReleaseVendorPayout(opts: {
     return { ok: true, already: true, idempotencyKey, balances: (w as any).balances };
   }
 
-  // ✅ apply balances
-  (w as any).balances.available = availableBefore - amt;
-  (w as any).balances.paid = toNum((w as any).balances.paid, 0) + amt;
+  const grossConsumed = round2(amt + deductionAppliedMax);
+
+  (w as any).balances.available = round2(Math.max(0, availableBefore - grossConsumed));
+  (w as any).balances.deduction = round2(Math.max(0, deductionBefore - deductionAppliedMax));
+  (w as any).balances.paid = round2(toNum((w as any).balances.paid, 0) + amt);
 
   const txn = {
     idempotencyKey,
@@ -146,6 +168,11 @@ export async function adminReleaseVendorPayout(opts: {
     meta: {
       method,
       reference: reference || "",
+      availableBefore,
+      deductionBefore,
+      deductionApplied: deductionAppliedMax,
+      releasableBefore,
+      grossConsumed,
       ...(opts.meta || {}),
     },
   };
@@ -157,20 +184,26 @@ export async function adminReleaseVendorPayout(opts: {
     ok: true,
     idempotencyKey,
     balances: (w as any).balances,
-    txn: { type: txn.type, amount: txn.amount, method, reference: reference || null },
+    txn: {
+      type: txn.type,
+      amount: txn.amount,
+      method,
+      reference: reference || null,
+      deductionApplied: deductionAppliedMax,
+      grossConsumed,
+    },
   };
 }
 
 /**
  * Optional: mark payout failed (no balance change) - only log
- * - idempotency: prefer reference; else manualKey required
  */
 export async function adminLogPayoutFailed(opts: {
   vendorId: string;
   amount: number;
   method?: "UPI" | "BANK" | "MANUAL";
   reference?: string;
-  manualKey?: string; // ✅ if no reference, send uuid
+  manualKey?: string;
   reason?: string;
   meta?: any;
 }) {

@@ -145,7 +145,7 @@ export default function AdminVendorProductsPage() {
 
   return (
     <div className="min-h-screen bg-slate-100">
-      <div className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8">
+      <div className="max-w-[1700px] mx-auto py-8 px-4 sm:px-6 lg:px-8">
         {/* Header */}
         <div className="mb-6 flex items-start justify-between gap-4">
           <div>

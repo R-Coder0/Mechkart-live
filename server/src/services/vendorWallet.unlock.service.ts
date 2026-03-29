@@ -7,18 +7,27 @@ const toNum = (v: any, fb = 0) => {
   return Number.isFinite(n) ? n : fb;
 };
 
-const isObjId = (v: any) => v instanceof Types.ObjectId;
+const round2 = (n: number) => Math.round(n * 100) / 100;
 
-function toObjectId(v: any) {
+const toObjectId = (id: any) => {
   try {
-    if (!v) return null;
-    if (isObjId(v)) return v as Types.ObjectId;
-    const s = String(v);
+    if (!id) return null;
+    if (id instanceof Types.ObjectId) return id;
+    const s = String(id);
     if (Types.ObjectId.isValid(s)) return new Types.ObjectId(s);
     return null;
   } catch {
     return null;
   }
+};
+
+function normalizeBalances(wallet: any) {
+  wallet.balances = wallet.balances || { hold: 0, available: 0, paid: 0, deduction: 0 };
+  wallet.balances.hold = toNum(wallet.balances.hold, 0);
+  wallet.balances.available = toNum(wallet.balances.available, 0);
+  wallet.balances.paid = toNum(wallet.balances.paid, 0);
+  wallet.balances.deduction = toNum(wallet.balances.deduction, 0);
+  return wallet.balances;
 }
 
 function hasTxn(wallet: any, idempotencyKey: string) {
@@ -38,126 +47,92 @@ function pushTxn(wallet: any, txn: any) {
   if (txn.direction === "DEBIT") wallet.stats.totalDebits = toNum(wallet.stats.totalDebits, 0) + amt;
 }
 
-/**
- * Unlock all due HOLD credits -> move to AVAILABLE
- * - find wallets with due txns (transactions.status=HOLD, unlockAt<=now, type=DELIVERED_HOLD_CREDIT)
- * - per wallet: sum due amounts, balances.hold -= sum, balances.available += sum
- * - mark original txns status=AVAILABLE (optional but useful)
- * - add log txn: HOLD_TO_AVAILABLE (idempotent)
- */
-export async function unlockDueHoldToAvailable(opts?: {
-  limit?: number;          // how many wallets to process per run
-  vendorId?: string;       // optional single vendor
-  now?: Date;              // injectable for testing
-}) {
-  const limit = Math.max(1, Math.min(500, Number(opts?.limit ?? 100)));
-  const now = opts?.now ?? new Date();
-
-  const vendorObjId = opts?.vendorId ? toObjectId(opts.vendorId) : null;
-  if (opts?.vendorId && !vendorObjId) throw new Error("Invalid vendorId");
-
-  const filter: any = {
+export async function unlockDueHoldToAvailable(now = new Date()) {
+  const wallets = await VendorWallet.find({
     "transactions.type": "DELIVERED_HOLD_CREDIT",
     "transactions.status": "HOLD",
-    "transactions.unlockAt": { $lte: now },
-  };
-  if (vendorObjId) filter.vendorId = vendorObjId;
+  }).exec();
 
-  // We fetch wallets, then process txns inside (safe + simple).
-  const wallets = await VendorWallet.find(filter).limit(limit).exec();
+  const out: any[] = [];
 
-  const out = {
-    processedWallets: 0,
-    unlockedTxns: 0,
-    unlockedAmount: 0,
-    perWallet: [] as any[],
-  };
+  for (const wallet of wallets) {
+    normalizeBalances(wallet as any);
 
-  for (const w of wallets) {
-    const txns = Array.isArray((w as any).transactions) ? (w as any).transactions : [];
+    const txns = Array.isArray((wallet as any).transactions) ? (wallet as any).transactions : [];
+    let changed = false;
 
-    // due txns = HOLD + unlockAt <= now + DELIVERED_HOLD_CREDIT
-    const due = txns.filter((t: any) => {
-      if (String(t?.type) !== "DELIVERED_HOLD_CREDIT") return false;
-      if (String(t?.status) !== "HOLD") return false;
-      if (!t?.unlockAt) return false;
-      return new Date(t.unlockAt).getTime() <= now.getTime();
-    });
+    for (const txn of txns) {
+      if (String(txn?.type) !== "DELIVERED_HOLD_CREDIT") continue;
+      if (String(txn?.status) !== "HOLD") continue;
 
-    if (!due.length) continue;
+      const unlockAt = txn?.unlockAt ? new Date(txn.unlockAt) : null;
+      if (!unlockAt || unlockAt.getTime() > now.getTime()) continue;
 
-    const walletId = String((w as any)._id);
-    const vendorId = String((w as any).vendorId);
+      const amount = Math.max(0, toNum(txn?.amount, 0));
+      if (amount <= 0) continue;
 
-    let moved = 0;
-    let movedCount = 0;
-
-    for (const t of due) {
-      const amt = Math.max(0, toNum(t?.amount, 0));
-      if (amt <= 0) continue;
-
-      // idempotency per original delivered txn
-      const unlockKey = `UNLOCK:${vendorId}:${String(t?.subOrderId || "")}:${String(t?.idempotencyKey || "")}`;
-
-      if (hasTxn(w, unlockKey)) {
-        // already unlocked logged, but still ensure original txn status not HOLD (optional)
-        t.status = "AVAILABLE";
+      const unlockKey = `UNLOCK:${String(txn?.idempotencyKey || "")}`;
+      if (hasTxn(wallet, unlockKey)) {
+        txn.status = "AVAILABLE";
+        changed = true;
         continue;
       }
 
-      moved += amt;
-      movedCount += 1;
+      const beforeHold = toNum((wallet as any).balances.hold, 0);
+      const moveAmt = Math.min(beforeHold, amount);
+      if (moveAmt <= 0) {
+        txn.status = "AVAILABLE";
+        changed = true;
+        continue;
+      }
 
-      // mark original delivered txn as available now
-      t.status = "AVAILABLE";
+      (wallet as any).balances.hold = round2(beforeHold - moveAmt);
+      (wallet as any).balances.available = round2(toNum((wallet as any).balances.available, 0) + moveAmt);
 
-      pushTxn(w, {
+      txn.status = "AVAILABLE";
+      txn.unlockedAt = now;
+
+      pushTxn(wallet, {
         idempotencyKey: unlockKey,
-        vendorId: toObjectId((w as any).vendorId),
-        orderId: toObjectId(t?.orderId),
-        subOrderId: toObjectId(t?.subOrderId),
-        orderCode: String(t?.orderCode || ""),
+        vendorId: txn?.vendorId ? toObjectId(txn.vendorId) : null,
+        orderId: txn?.orderId ? toObjectId(txn.orderId) : null,
+        subOrderId: txn?.subOrderId ? toObjectId(txn.subOrderId) : null,
+        orderCode: txn?.orderCode || "",
 
         type: "HOLD_TO_AVAILABLE",
         direction: "CREDIT",
         status: "AVAILABLE",
-        amount: amt,
+        amount: moveAmt,
+        currency: "INR",
 
         effectiveAt: now,
         unlockAt: null,
 
-        note: "Hold unlocked to available",
         meta: {
-          sourceTxnId: String(t?._id || ""),
-          sourceIdempotencyKey: String(t?.idempotencyKey || ""),
+          sourceTxnIdempotencyKey: txn?.idempotencyKey || "",
+          sourceType: txn?.type || "",
         },
       });
+
+      out.push({
+        walletId: String((wallet as any)._id || ""),
+        vendorId: String((wallet as any).vendorId || ""),
+        amount: moveAmt,
+        source: String(txn?.idempotencyKey || ""),
+      });
+
+      changed = true;
     }
 
-    if (moved > 0) {
-      (w as any).balances = (w as any).balances || { hold: 0, available: 0, paid: 0 };
-      const holdBefore = toNum((w as any).balances.hold, 0);
-      const availBefore = toNum((w as any).balances.available, 0);
-
-      // safety: never negative
-      const holdAfter = Math.max(0, holdBefore - moved);
-
-      (w as any).balances.hold = holdAfter;
-      (w as any).balances.available = availBefore + moved;
-
-      await w.save();
-
-      out.processedWallets += 1;
-      out.unlockedTxns += movedCount;
-      out.unlockedAmount += moved;
-      out.perWallet.push({
-        walletId,
-        vendorId,
-        moved,
-        movedCount,
-      });
+    if (changed) {
+      normalizeBalances(wallet as any);
+      await wallet.save();
     }
   }
 
-  return out;
+  return {
+    ok: true,
+    count: out.length,
+    items: out,
+  };
 }

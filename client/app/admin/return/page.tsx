@@ -551,7 +551,7 @@ export default function AdminReturnsPage() {
   const totalPages = Number(data?.totalPages || 1);
 
   return (
-    <div className="mx-auto max-w-7xl px-4 py-10">
+    <div className="mx-auto max-w-[1700px] px-4 py-10">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-2xl font-extrabold text-gray-900">

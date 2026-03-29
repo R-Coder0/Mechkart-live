@@ -86,7 +86,6 @@ function resolveItemImage(
   return cImg || vImg || gImg || fImg || fallback || "";
 }
 
-// ✅ safe compute items total if backend doesn't send totals
 function calcItemsTotal(items: any[]) {
   const arr = Array.isArray(items) ? items : [];
   return arr.reduce((sum, it) => {
@@ -128,7 +127,7 @@ function normalizeSubOrders(order: any) {
       items: Array.isArray(so?.items) ? so.items : [],
       shipment: so?.shipment || null,
       returns: Array.isArray(so?.returns) ? so.returns : [],
-refund: so?.refund || null,
+      refund: so?.refund || null,
       subtotal: so?.subtotal,
       shipping: so?.shipping,
       total: so?.total,
@@ -146,6 +145,8 @@ refund: so?.refund || null,
       status: String(order?.status || "PLACED").toUpperCase(),
       items: legacyItems,
       shipment: null,
+      returns: [],
+      refund: null,
       subtotal: order?.totals?.subtotal,
       shipping: order?.totals?.shipping,
       total:
@@ -189,7 +190,6 @@ function pickSubOrderTotal(order: any, so: any) {
   const computed = calcItemsTotal(so?.items || []);
   if (computed > 0) return computed;
 
-  // legacy fallback
   return (
     toNum(order?.totals?.grandTotal, NaN) ||
     toNum(order?.totals?.total, NaN) ||
@@ -224,19 +224,16 @@ export default function WebsiteUserOrderDetailsPage() {
   const searchParams = useSearchParams();
 
   const orderId = String((params as any)?.orderId || "");
-  // ✅ IMPORTANT: comes from list page link ?subOrderId=...
   const subOrderIdParam = String(searchParams.get("subOrderId") || "");
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [order, setOrder] = useState<Order | null>(null);
 
-  // Tracking states
   const [trackingLoading, setTrackingLoading] = useState(false);
   const [trackingError, setTrackingError] = useState<string | null>(null);
   const [tracking, setTracking] = useState<TrackingResponse | null>(null);
 
-  // Return Request states
   const [rrOpen, setRrOpen] = useState(false);
   const [rrBusy, setRrBusy] = useState(false);
   const [rrErr, setRrErr] = useState<string | null>(null);
@@ -244,14 +241,9 @@ export default function WebsiteUserOrderDetailsPage() {
 
   const [rrReason, setRrReason] = useState("");
   const [rrNote, setRrNote] = useState("");
-
-  // ✅ Return proof images (max 5)
   const [rrFiles, setRrFiles] = useState<File[]>([]);
-
-  // ✅ Partial return selection: key => `${subOrderId}:${itemKey}`
   const [rrSelected, setRrSelected] = useState<Record<string, number>>({});
 
-  // ✅ COD bank details (mandatory if paymentMethod=COD)
   const [bank, setBank] = useState<BankDetails>({
     accountHolderName: "",
     accountNumber: "",
@@ -345,11 +337,15 @@ export default function WebsiteUserOrderDetailsPage() {
 
   const subOrders = useMemo(() => normalizeSubOrders(order), [order]);
 
-  // ✅ FIX: if user opened split card, show ONLY that subOrder
   const scopedSubOrders = useMemo(() => {
-    if (!subOrderIdParam) return subOrders;
-    const found = subOrders.find((x: any) => String(x._id) === String(subOrderIdParam));
-    return found ? [found] : subOrders; // fallback if wrong id
+    if (subOrderIdParam) {
+      const found = subOrders.find((x: any) => String(x._id) === String(subOrderIdParam));
+      return found ? [found] : subOrders;
+    }
+
+    if (subOrders.length === 1) return [subOrders[0]];
+
+    return subOrders;
   }, [subOrders, subOrderIdParam]);
 
   const computedSubOrders = useMemo(() => {
@@ -398,9 +394,30 @@ export default function WebsiteUserOrderDetailsPage() {
     });
   }, [scopedSubOrders]);
 
-  // ✅ header payable: subOrder open => show subOrder total
+  const activeSubOrder = useMemo(() => {
+    if (subOrderIdParam) {
+      return computedSubOrders.find(
+        (x: any) => String(x._id) === String(subOrderIdParam)
+      ) || null;
+    }
+
+    return computedSubOrders.length === 1 ? computedSubOrders[0] : null;
+  }, [computedSubOrders, subOrderIdParam]);
+
+  const activeSubOrderId = String(activeSubOrder?._id || "");
+  const activeSubStatus = String(activeSubOrder?.status || "").toUpperCase();
+  const isSubOrderDelivered = activeSubStatus === "DELIVERED";
+
+  const returnReq = useMemo(() => {
+    const rs = Array.isArray(activeSubOrder?.returns) ? activeSubOrder.returns : [];
+    if (!rs.length) return null;
+    return rs[rs.length - 1];
+  }, [activeSubOrder]);
+
+  const returnReqStatus = String(returnReq?.status || "").toUpperCase();
+
   const payable = useMemo(() => {
-    if (subOrderIdParam && computedSubOrders.length === 1) {
+    if (computedSubOrders.length === 1) {
       return pickSubOrderTotal(order, computedSubOrders[0]);
     }
     return (
@@ -408,7 +425,7 @@ export default function WebsiteUserOrderDetailsPage() {
       toNum(totals?.subtotal, NaN) ||
       toNum(order?.totalAmount, 0)
     );
-  }, [subOrderIdParam, computedSubOrders, totals?.grandTotal, totals?.subtotal, order?.totalAmount, order]);
+  }, [computedSubOrders, totals?.grandTotal, totals?.subtotal, order?.totalAmount, order]);
 
   const savings = useMemo(() => {
     const s = toNum(totals?.savings, NaN);
@@ -449,20 +466,6 @@ export default function WebsiteUserOrderDetailsPage() {
     return computedSubOrders.reduce((sum: number, so: any) => sum + (so?.__uiItems?.length || 0), 0);
   }, [computedSubOrders]);
 
-// ✅ Return is subOrder-wise now
-const activeSubOrder = useMemo(() => {
-  return computedSubOrders.length === 1 ? computedSubOrders[0] : null;
-}, [computedSubOrders]);
-const activeSubStatus = String(activeSubOrder?.status || "").toUpperCase();
-const isSubOrderDelivered = activeSubStatus === "DELIVERED";
-// show latest return for this subOrder (last item in returns[])
-const returnReq = useMemo(() => {
-  const rs = Array.isArray(activeSubOrder?.returns) ? activeSubOrder.returns : [];
-  if (!rs.length) return null;
-  return rs[rs.length - 1];
-}, [activeSubOrder]);
-
-const returnReqStatus = String(returnReq?.status || "").toUpperCase();
   const submitReturnRequest = async () => {
     try {
       setRrBusy(true);
@@ -484,51 +487,53 @@ const returnReqStatus = String(returnReq?.status || "").toUpperCase();
           return;
         }
       }
-      if (!subOrderIdParam) { setRrErr("Please open a seller shipment to request return."); return; }
 
-      // ✅ build partial return items (NOTE: computedSubOrders is scoped now if subOrderIdParam present)
- // ✅ build return items from rrSelected (prevents key mismatch)
-const returnItems: any[] = [];
+      if (!activeSubOrderId) {
+        setRrErr("Please open a valid seller shipment to request return.");
+        return;
+      }
 
-for (const [key, qtyRaw] of Object.entries(rrSelected || {})) {
-  const qty = Number(qtyRaw || 0);
-  if (!qty || qty <= 0) continue;
+      const returnItems: any[] = [];
 
-const fullKey = String(key);
-const idx = fullKey.indexOf(":");
-if (idx === -1) continue;
+      for (const [key, qtyRaw] of Object.entries(rrSelected || {})) {
+        const qty = Number(qtyRaw || 0);
+        if (!qty || qty <= 0) continue;
 
-const soId = fullKey.slice(0, idx);
-const itemKey = fullKey.slice(idx + 1); // ✅ keeps remaining ":" intact
-if (!soId || !itemKey) continue;
+        const fullKey = String(key);
+        const idx = fullKey.indexOf(":");
+        if (idx === -1) continue;
 
-  const so = computedSubOrders.find((x: any) => String(x._id) === String(soId));
-  if (!so) continue;
+        const soId = fullKey.slice(0, idx);
+        const itemKey = fullKey.slice(idx + 1);
+        if (!soId || !itemKey) continue;
 
-  const it = (so.__uiItems || []).find((x: any) => String(x.itemKey) === String(itemKey));
-  if (!it) continue;
+        const so = computedSubOrders.find((x: any) => String(x._id) === String(soId));
+        if (!so) continue;
 
-  returnItems.push({
-    productId: it.raw?.productId?._id || it.raw?.productId || null,
-    variantId: it.raw?.variantId || null,
-    colorKey: it.raw?.colorKey || null,
-    qty,
-  });
-}
+        const it = (so.__uiItems || []).find((x: any) => String(x.itemKey) === String(itemKey));
+        if (!it) continue;
 
-if (returnItems.length === 0) {
-  setRrErr("Select at least one item for return");
-  return;
-}
+        returnItems.push({
+          productId: it.raw?.productId?._id || it.raw?.productId || null,
+          variantId: it.raw?.variantId || null,
+          colorKey: it.raw?.colorKey || null,
+          qty,
+        });
+      }
+
+      if (returnItems.length === 0) {
+        setRrErr("Select at least one item for return");
+        return;
+      }
 
       const files = rrFiles.slice(0, 5);
 
       const fd = new FormData();
       fd.append("reason", reason);
       if (note) fd.append("note", note);
-
       fd.append("items", JSON.stringify(returnItems));
-      fd.append("subOrderId", subOrderIdParam); 
+      fd.append("subOrderId", activeSubOrderId);
+
       if (isCOD) {
         fd.append(
           "bankDetails",
@@ -594,7 +599,6 @@ if (returnItems.length === 0) {
 
   return (
     <div className="space-y-6">
-      {/* Top back */}
       <div className="flex items-center justify-between">
         <div>
           <div className="text-xl font-bold text-gray-900">Order Details</div>
@@ -605,7 +609,6 @@ if (returnItems.length === 0) {
             </span>
           </div>
 
-          {/* optional debug line */}
           {subOrderIdParam ? (
             <div className="text-[11px] text-gray-500 mt-1">
               Viewing SubOrder: <span className="font-mono">{subOrderIdParam}</span>
@@ -622,9 +625,7 @@ if (returnItems.length === 0) {
       </div>
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
-        {/* LEFT */}
         <div className="lg:col-span-8 space-y-6">
-          {/* Product summary card */}
           <div className="border bg-white overflow-hidden">
             <div className="bg-yellow-50 px-5 py-2 text-xs text-gray-700">
               Order status updates will appear here.
@@ -697,7 +698,6 @@ if (returnItems.length === 0) {
             </div>
           </div>
 
-          {/* Tracking card (PER SUBORDER) */}
           <div className="border bg-white p-5">
             <div className="flex items-center justify-between gap-3">
               <div className="font-semibold text-gray-900">Tracking</div>
@@ -842,12 +842,11 @@ if (returnItems.length === 0) {
             )}
           </div>
 
-          {/* Return Card */}
           <div className="border bg-white p-5">
             <div className="flex items-center justify-between gap-3">
               <div className="font-semibold text-gray-900">Return</div>
 
-              {subOrderIdParam && isSubOrderDelivered ? (
+              {activeSubOrder && isSubOrderDelivered ? (
                 returnReqStatus ? (
                   <div className="text-xs font-semibold text-gray-700">
                     {returnReqStatus === "REQUESTED"
@@ -980,7 +979,7 @@ if (returnItems.length === 0) {
               </div>
             ) : (
               <div className="mt-3 text-sm text-gray-600">
-                {subOrderIdParam && isSubOrderDelivered 
+                {activeSubOrder && isSubOrderDelivered
                   ? "You can request a return within the return window."
                   : "Return is available only after delivery."}
               </div>
@@ -993,7 +992,6 @@ if (returnItems.length === 0) {
             ) : null}
           </div>
 
-          {/* Items (PER SUBORDER + SOLD BY) */}
           <div className="border bg-white p-5">
             <div className="font-semibold text-gray-900">Items</div>
 
@@ -1074,7 +1072,6 @@ if (returnItems.length === 0) {
             </div>
           </div>
 
-          {/* Rate experience placeholder */}
           <div className="border bg-white p-5">
             <div className="font-semibold text-gray-900">Rate your experience</div>
             <div className="mt-3 border px-4 py-3 text-sm text-gray-700 hover:bg-gray-50 cursor-pointer">
@@ -1083,9 +1080,7 @@ if (returnItems.length === 0) {
           </div>
         </div>
 
-        {/* RIGHT */}
         <div className="lg:col-span-4 space-y-6">
-          {/* Delivery details */}
           <div className="border bg-white p-5">
             <div className="text-lg font-bold text-gray-900">Delivery details</div>
 
@@ -1116,7 +1111,6 @@ if (returnItems.length === 0) {
             </div>
           </div>
 
-          {/* Price details */}
           <div className="border bg-white p-5">
             <div className="text-lg font-bold text-gray-900">Price details</div>
 
@@ -1164,7 +1158,6 @@ if (returnItems.length === 0) {
         Order No. : {order?.orderCode || String(order?._id).slice(-8)}
       </div>
 
-      {/* Return Request Modal (WITH PARTIAL ITEM SELECTION) */}
       {rrOpen ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 overflow-y-auto">
           <div className="w-full max-w-lg border bg-white max-h-[90vh] overflow-hidden">
@@ -1186,7 +1179,6 @@ if (returnItems.length === 0) {
                 </div>
               ) : null}
 
-              {/* ✅ Select items */}
               <div className="border p-4">
                 <div className="text-sm font-semibold text-gray-900">Select items to return</div>
                 <div className="mt-3 space-y-4">
@@ -1278,7 +1270,6 @@ if (returnItems.length === 0) {
                 />
               </div>
 
-              {/* ✅ Images (max 5) */}
               <div>
                 <div className="flex items-center justify-between mb-1">
                   <div className="text-xs font-semibold text-gray-700">Upload images (optional)</div>
@@ -1327,7 +1318,6 @@ if (returnItems.length === 0) {
                 )}
               </div>
 
-              {/* ✅ COD bank details */}
               {isCOD ? (
                 <div className="border p-4">
                   <div className="text-sm font-semibold text-gray-900">Bank details for refund (COD)</div>

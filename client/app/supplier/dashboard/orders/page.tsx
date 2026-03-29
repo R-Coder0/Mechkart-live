@@ -285,8 +285,8 @@ function IconButton({
     tone === "primary"
       ? "bg-gray-900 text-white hover:bg-black border-gray-900"
       : tone === "danger"
-      ? "bg-red-600 text-white hover:bg-red-700 border-red-600"
-      : "bg-white text-gray-800 hover:bg-gray-50";
+        ? "bg-red-600 text-white hover:bg-red-700 border-red-600"
+        : "bg-white text-gray-800 hover:bg-gray-50";
   return (
     <button type="button" title={title} onClick={onClick} disabled={disabled} className={`${base} ${styles}`}>
       {children}
@@ -386,7 +386,7 @@ type DrawerState = {
   open: boolean;
   order: any | null;
   sub: any | null;
-  tab: "items" | "shipments" | "returns" | "payment" | "customer";
+  tab: "items" | "shipments" | "payment" | "customer";
 };
 
 export default function VendorOrdersPage() {
@@ -487,20 +487,23 @@ export default function VendorOrdersPage() {
   const closeOrder = () => setDrawer({ open: false, order: null, sub: null, tab: "items" });
 
   return (
-    <div className="mx-auto max-w-7xl px-4 py-10">
+    <div className="mx-auto max-w-[1700px] px-4 py-10">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="text-2xl font-extrabold text-gray-900">Vendor · Orders</h1>
           <p className="text-sm text-gray-600">{summaryText}</p>
         </div>
-        <div className="flex gap-2">
-          <Link href="/vendors" className="rounded-xl border bg-white px-4 py-2 text-sm font-semibold hover:bg-gray-50">
-            Vendor Home
-          </Link>
-          <button onClick={() => load(page)} className="rounded-xl border bg-white px-4 py-2 text-sm font-semibold hover:bg-gray-50">
-            Refresh
-          </button>
-        </div>
+<div className="flex gap-2">
+  <Link href="/supplier/dashboard" className="rounded-xl border bg-white px-4 py-2 text-sm font-semibold hover:bg-gray-50">
+    Vendor Home
+  </Link>
+  <Link href="/supplier/dashboard/returns" className="rounded-xl border bg-white px-4 py-2 text-sm font-semibold hover:bg-gray-50">
+    Returns
+  </Link>
+  <button onClick={() => load(page)} className="rounded-xl border bg-white px-4 py-2 text-sm font-semibold hover:bg-gray-50">
+    Refresh
+  </button>
+</div>
       </div>
 
       <div className="mt-6 rounded-3xl border bg-white p-4 shadow-sm">
@@ -669,7 +672,7 @@ export default function VendorOrdersPage() {
 
                       <td className="px-5 py-3">
                         <div className="text-base font-bold text-gray-900">{payable}</div>
-                        <div className="text-[11px] text-gray-500">Vendor share</div>
+                        {/* <div className="text-[11px] text-gray-500">Vendor share</div> */}
                       </td>
 
                       <td className="px-5 py-3">
@@ -768,17 +771,16 @@ export default function VendorOrdersPage() {
       >
         {drawer.order ? (
           <>
-            <Tabs
-              value={drawer.tab}
-              onChange={(v) => setDrawer((p) => ({ ...p, tab: v as any }))}
-              items={[
-                { key: "items", label: "Items" },
-                { key: "shipments", label: "Shipments" },
-                { key: "returns", label: "Returns" },
-                { key: "payment", label: "Payment" },
-                { key: "customer", label: "Customer" },
-              ]}
-            />
+<Tabs
+  value={drawer.tab}
+  onChange={(v) => setDrawer((p) => ({ ...p, tab: v as any }))}
+  items={[
+    { key: "items", label: "Items" },
+    { key: "shipments", label: "Shipments" },
+    { key: "payment", label: "Payment" },
+    { key: "customer", label: "Customer" },
+  ]}
+/>
 
             <div className="mt-5 grid grid-cols-1 gap-4 lg:grid-cols-3">
               <div className="lg:col-span-2 space-y-4">
@@ -855,108 +857,6 @@ export default function VendorOrdersPage() {
                   </div>
                 ) : null}
 
-                {drawer.tab === "returns" ? (
-                  <div className="rounded-3xl border bg-white p-4">
-                    <div className="mb-3 text-sm font-extrabold text-gray-900">Return Status</div>
-
-                    {(() => {
-                      const rm = getReturnMetaVendor(drawer.order);
-                      if (!rm.anyReturn) return <div className="text-sm text-gray-600">No return request.</div>;
-
-                      const ret = rm.ret;
-                      const refund = rm.refund;
-                      const imgs = Array.isArray(ret?.images) ? ret.images : [];
-                      const items = Array.isArray(ret?.items) ? ret.items : [];
-
-                      return (
-                        <div className="space-y-4">
-                          <div className="flex items-center gap-2">
-                            {rm.requested ? <Badge tone="amber">REQUESTED</Badge> : null}
-                            {rm.approved ? <Badge tone="indigo">APPROVED</Badge> : null}
-                            {rm.received ? <Badge tone="blue">RECEIVED</Badge> : null}
-                            {rm.rejected ? <Badge tone="red">REJECTED</Badge> : null}
-                            {rm.refunded ? <Badge tone="green">REFUNDED</Badge> : null}
-                            {rm.refundPending ? <Badge tone="red">REFUND PENDING</Badge> : null}
-                            {ret?.requestedAt ? (
-                              <span className="text-[12px] text-gray-600">Requested: {fmtDateTime(ret.requestedAt)}</span>
-                            ) : null}
-                          </div>
-
-                          {ret?.reason ? (
-                            <div className="text-sm text-gray-700">
-                              Reason: <span className="font-semibold text-gray-900">{String(ret.reason)}</span>
-                            </div>
-                          ) : null}
-
-                          {ret?.note ? (
-                            <div className="text-sm text-gray-700">
-                              Note: <span className="font-semibold text-gray-900">{String(ret.note)}</span>
-                            </div>
-                          ) : null}
-
-                          {rm.retStatus === "REJECTED" && ret?.rejectReason ? (
-                            <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
-                              Reject reason: {String(ret.rejectReason)}
-                            </div>
-                          ) : null}
-
-                          <div className="rounded-2xl border p-4">
-                            <div className="text-[12px] font-extrabold text-gray-900 mb-2">Return Items</div>
-                            {items.length ? (
-                              <div className="space-y-2 text-sm">
-                                {items.map((it: any, idx: number) => (
-                                  <div key={idx} className="flex items-center justify-between border-b py-2 last:border-b-0">
-                                    <div className="text-gray-700">
-                                      <span className="font-semibold text-gray-900">
-                                        {String(it?.title || it?.productTitle || it?.productId?.title || it?.productId || "Item")}
-                                      </span>
-                                      {it?.variantId ? <span className="text-gray-500"> • Var: {String(it.variantId)}</span> : null}
-                                      {it?.colorKey ? <span className="text-gray-500"> • Color: {String(it.colorKey)}</span> : null}
-                                    </div>
-                                    <div className="font-extrabold text-gray-900">Qty: {Number(it?.qty || 1)}</div>
-                                  </div>
-                                ))}
-                              </div>
-                            ) : (
-                              <div className="text-sm text-gray-600">—</div>
-                            )}
-                          </div>
-
-                          {refund ? (
-                            <div className="rounded-2xl border p-4 text-sm">
-                              <div className="font-extrabold text-gray-900 mb-2">Refund</div>
-                              <StatRow k="Status" v={<Badge tone={rm.refundStatus === "PROCESSED" ? "green" : "amber"}>{rm.refundStatus || "—"}</Badge>} />
-                              <StatRow k="Amount" v={refund?.amount ? money(refund.amount) : "—"} />
-                              <StatRow k="Processed" v={refund?.processedAt ? fmtDateTime(refund.processedAt) : "—"} />
-                            </div>
-                          ) : null}
-
-                          {imgs.length ? (
-                            <div>
-                              <div className="text-[12px] font-semibold text-gray-700 mb-2">Uploaded images</div>
-                              <div className="flex flex-wrap gap-2">
-                                {imgs.slice(0, 12).map((p: string, i: number) => {
-                                  const src = resolveImageUrl(p);
-                                  return (
-                                    <a
-                                      key={i}
-                                      href={src || "#"}
-                                      target="_blank"
-                                      rel="noreferrer"
-                                      className="h-14 w-14 overflow-hidden rounded-xl border bg-white"
-                                    >
-                                      {src ? <img src={src} alt={`ret-${i}`} className="h-full w-full object-cover" /> : null}
-                                    </a>
-                                  );
-                                })}
-                              </div>
-                            </div>
-                          ) : null}
-                        </div>
-                      );
-                    })()}
-                  </div>
-                ) : null}
 
                 {drawer.tab === "payment" ? (
                   <div className="rounded-3xl border bg-white p-4">

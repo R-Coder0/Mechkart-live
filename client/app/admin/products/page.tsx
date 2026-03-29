@@ -783,7 +783,7 @@ if (editShipWeightKg.trim() !== "") formData.append("shipWeightKg", editShipWeig
 
   return (
     <div className="min-h-screen bg-slate-100">
-      <div className="max-w-7xl mx-auto py-8 px-4 sm:px-6 lg:px-8">
+      <div className="max-w-[1700px] mx-auto py-8 px-4 sm:px-6 lg:px-8">
         {/* Header */}
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-6">
           <div className="flex items-center gap-3">

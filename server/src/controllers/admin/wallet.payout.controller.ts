@@ -1,11 +1,20 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { Request, Response } from "express";
-import { adminReleaseVendorPayout, adminLogPayoutFailed } from "../../services/vendorWallet.payout.service";
+import {
+  adminReleaseVendorPayout,
+  adminLogPayoutFailed,
+} from "../../services/vendorWallet.payout.service";
+
+const parseOptionalAmount = (v: any) => {
+  if (v === undefined || v === null || String(v).trim() === "") return undefined;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : undefined;
+};
 
 export const adminPayoutRelease = async (req: Request, res: Response) => {
   try {
     const vendorId = String(req.body?.vendorId || "").trim();
-    const amount = Number(req.body?.amount || 0);
+    const amount = parseOptionalAmount(req.body?.amount);
 
     const method = (String(req.body?.method || "MANUAL").toUpperCase() as any) || "MANUAL";
     const reference = String(req.body?.reference || "").trim();

@@ -56,7 +56,7 @@ function getVendorSession(): { token: string; profile: VendorProfile } | null {
   return { token, profile };
 }
 
-// ✅ Active rule:
+// Active rule:
 // - Dashboard: exact match only
 // - Others: exact OR prefix match
 function isRouteActive(pathname: string, href: string) {
@@ -92,7 +92,7 @@ function NavItem({
     >
       <span
         className={[
-          "h-9 w-9 rounded-lg flex items-center justify-center transition",
+          "h-9 w-9 rounded-lg flex items-center justify-center transition shrink-0",
           active ? "bg-white shadow-sm" : "bg-gray-50 group-hover:bg-white",
         ].join(" ")}
       >
@@ -101,10 +101,9 @@ function NavItem({
 
       <span className="truncate flex-1">{label}</span>
 
-      {/* active indicator */}
       <span
         className={[
-          "h-6 w-1 rounded-full transition",
+          "h-6 w-1 rounded-full transition shrink-0",
           active ? "bg-[#3b2cc4]" : "bg-transparent group-hover:bg-gray-200",
         ].join(" ")}
       />
@@ -125,7 +124,7 @@ export default function VendorDashboardLayout({ children }: { children: React.Re
       { label: "Products", href: "/supplier/dashboard/products-add", icon: PackagePlus },
       { label: "Inventory", href: "/supplier/dashboard/products", icon: Boxes },
       { label: "Orders", href: "/supplier/dashboard/orders", icon: ShoppingCart },
-      { label: "Shipments", href: "/supplier/dashboard/shipments", icon: Truck },
+      // { label: "Shipments", href: "/supplier/dashboard/shipments", icon: Truck },
       { label: "Returns", href: "/supplier/dashboard/returns", icon: RotateCcw },
       { label: "Payouts", href: "/supplier/dashboard/wallet", icon: Wallet },
       { label: "Settings", href: "/supplier/dashboard/settings", icon: Settings },
@@ -176,13 +175,11 @@ export default function VendorDashboardLayout({ children }: { children: React.Re
   }, []);
 
   useEffect(() => {
-    // route change => close drawer + re-guard
     setMobileOpen(false);
     loadAndGuard();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pathname]);
 
-  // optional periodic check
   useEffect(() => {
     const id = window.setInterval(() => loadAndGuard(), 30000);
     return () => window.clearInterval(id);
@@ -193,9 +190,9 @@ export default function VendorDashboardLayout({ children }: { children: React.Re
   const vendorEmail = vendor?.email || "";
 
   const Sidebar = ({ onNavigate }: { onNavigate?: () => void }) => (
-    <div className="h-full flex flex-col">
+    <div className="h-full flex flex-col overflow-hidden">
       {/* Header */}
-      <div className="h-16 px-4 flex items-center justify-between border-b">
+      <div className="h-16 px-4 flex items-center justify-between border-b shrink-0 bg-white">
         <div className="min-w-0">
           <div className="font-semibold text-gray-900 truncate">{vendorName}</div>
           {vendorEmail ? (
@@ -213,7 +210,7 @@ export default function VendorDashboardLayout({ children }: { children: React.Re
       </div>
 
       {/* Menu */}
-      <div className="p-3 flex-1 overflow-auto">
+      <div className="flex-1 overflow-y-auto p-3">
         <div className="text-xs font-semibold text-gray-500 px-2 mb-2">MENU</div>
         <div className="space-y-2">
           {menu.map((m) => {
@@ -233,10 +230,10 @@ export default function VendorDashboardLayout({ children }: { children: React.Re
       </div>
 
       {/* Footer */}
-      <div className="p-3 border-t">
+      <div className="p-3 border-t shrink-0 bg-white">
         <button
           onClick={logout}
-          className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl text-sm font-semibold text-red-600 hover:bg-red-50 border border-red-200"
+          className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl text-sm font-semibold text-red-600 hover:bg-red-50 border border-red-200 transition"
         >
           <LogOut className="h-4 w-4" />
           Logout
@@ -246,11 +243,13 @@ export default function VendorDashboardLayout({ children }: { children: React.Re
   );
 
   return (
-    <div className="max-w-[1400px] mx-auto min-h-screen bg-gray-50">
-      <div className="flex min-h-screen">
+    <div className="min-h-screen bg-gray-50">
+      <div className="flex">
         {/* Desktop Sidebar */}
-        <aside className="hidden md:flex w-[280px] shrink-0 flex-col border-r bg-white">
-          <Sidebar />
+        <aside className="hidden md:block w-[280px] shrink-0 border-r bg-white">
+          <div className="sticky top-0 h-screen overflow-hidden">
+            <Sidebar />
+          </div>
         </aside>
 
         {/* Mobile Drawer */}
@@ -260,39 +259,41 @@ export default function VendorDashboardLayout({ children }: { children: React.Re
               className="fixed inset-0 z-40 bg-black/40 md:hidden"
               onClick={() => setMobileOpen(false)}
             />
-            <aside className="fixed z-50 inset-y-0 left-0 w-[300px] bg-white border-r shadow-xl md:hidden">
+            <aside className="fixed inset-y-0 left-0 z-50 w-[300px] bg-white border-r shadow-xl md:hidden">
               <Sidebar onNavigate={() => setMobileOpen(false)} />
             </aside>
           </>
         )}
 
-        {/* Main */}
+        {/* Main Section */}
         <div className="flex-1 min-w-0">
-          {/* Topbar (mobile) */}
+          {/* Mobile Topbar */}
           <div className="sticky top-0 z-30 h-16 bg-white border-b flex items-center justify-between px-3 md:hidden">
             <button
               onClick={() => setMobileOpen(true)}
-              className="h-10 w-10 grid place-items-center rounded-xl hover:bg-gray-100"
+              className="h-10 w-10 grid place-items-center rounded-xl hover:bg-gray-100 transition"
               aria-label="Open menu"
             >
               <Menu className="h-5 w-5" />
             </button>
 
-            <div className="min-w-0 text-center px-2">
+            <div className="min-w-0 text-center px-2 flex-1">
               <div className="font-semibold text-gray-900 truncate">{vendorName}</div>
-              {vendorEmail ? <div className="text-xs text-gray-500 truncate">{vendorEmail}</div> : null}
+              {vendorEmail ? (
+                <div className="text-xs text-gray-500 truncate">{vendorEmail}</div>
+              ) : null}
             </div>
 
             <button
               onClick={logout}
-              className="h-10 px-3 rounded-xl text-sm font-semibold text-red-600 border border-red-200 hover:bg-red-50 flex items-center gap-2"
+              className="h-10 px-3 rounded-xl text-sm font-semibold text-red-600 border border-red-200 hover:bg-red-50 flex items-center gap-2 transition"
             >
               <LogOut className="h-4 w-4" />
               Logout
             </button>
           </div>
 
-          {/* Content */}
+          {/* Page Content */}
           <main className="p-4 md:p-6">{children}</main>
         </div>
       </div>

@@ -8,7 +8,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 type NavItem = { label: string; href: string };
 
 const NAV: NavItem[] = [
-  { label: "Sell Online", href: "/supplier/sell-online" },
+  { label: "Sell Online", href: "/supplier/" },
   { label: "How it works", href: "/supplier/how-it-works" },
   { label: "Pricing & Commission", href: "/supplier/pricing" },
   { label: "Shipping & Returns", href: "/supplier/shipping-returns" },
