@@ -1,10 +1,11 @@
+/* eslint-disable react-hooks/exhaustive-deps */
 /* eslint-disable @typescript-eslint/no-explicit-any */
-/* eslint-disable @next/next/no-img-element */
 "use client";
 
 import { ChevronRight } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import ProductCard from "@/components/website/ProductCard";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL;
 
@@ -17,111 +18,141 @@ type ApiCategory = {
 };
 
 type ApiVariant = {
+  _id?: string;
+  label?: string;
+  size?: string;
+  weight?: string;
+  comboText?: string;
   mrp?: number;
   salePrice?: number;
+  quantity?: number;
+  images?: string[];
+};
+
+type ApiCategoryRef = {
+  _id?: string;
+  name?: string;
+  slug?: string;
 };
 
 type ApiProduct = {
   _id: string;
-  title?: string;
+  title: string;
+  slug: string;
+  featureImage?: string;
   mrp?: number;
   salePrice?: number;
+  totalStock?: number;
+  baseStock?: number;
   variants?: ApiVariant[];
+  approvalStatus?: "PENDING" | "APPROVED" | "REJECTED";
+  isActive?: boolean;
+  ownerType?: "ADMIN" | "VENDOR";
+  vendorId?: {
+    company?: { name?: string };
+  };
 
-  // category refs can be in different keys (we handle all)
-  category?: any;
-  categoryId?: any;
-  subCategory?: any;
-  subCategoryId?: any;
+  category?: string | ApiCategoryRef | null;
+  categoryId?: string | ApiCategoryRef | null;
+  subCategory?: string | ApiCategoryRef | null;
+  subCategoryId?: string | ApiCategoryRef | null;
 };
 
-// image resolver
-const resolveImageUrl = (path?: string) => {
-  if (!path) return "";
-  if (path.startsWith("http")) return path;
-
-  const host = (API_BASE || "").replace(/\/api\/?$/, "");
-  return path.startsWith("/") ? `${host}${path}` : `${host}/${path}`;
+type SectionConfig = {
+  title: string;
+  matchName: string;
 };
 
-// ✅ boards parent slugs (working)
-const BOARD_PARENT_SLUGS = ["fashion", "tv--appliances", "bedsheet"];
+const SECTION_CONFIG: SectionConfig[] = [
+  {
+    title: "Baby Products",
+    matchName: "Baby Products",
+  },
+  {
+    title: "Battery Operated Toys",
+    matchName: "Battery Operated Toys",
+  },
+  {
+    title: "Toys & MechTech",
+    matchName: "Toys & MechTech",
+  },
+];
 
-// ✅ endpoints (same style as your project)
 const CATEGORIES_ENDPOINT = () => `${API_BASE}/admin/categories`;
 const PRODUCTS_ENDPOINT = () => `${API_BASE}/admin/products`;
 
-// ---------- discount helpers ----------
-const toNum = (v: any) => {
-  const n = Number(v);
-  return Number.isFinite(n) ? n : null;
-};
+function normalizeText(value?: string) {
+  return String(value || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ");
+}
 
-const calcDiscountPercent = (mrp: number, sale: number) => {
-  if (!mrp || mrp <= 0) return 0;
-  if (!sale || sale <= 0) return 0;
-  if (sale >= mrp) return 0;
-  return Math.round(((mrp - sale) / mrp) * 100);
-};
+function getRefName(ref: any): string {
+  if (!ref || typeof ref === "string") return "";
+  return String(ref.name || "").trim();
+}
 
-// choose “best” price for discount calculation
-// - if variants exist: pick variant that gives MAX discount (good for "Min. X% Off" display?)
-//   Actually you asked average discount of products; for each product we compute a representative discount.
-//   We'll pick maximum discount within that product variants (common ecom practice).
-const getProductDiscount = (p: ApiProduct) => {
-  // variant-based (commercial)
-  const vars = Array.isArray(p.variants) ? p.variants : [];
+function getRefSlug(ref: any): string {
+  if (!ref || typeof ref === "string") return "";
+  return String(ref.slug || "").trim();
+}
 
-  let best = 0;
+function getAllProductCategoryNames(product: ApiProduct): string[] {
+  const names = [
+    getRefName(product.category),
+    getRefName(product.categoryId),
+    getRefName(product.subCategory),
+    getRefName(product.subCategoryId),
+  ]
+    .filter(Boolean)
+    .map(normalizeText);
 
-  for (const v of vars) {
-    const mrp = toNum(v?.mrp);
-    const sale = toNum(v?.salePrice);
-    if (!mrp || !sale) continue;
+  return [...new Set(names)];
+}
 
-    const d = calcDiscountPercent(mrp, sale);
-    if (d > best) best = d;
+function calcTotalStock(product: ApiProduct) {
+  if (Array.isArray(product.variants) && product.variants.length > 0) {
+    return product.variants.reduce((sum, v) => sum + Number(v.quantity ?? 0), 0);
   }
+  return Number(product.totalStock ?? product.baseStock ?? 0);
+}
 
-  // fallback to base price
-  if (best === 0) {
-    const mrp = toNum(p?.mrp);
-    const sale = toNum(p?.salePrice);
-    if (mrp && sale) best = calcDiscountPercent(mrp, sale);
-  }
-
-  return best; // 0..100
-};
-
-// resolve product -> subcategory id (covers multiple shapes)
-const getProductSubCategoryId = (p: ApiProduct): string => {
-  const pickId = (x: any) => {
-    if (!x) return "";
-    if (typeof x === "string") return x;
-    if (typeof x === "object" && x._id) return String(x._id);
-    return "";
-  };
-
+function SectionSkeleton() {
   return (
-    pickId(p.subCategoryId) ||
-    pickId(p.subCategory) ||
-    pickId(p.categoryId) ||
-    pickId(p.category) ||
-    ""
+    <div className="bg-white border border-[#dcecf0] p-5 shadow-sm">
+      <div className="flex items-center justify-between mb-4">
+        <div className="h-6 w-40 rounded bg-gray-100 animate-pulse" />
+        <div className="h-5 w-20 rounded bg-gray-100 animate-pulse" />
+      </div>
+
+      <div className="grid grid-cols-2 gap-4">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div key={i} className="border border-gray-200 bg-white p-3 animate-pulse">
+            <div className="aspect-square bg-gray-100 mb-3" />
+            <div className="h-4 bg-gray-100 rounded mb-2" />
+            <div className="h-3 bg-gray-100 rounded w-2/3" />
+          </div>
+        ))}
+      </div>
+    </div>
   );
-};
+}
 
 export default function HomeDecorToysAccessories() {
   const [categories, setCategories] = useState<ApiCategory[]>([]);
   const [products, setProducts] = useState<ApiProduct[]>([]);
   const [loading, setLoading] = useState(false);
 
-  // fetch categories + products
   useEffect(() => {
     const run = async () => {
       try {
         setLoading(true);
-        if (!API_BASE) return;
+        if (!API_BASE) {
+          setCategories([]);
+          setProducts([]);
+          return;
+        }
 
         const [catRes, prodRes] = await Promise.all([
           fetch(CATEGORIES_ENDPOINT(), { cache: "no-store" }),
@@ -132,8 +163,7 @@ export default function HomeDecorToysAccessories() {
         const prodData = await prodRes.json();
 
         const cats: ApiCategory[] = catData?.data || catData?.categories || [];
-        const prods: ApiProduct[] =
-          prodData?.data || prodData?.products || [];
+        const prods: ApiProduct[] = prodData?.data || prodData?.products || [];
 
         setCategories(Array.isArray(cats) ? cats : []);
         setProducts(Array.isArray(prods) ? prods : []);
@@ -148,144 +178,87 @@ export default function HomeDecorToysAccessories() {
     run();
   }, []);
 
-  // parents + children map
-  const { parents, childrenMap } = useMemo(() => {
-    const p: ApiCategory[] = [];
-    const c: Record<string, ApiCategory[]> = {};
-
-    for (const cat of categories) {
-      if (!cat.parentCategory) {
-        p.push(cat);
-      } else {
-        const pid =
-          typeof cat.parentCategory === "string"
-            ? cat.parentCategory
-            : cat.parentCategory._id;
-
-        if (!c[pid]) c[pid] = [];
-        c[pid].push(cat);
-      }
-    }
-
-    return { parents: p, childrenMap: c };
-  }, [categories]);
-
-  // ✅ build avg discount map by subCategoryId
-  const subAvgDiscountMap = useMemo(() => {
-    const map: Record<string, { sum: number; count: number }> = {};
-
-    for (const p of products) {
-      const subId = getProductSubCategoryId(p);
-      if (!subId) continue;
-
-      const d = getProductDiscount(p);
-      // only count meaningful discounts (optional)
-      // If you want to include 0% in avg, remove this condition.
-      if (d <= 0) continue;
-
-      if (!map[subId]) map[subId] = { sum: 0, count: 0 };
-      map[subId].sum += d;
-      map[subId].count += 1;
-    }
-
-    // convert to rounded avg
-    const out: Record<string, number> = {};
-    for (const subId of Object.keys(map)) {
-      const { sum, count } = map[subId];
-      out[subId] = count ? Math.round(sum / count) : 0;
-    }
-    return out;
+  const visibleProducts = useMemo(() => {
+    return products.filter(
+      (p) => p.approvalStatus === "APPROVED" && p.isActive !== false
+    );
   }, [products]);
 
-  // build boards
-  const boards = useMemo(() => {
-    return BOARD_PARENT_SLUGS.map((slug) => {
-      const parent = parents.find((p) => (p.slug || "").toLowerCase() === slug);
-      if (!parent) return null;
+  const sectionData = useMemo(() => {
+    return SECTION_CONFIG.map((section) => {
+      const matchedCategory = categories.find(
+        (cat) => normalizeText(cat.name) === normalizeText(section.matchName)
+      );
 
-      const subs = (childrenMap[parent._id] || []).slice(0, 4);
+      const matchedProducts = visibleProducts
+        .filter((product) => {
+          const names = getAllProductCategoryNames(product);
+          return names.includes(normalizeText(section.matchName));
+        })
+        .slice(0, 4);
 
       return {
-        title: parent.name,
-        parentSlug: parent.slug,
-        products: subs.map((sub) => {
-          const avg = subAvgDiscountMap[sub._id] || 0;
-
-          // if no products or no discount data -> fallback label
-          const offerText = avg > 0 ? `Min. ${avg}% Off` : "New Range";
-
-          return {
-            name: sub.name,
-            img: sub.image ? resolveImageUrl(sub.image) : "/tshirt.webp",
-            href: `/category/${parent.slug}/${sub.slug}`,
-            offer: offerText,
-            offerType: avg > 0 ? "discount" : "new",
-          };
-        }),
+        title: section.title,
+        href: matchedCategory ? `/category/${matchedCategory.slug}` : "#",
+        products: matchedProducts,
       };
-    }).filter(Boolean) as any[];
-  }, [parents, childrenMap, subAvgDiscountMap]);
+    }).filter((section) => section.products.length > 0);
+  }, [categories, visibleProducts]);
 
-  if (loading || boards.length === 0) return null;
+  if (!loading && sectionData.length === 0) {
+    return null;
+  }
 
   return (
     <section className="w-full bg-[#E6F7FA] py-4">
       <div className="max-w-[1700px] mx-auto px-4">
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
-          {boards.map((board: any, bIdx: number) => (
-            <div
-              key={bIdx}
-              className="bg-white border border-[#dcecf0] p-5 shadow-sm hover:shadow-md transition-all"
-            >
-              {/* Header */}
-              <div className="flex items-center justify-between mb-4">
-                <h3 className="text-[22px] font-bold text-[#003366]">
-                  {board.title}
-                </h3>
-                <Link
-                  href={`/category/${board.parentSlug}`}
-                  className="inline-flex items-center gap-1 text-[#0077B6] hover:underline text-sm"
+          {loading
+            ? Array.from({ length: 3 }).map((_, idx) => <SectionSkeleton key={idx} />)
+            : sectionData.map((section) => (
+                <div
+                  key={section.title}
+                  className="bg-white border border-[#dcecf0] p-5 shadow-sm hover:shadow-md transition-all"
                 >
-                  See more <ChevronRight size={18} />
-                </Link>
-              </div>
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-[22px] font-bold text-[#003366]">
+                      {section.title}
+                    </h3>
 
-              {/* Grid */}
-              <div className="grid grid-cols-2 gap-4">
-                {board.products.map((p: any, i: number) => (
-                  <Link
-                    key={i}
-                    href={p.href}
-                    className="rounded-xl border border-[#e7f1f4] overflow-hidden bg-white hover:shadow-md hover:-translate-y-0.5 transition-all duration-200 group block"
-                  >
-                    <div className="relative w-full h-40 bg-white overflow-hidden">
-                      <img
-                        src={p.img}
-                        alt={p.name}
-                        className="w-full h-full object-contain rounded-xl scale-95 group-hover:scale-100 transition-transform duration-300"
-                      />
-                      <div className="absolute bottom-0 left-0 right-0 h-10 bg-linear-to-t from-white to-transparent" />
-                    </div>
+                    <Link
+                      href={section.href}
+                      className="inline-flex items-center gap-1 text-[#0077B6] hover:underline text-sm"
+                    >
+                      View all <ChevronRight size={18} />
+                    </Link>
+                  </div>
 
-                    <div className="px-3 pb-3 pt-1 text-center">
-                      <p className="text-[15px] font-medium text-gray-800 leading-snug truncate">
-                        {p.name}
-                      </p>
+                  <div className="grid grid-cols-2 gap-4">
+                    {section.products.map((p) => {
+                      const totalStock = calcTotalStock(p);
 
-                      {/* ✅ dynamic offer */}
-                      <p
-                        className={`text-[13px] font-semibold mt-1 ${
-                          p.offerType === "new" ? "text-[#00B4D8]" : "text-green-600"
-                        }`}
-                      >
-                        {p.offer}
-                      </p>
-                    </div>
-                  </Link>
-                ))}
-              </div>
-            </div>
-          ))}
+                      return (
+                        <ProductCard
+                          key={p._id}
+                          product={{
+                            _id: p._id,
+                            title: p.title,
+                            slug: p.slug,
+                            featureImage: p.featureImage,
+                            mrp: p.mrp,
+                            salePrice: p.salePrice,
+                            variants: p.variants || [],
+                            totalStock,
+                            inStock: totalStock > 0,
+                            ownerType: p.ownerType,
+                            vendorId: p.vendorId || null,
+                          }}
+                        />
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
         </div>
       </div>
     </section>

@@ -5,6 +5,7 @@ import DealsSection from "@/components/website/DealsSection";
 import HeroSection from "@/components/website/HeroSection";
 import HomeDecorToysAccessories from "@/components/website/HomeDecorToysAccessories";
 import InfoStrip from "@/components/website/InfoStrip";
+import PriceCategorySection from "@/components/website/PriceCategorySection";
 import ProductSliders from "@/components/website/ProductSliders";
 export const dynamic = "force-dynamic";
 export default function HomePage() {
@@ -15,7 +16,7 @@ export default function HomePage() {
 
       {/* 2. Trust Strip */}
       <InfoStrip />
-
+      <PriceCategorySection />
       {/* 3. Deals / Offers */}
       <DealsSection />
 

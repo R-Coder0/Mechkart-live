@@ -1,9 +1,12 @@
+/* eslint-disable react-hooks/set-state-in-effect */
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import ProductCard from "@/components/website/ProductCard";
-import ProductFilters, { type ProductFilterState, type SortKey } from "@/components/website/ProductFilters";
-
+import ProductFilters, {
+  type ProductFilterState,
+  type SortKey,
+} from "@/components/website/ProductFilters";
 type ApiVariant = {
   _id?: string;
   label?: string;
@@ -23,15 +26,12 @@ type ApiProduct = {
   featureImage?: string;
   mrp?: number;
   salePrice?: number;
-
   baseStock?: number;
   totalStock?: number;
   variants?: ApiVariant[];
-
   approvalStatus?: "PENDING" | "APPROVED" | "REJECTED";
   isActive?: boolean;
   ownerType?: "ADMIN" | "VENDOR";
-
   vendorId?: {
     company?: { name?: string };
   };
@@ -45,7 +45,6 @@ function calcTotalStock(p: ApiProduct) {
 }
 
 function getDisplayPrice(p: ApiProduct) {
-  // variant price support (optional): take lowest salePrice if exists else product salePrice/mrp
   const baseMrp = Number(p.mrp ?? 0);
   const baseSale = Number(p.salePrice ?? 0);
 
@@ -54,6 +53,7 @@ function getDisplayPrice(p: ApiProduct) {
     const prices = vars
       .map((v) => Number(v.salePrice ?? v.mrp ?? 0))
       .filter((x) => x > 0);
+
     const minVar = prices.length ? Math.min(...prices) : 0;
     return minVar || baseSale || baseMrp || 0;
   }
@@ -63,9 +63,9 @@ function getDisplayPrice(p: ApiProduct) {
 
 function sortProducts(list: ApiProduct[], sort: SortKey) {
   const arr = [...list];
+
   switch (sort) {
     case "newest":
-      // if createdAt not present, keep as-is
       return arr;
     case "price_asc":
       return arr.sort((a, b) => getDisplayPrice(a) - getDisplayPrice(b));
@@ -81,57 +81,98 @@ function sortProducts(list: ApiProduct[], sort: SortKey) {
   }
 }
 
-export default function AllProductsClient({ products }: { products: ApiProduct[] }) {
-  // ✅ public safety filter
+export default function AllProductsClient({
+  products,
+  minPrice,
+  maxPrice,
+}: {
+  products: ApiProduct[];
+  minPrice?: number;
+  maxPrice?: number;
+}) {
   const visibleProducts = useMemo(
-    () => products.filter((p) => p.approvalStatus === "APPROVED" && p.isActive !== false),
+    () =>
+      products.filter(
+        (p) => p.approvalStatus === "APPROVED" && p.isActive !== false
+      ),
     [products]
   );
 
   const [filters, setFilters] = useState<ProductFilterState>({
-    minPrice: undefined,
-    maxPrice: undefined,
+    minPrice:
+      typeof minPrice === "number" && !Number.isNaN(minPrice)
+        ? minPrice
+        : undefined,
+    maxPrice:
+      typeof maxPrice === "number" && !Number.isNaN(maxPrice)
+        ? maxPrice
+        : undefined,
     inStockOnly: false,
     sort: "relevance",
   });
 
+  useEffect(() => {
+    setFilters((prev) => ({
+      ...prev,
+      minPrice:
+        typeof minPrice === "number" && !Number.isNaN(minPrice)
+          ? minPrice
+          : undefined,
+      maxPrice:
+        typeof maxPrice === "number" && !Number.isNaN(maxPrice)
+          ? maxPrice
+          : undefined,
+    }));
+  }, [minPrice, maxPrice]);
+
   const filtered = useMemo(() => {
     let list = visibleProducts;
 
-
-    // stock filter
     if (filters.inStockOnly) {
       list = list.filter((p) => calcTotalStock(p) > 0);
     }
 
-    // price filter
-    const min = typeof filters.minPrice === "number" ? filters.minPrice : undefined;
-    const max = typeof filters.maxPrice === "number" ? filters.maxPrice : undefined;
+    const min =
+      typeof filters.minPrice === "number" ? filters.minPrice : undefined;
+    const max =
+      typeof filters.maxPrice === "number" ? filters.maxPrice : undefined;
 
-    if (min !== undefined) list = list.filter((p) => getDisplayPrice(p) >= min);
-    if (max !== undefined) list = list.filter((p) => getDisplayPrice(p) <= max);
+    if (min !== undefined) {
+      list = list.filter((p) => getDisplayPrice(p) >= min);
+    }
 
-    // sort
+    if (max !== undefined) {
+      list = list.filter((p) => getDisplayPrice(p) <= max);
+    }
+
     const sortKey = (filters.sort ?? "relevance") as SortKey;
-    list = sortProducts(list, sortKey);
-
-    return list;
+    return sortProducts(list, sortKey);
   }, [visibleProducts, filters]);
 
   return (
     <div className="max-w-[1500px] mx-auto px-4 py-6">
       <div className="flex items-end justify-between gap-3">
         <div>
-          <h1 className="text-xl font-semibold text-gray-900">All Products</h1>
+          <h1 className="text-xl font-semibold text-gray-900">
+            {typeof minPrice === "number" && typeof maxPrice === "number"
+              ? `Products ₹${minPrice} - ₹${maxPrice}`
+              : typeof minPrice === "number"
+              ? `Products Above ₹${minPrice}`
+              : "All Products"}
+          </h1>
+
           <p className="mt-1 text-sm text-gray-600">
-            Showing <span className="font-semibold text-gray-900">{filtered.length}</span>{" "}
+            Showing{" "}
+            <span className="font-semibold text-gray-900">
+              {filtered.length}
+            </span>{" "}
             product{filtered.length === 1 ? "" : "s"}
           </p>
         </div>
       </div>
 
-<div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-6">
-  <div className="lg:sticky lg:top-4 h-fit">
+      <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-6">
+        <div className="lg:sticky lg:top-4 h-fit">
           <ProductFilters
             title="Filters"
             value={filters}
@@ -142,7 +183,6 @@ export default function AllProductsClient({ products }: { products: ApiProduct[]
           />
         </div>
 
-        {/* RIGHT GRID */}
         <div>
           {filtered.length === 0 ? (
             <div className="rounded-2xl border bg-white p-6 text-sm text-gray-700">
