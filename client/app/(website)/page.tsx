@@ -16,6 +16,8 @@ export default function HomePage() {
 
       {/* 2. Trust Strip */}
       <InfoStrip />
+            {/* 6. Latest / Trending Products */}
+      <ProductSliders />
       <PriceCategorySection />
       {/* 3. Deals / Offers */}
       <DealsSection />
@@ -26,11 +28,10 @@ export default function HomePage() {
       {/* 5. Promo Banner */}
       <HeroSectionBanner2 />
 
-      {/* 6. Latest / Trending Products */}
-      <ProductSliders />
+
 
       {/* 7. Brands */}
-      <BrandCarousel />
+      {/* <BrandCarousel /> */}
 
       {/* 8. About / Info */}
       <AboutInfoSection />

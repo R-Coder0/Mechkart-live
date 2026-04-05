@@ -1,163 +1,172 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import ProductCard from "./ProductCard";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL;
 const PRODUCTS_ENDPOINT = `${API_BASE}/admin/products`;
 
-function Slider({ title, products }: { title: string; products: any[] }) {
-  const scrollRef = useRef<HTMLDivElement>(null);
+const ROW_SIZE = 6;
+const INITIAL_MAX = 18;
+const LOAD_MORE_STEP = 6;
 
-  const scroll = (offset: number) => {
-    if (scrollRef.current)
-      scrollRef.current.scrollBy({ left: offset, behavior: "smooth" });
-  };
-
-  return (
-    <section className="w-full bg-[#E6F7FA] py-8">
-      <div className="max-w-[1700px] mx-auto px-6 relative">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-[22px] font-bold text-[#003366]">{title}</h2>
-          <div className="flex gap-3">
-            <button
-              onClick={() => scroll(-900)}
-              className="p-2 bg-white border border-[#d6e5ea] rounded-full shadow-sm hover:bg-[#e6f7fa] transition"
-              aria-label="Scroll left"
-            >
-              <ChevronLeft size={20} className="text-[#003366]" />
-            </button>
-            <button
-              onClick={() => scroll(900)}
-              className="p-2 bg-white border border-[#d6e5ea] rounded-full shadow-sm hover:bg-[#e6f7fa] transition"
-              aria-label="Scroll right"
-            >
-              <ChevronRight size={20} className="text-[#003366]" />
-            </button>
-          </div>
-        </div>
-
-        <div
-          ref={scrollRef}
-          className="flex gap-5 overflow-x-auto scroll-smooth scrollbar-hide pb-3"
-        >
-          {products.map((p, i) => (
-            <div key={p?._id || i} className="flex-none w-[260px] bg-white">
-              <ProductCard product={p} />
-            </div>
-          ))}
-        </div>
-      </div>
-    </section>
-  );
+function getInitialVisibleCount(total: number) {
+  const capped = Math.min(total, INITIAL_MAX);
+  return Math.floor(capped / ROW_SIZE) * ROW_SIZE;
 }
 
 export default function ProductSliders() {
   const [latestProducts, setLatestProducts] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
+  const [visibleCount, setVisibleCount] = useState(0);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
 
-  const fallbackLatest = useMemo(
-    () => [
-      {
-        _id: "demo1",
-        title: "Demo Product",
-        slug: "demo-product",
-        featureImage: "/latest/ipad.png",
-        mrp: 999,
-        salePrice: 699,
-        totalStock: 10,
-        inStock: true,
-        variants: [],
-        approvalStatus: "APPROVED",
-        isActive: true,
-      },
-    ],
-    []
-  );
-
-  // ✅ central filter for “can show to customers”
   const isApprovedForPublic = (p: any) => {
     const status = String(p?.approvalStatus || "").toUpperCase();
-    const activeOk = p?.isActive !== false; // treat undefined as true
-    // OPTIONAL: stock check (enable if you want)
-    // const stockOk = Number(p?.totalStock ?? 0) > 0 || p?.inStock === true;
-
-    return status === "APPROVED" && activeOk; // && stockOk
+    const activeOk = p?.isActive !== false;
+    return status === "APPROVED" && activeOk;
   };
 
   useEffect(() => {
     const run = async () => {
       try {
         if (!API_BASE) {
-          setLatestProducts(fallbackLatest);
+          setLatestProducts([]);
+          setVisibleCount(0);
           return;
         }
 
         setLoading(true);
 
         const res = await fetch(PRODUCTS_ENDPOINT, { cache: "no-store" });
-        const data = await res.json();
-
-        const list: any[] = data?.data || data?.products || [];
-
-        // ✅ SHOW ONLY APPROVED
-        const approvedOnly = Array.isArray(list) ? list.filter(isApprovedForPublic) : [];
-
-        if (!approvedOnly.length) {
-          setLatestProducts(fallbackLatest);
+        if (!res.ok) {
+          setLatestProducts([]);
+          setVisibleCount(0);
           return;
         }
 
-        const DESIRED_COUNT = 12;
-        const TEN_DAYS_MS = 10 * 24 * 60 * 60 * 1000;
-        const cutoff = Date.now() - TEN_DAYS_MS;
+        const data = await res.json();
+        const list: any[] = data?.data || data?.products || [];
 
-        const sorted = approvedOnly
-          .filter((p) => p?.createdAt || p?.created_at)
-          .sort((a, b) => {
-            const A = new Date(a?.createdAt || a?.created_at || 0).getTime();
-            const B = new Date(b?.createdAt || b?.created_at || 0).getTime();
-            return B - A;
-          });
+        const approvedOnly = Array.isArray(list) ? list.filter(isApprovedForPublic) : [];
 
-        const recent = sorted.filter((p) => {
-          const created = new Date(p?.createdAt || p?.created_at || 0).getTime();
-          return created && created >= cutoff;
-        });
-
-        let finalList = [...recent];
-
-        if (finalList.length < DESIRED_COUNT) {
-          const needed = DESIRED_COUNT - finalList.length;
-
-          const older = sorted.filter(
-            (p) => !finalList.some((x) => x?._id === p?._id)
-          );
-
-          finalList = finalList.concat(older.slice(0, needed));
+        if (!approvedOnly.length) {
+          setLatestProducts([]);
+          setVisibleCount(0);
+          return;
         }
 
-        finalList = finalList.slice(0, DESIRED_COUNT);
+        const sorted = [...approvedOnly].sort((a, b) => {
+          const A = new Date(a?.createdAt || a?.created_at || 0).getTime();
+          const B = new Date(b?.createdAt || b?.created_at || 0).getTime();
+          return B - A;
+        });
 
-        setLatestProducts(finalList.length ? finalList : fallbackLatest);
+        setLatestProducts(sorted);
+        setVisibleCount(getInitialVisibleCount(sorted.length));
       } catch {
-        setLatestProducts(fallbackLatest);
+        setLatestProducts([]);
+        setVisibleCount(0);
       } finally {
         setLoading(false);
       }
     };
 
     run();
-  }, [fallbackLatest]);
+  }, []);
 
-  const renderList =
-    loading && latestProducts.length === 0 ? fallbackLatest : latestProducts;
+  const visibleProducts = useMemo(() => {
+    return latestProducts.slice(0, visibleCount);
+  }, [latestProducts, visibleCount]);
+
+  const canLoadMore = useMemo(() => {
+    return latestProducts.length > visibleCount;
+  }, [latestProducts.length, visibleCount]);
+
+  const handleLoadMore = () => {
+    if (isLoadingMore) return;
+
+    setIsLoadingMore(true);
+
+    setTimeout(() => {
+      setVisibleCount((prev) => Math.min(prev + LOAD_MORE_STEP, latestProducts.length));
+      setIsLoadingMore(false);
+    }, 400); // thoda lazy feeling ke liye delay
+  };
+
+  if (loading && latestProducts.length === 0) {
+    return (
+      <>
+        <section className="w-full bg-[#E6F7FA] py-8">
+          <div className="max-w-[1700px] mx-auto px-6">
+            <div className="flex items-center justify-between mb-4">
+              <h2 className="text-[22px] font-bold text-[#003366]">
+                Latest Products
+              </h2>
+            </div>
+
+            <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-5">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <div
+                  key={i}
+                  className="bg-white border border-[#dcecf0] p-4 animate-pulse"
+                >
+                  <div className="aspect-square bg-gray-100 mb-4" />
+                  <div className="h-4 bg-gray-100 rounded mb-2" />
+                  <div className="h-3 bg-gray-100 rounded w-2/3 mb-3" />
+                  <div className="h-4 bg-gray-100 rounded w-1/3" />
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        <div className="h-px bg-[#e4edf1] mx-auto max-w-[1700px]" />
+      </>
+    );
+  }
+
+  if (visibleProducts.length === 0) {
+    return null;
+  }
 
   return (
     <>
-      <Slider title="Latest Products" products={renderList} />
+      <section className="w-full bg-[#E6F7FA] py-8">
+        <div className="max-w-[1700px] mx-auto px-6">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-[22px] font-bold text-[#003366]">
+              Latest Products
+            </h2>
+          </div>
+
+          <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-5">
+            {visibleProducts.map((p, i) => (
+              <div
+                key={p?._id || i}
+                className="bg-white transition-opacity duration-300"
+              >
+                <ProductCard product={p} />
+              </div>
+            ))}
+          </div>
+
+          {canLoadMore && (
+            <div className="mt-8 flex justify-center">
+              <button
+                type="button"
+                onClick={handleLoadMore}
+                disabled={isLoadingMore}
+                className="inline-flex items-center justify-center bg-[#003366] px-6 py-3 text-sm font-semibold text-white transition hover:bg-[#004a80] disabled:opacity-70 disabled:cursor-not-allowed"
+              >
+                {isLoadingMore ? "Loading..." : "Load More"}
+              </button>
+            </div>
+          )}
+        </div>
+      </section>
+
       <div className="h-px bg-[#e4edf1] mx-auto max-w-[1700px]" />
     </>
   );

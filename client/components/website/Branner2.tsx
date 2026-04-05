@@ -8,8 +8,8 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL;
 
 type Banner = {
   key?: string;
-  image?: string;   // "/uploads/..."
-  ctaUrl?: string;  // "/website/..." or full URL
+  image?: string;
+  ctaUrl?: string;
   isActive?: boolean;
 };
 
@@ -24,7 +24,6 @@ const resolveImageUrl = (path?: string) => {
 export default function HeroSectionBanner2() {
   const [banner, setBanner] = useState<Banner | null>(null);
 
-  // ✅ Banner 2 key
   const endpoint = useMemo(
     () => `${API_BASE}/common/home-hero-secondary`,
     []
@@ -39,10 +38,12 @@ export default function HeroSectionBanner2() {
         const data = await res.json();
 
         const b: Banner | null = data?.banner || null;
-        if (b?.isActive === false) {
+
+        if (!b || b?.isActive === false || !b?.image) {
           setBanner(null);
           return;
         }
+
         setBanner(b);
       } catch {
         setBanner(null);
@@ -52,15 +53,18 @@ export default function HeroSectionBanner2() {
     run();
   }, [endpoint]);
 
-  // ✅ fallback (so home page never looks empty)
-  const bgSrc = banner?.image ? resolveImageUrl(banner.image) : "/hero.webp";
+  // ✅ image resolve
+  const bgSrc = banner?.image ? resolveImageUrl(banner.image) : null;
+
+  // ✅ agar image nahi hai → kuch render hi nahi
+  if (!bgSrc) return null;
+
   const href = banner?.ctaUrl?.trim() ? banner.ctaUrl.trim() : "/products";
 
   return (
-    <section className="relative w-full overflow-hidden Z-0">
-      {/* ✅ Whole banner clickable (no button) */}
+    <section className="relative w-full overflow-hidden z-0">
       <Link href={href} className="block w-full">
-        <div className="relative h-[150px] md:h-[470px] w-full z-0">
+        <div className="relative h-[150px] md:h-[470px] w-full">
           <img
             src={bgSrc}
             alt="Shopping Banner"
