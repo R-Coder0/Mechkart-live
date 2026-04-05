@@ -17,8 +17,8 @@ export default function HomePage() {
       {/* 2. Trust Strip */}
       <InfoStrip />
             {/* 6. Latest / Trending Products */}
-      <ProductSliders />
       <PriceCategorySection />
+      <ProductSliders />
       {/* 3. Deals / Offers */}
       <DealsSection />
 
