@@ -10,6 +10,7 @@ const PRODUCTS_ENDPOINT = `${API_BASE}/admin/products`;
 const ROW_SIZE = 6;
 const INITIAL_MAX = 18;
 const LOAD_MORE_STEP = 6;
+const LATEST_DAYS = 30;
 
 function getInitialVisibleCount(total: number) {
   const capped = Math.min(total, INITIAL_MAX);
@@ -26,6 +27,19 @@ export default function ProductSliders() {
     const status = String(p?.approvalStatus || "").toUpperCase();
     const activeOk = p?.isActive !== false;
     return status === "APPROVED" && activeOk;
+  };
+
+  const isWithinLast30Days = (p: any) => {
+    const createdAt = p?.createdAt || p?.created_at;
+    if (!createdAt) return false;
+
+    const createdTime = new Date(createdAt).getTime();
+    if (Number.isNaN(createdTime)) return false;
+
+    const now = Date.now();
+    const days30InMs = LATEST_DAYS * 24 * 60 * 60 * 1000;
+
+    return now - createdTime <= days30InMs;
   };
 
   useEffect(() => {
@@ -50,14 +64,15 @@ export default function ProductSliders() {
         const list: any[] = data?.data || data?.products || [];
 
         const approvedOnly = Array.isArray(list) ? list.filter(isApprovedForPublic) : [];
+        const latest30DaysOnly = approvedOnly.filter(isWithinLast30Days);
 
-        if (!approvedOnly.length) {
+        if (!latest30DaysOnly.length) {
           setLatestProducts([]);
           setVisibleCount(0);
           return;
         }
 
-        const sorted = [...approvedOnly].sort((a, b) => {
+        const sorted = [...latest30DaysOnly].sort((a, b) => {
           const A = new Date(a?.createdAt || a?.created_at || 0).getTime();
           const B = new Date(b?.createdAt || b?.created_at || 0).getTime();
           return B - A;
@@ -92,7 +107,7 @@ export default function ProductSliders() {
     setTimeout(() => {
       setVisibleCount((prev) => Math.min(prev + LOAD_MORE_STEP, latestProducts.length));
       setIsLoadingMore(false);
-    }, 400); // thoda lazy feeling ke liye delay
+    }, 400);
   };
 
   if (loading && latestProducts.length === 0) {
