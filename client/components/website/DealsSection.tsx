@@ -229,30 +229,59 @@ export default function DealsSection() {
         </div>
 
         {/* Right side - promo banner same as before */}
-        <div className="w-full lg:w-[360px] flex flex-col justify-between overflow-hidden bg-[#003366] text-white shadow-[0_2px_12px_rgba(0,0,0,0.1)]">
-          <div className="p-10 flex flex-col items-center text-center">
-            <h2 className="text-3xl font-semibold mb-3 leading-snug">
-              Shop your <span className="text-[#00B4D8]">fashion</span> Needs
-            </h2>
-            <p className="text-[#d3e7ff] mb-8 text-[15px]">
-              with Latest &amp; Trendy Choices
-            </p>
-            <Link
-              href="/products"
-              className="bg-[#00B4D8] hover:bg-[#009ec4] text-white px-7 py-3 rounded-lg font-medium transition"
-            >
-              Shop Now
-            </Link>
-          </div>
+<div className="w-full lg:w-[360px] lg:self-start grid grid-cols-1 gap-2 align-middle">
+  {/* Promo Card 1 */}
+  <div className="overflow-hidden bg-[#003366] text-white shadow-[0_2px_12px_rgba(0,0,0,0.1)]">
+    <div className="px-6 py-8 flex flex-col items-center text-center">
+      <h2 className="text-3xl font-semibold mb-3 leading-snug">
+        Shop your <span className="text-[#00B4D8]">fashion</span> Needs
+      </h2>
+      <p className="text-[#d3e7ff] mb-6 text-[15px]">
+        with Latest &amp; Trendy Choices
+      </p>
+      <Link
+        href="/products"
+        className="bg-[#00B4D8] hover:bg-[#009ec4] text-white px-7 py-3 rounded-lg font-medium transition"
+      >
+        Shop Now
+      </Link>
+    </div>
 
-          <div className="w-full">
-            <img
-              src="/bedsheet.jpg"
-              alt="Shop Fashion"
-              className="object-cover w-full h-[300px]"
-            />
-          </div>
-        </div>
+    <div className="w-full">
+      <img
+        src="/bedsheet.jpg"
+        alt="Shop Fashion"
+        className="object-cover w-full h-[220px]"
+      />
+    </div>
+  </div>
+
+  {/* Promo Card 2 */}
+  <div className="overflow-hidden bg-[#003366] text-white shadow-[0_2px_12px_rgba(0,0,0,0.1)]">
+    <div className="px-6 py-8 flex flex-col items-center text-center">
+      <h2 className="text-3xl font-semibold mb-3 leading-snug">
+        Refresh your <span className="text-[#00B4D8]">home</span> Style
+      </h2>
+      <p className="text-[#d3e7ff] mb-6 text-[15px]">
+        Discover fresh picks for every space
+      </p>
+      <Link
+        href="/products"
+        className="bg-[#00B4D8] hover:bg-[#009ec4] text-white px-7 py-3 rounded-lg font-medium transition"
+      >
+        Explore Now
+      </Link>
+    </div>
+
+    <div className="w-full">
+      <img
+        src="/bedsheet.jpg"
+        alt="Home Style"
+        className="object-cover w-full h-[220px]"
+      />
+    </div>
+  </div>
+</div>
       </div>
     </section>
   );
