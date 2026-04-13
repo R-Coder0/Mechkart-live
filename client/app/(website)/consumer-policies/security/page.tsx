@@ -125,7 +125,7 @@ export default function SecurityPolicyPage() {
             <p className="mt-1">
               Email: <span className="font-medium">contact@Mechkart.co.in</span>
               <br />
-              Phone: <span className="font-medium">+91 98795 11957</span>
+              Phone: <span className="font-medium">+91 62607 04024</span>
             </p>
           </div>
         </section>

@@ -20,9 +20,9 @@ export default function TopContactBar() {
           <Link
             href="tel:+919879511957"
             className="shrink-0 hover:text-white"
-            title="+91 98795 11957"
+            title="+91 62607 04024"
           >
-            +91 98795 11957
+            +91 62607 04024
           </Link>
         </div>
       </div>

@@ -181,7 +181,7 @@ export default function FAQPage() {
             <div className="mt-1">
               Phone:{" "}
               <a className="font-semibold text-blue-700 hover:underline" href="tel:+919879511957">
-                +91 98795 11957
+                +91 62607 04024
               </a>
             </div>
           </div>

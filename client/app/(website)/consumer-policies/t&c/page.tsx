@@ -160,7 +160,7 @@ export default function TermsAndServicesPage() {
           <p className="mt-2 font-medium text-gray-900">
             Email: contact@Mechkart.co.in
             <br />
-            Phone: +91 98795 11957
+            Phone: +91 62607 04024
           </p>
         </section>
       </div>

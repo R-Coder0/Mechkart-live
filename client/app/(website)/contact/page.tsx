@@ -3,7 +3,7 @@
 import Link from "next/link";
 
 export default function ContactPage() {
-  const phoneDisplay = "+91 98795 11957";
+  const phoneDisplay = "+91 62607 04024";
   const phoneDial = "+919879511957";
   const email = "contact@Mechkart.co.in";
   const instagram =
