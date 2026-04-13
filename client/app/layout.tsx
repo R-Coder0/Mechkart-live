@@ -4,7 +4,8 @@ import { ReactNode } from "react";
 
 export const metadata: Metadata = {
   title: "Mechkart India | Best E-commerce Platform",
-  description: "Mechkart India Best E-commerce Platform",
+  description:
+    "Shop top-quality products across categories at Mechkart India. Fast delivery, secure payments, and best deals guaranteed. Call +91 62607 04024 for support.",
 };
 
 export default function RootLayout({
