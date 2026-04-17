@@ -210,7 +210,7 @@ export default function AdminVendorProductsPage() {
                 >
                   <span className="inline-flex items-center gap-2">
                     <span>{s}</span>
-                    <CountPill count={counts?.vendorProducts?.[s]} />
+                    <CountPill count={s === "PENDING" ? counts?.vendorProducts?.PENDING : 0} />
                   </span>
                 </button>
               ))}

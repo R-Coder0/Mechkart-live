@@ -296,7 +296,7 @@ const doDelete = async (vendorId: string) => {
           >
             <span className="inline-flex items-center gap-2">
               <span>{t === "ALL" ? "All Vendors" : t}</span>
-              <CountPill count={counts?.vendors?.[t]} />
+              <CountPill count={t === "PENDING" ? counts?.vendors?.PENDING : 0} />
             </span>
           </button>
         ))}
