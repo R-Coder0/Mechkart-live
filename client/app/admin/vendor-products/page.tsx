@@ -291,7 +291,7 @@ export default function AdminVendorProductsPage() {
                     return (
                       <tr key={p._id} className="hover:bg-slate-50">
                         {/* Product */}
-                        <td className="px-4 py-3">
+                        <td className="px-4 py-3 align-top">
                           <div className="flex items-center gap-3">
                             <div className="w-12 h-12 rounded-lg border border-slate-200 bg-slate-50 overflow-hidden shrink-0">
                               {p.featureImage ? (
@@ -306,14 +306,14 @@ export default function AdminVendorProductsPage() {
                                 </div>
                               )}
                             </div>
-                            <div className="min-w-0">
-                              <div className="font-semibold text-slate-900 truncate">{p.title}</div>
-                              <div className="text-xs text-slate-600 truncate">
+                            <div className="min-w-0 max-w-[420px]">
+                              <div className="font-semibold text-slate-900 whitespace-normal break-words leading-5">{p.title}</div>
+                              <div className="mt-1 text-xs text-slate-600 whitespace-normal break-all leading-4">
                                 {p.productId ? `${p.productId} • ` : ""}
                                 {p.slug}
                               </div>
                               {(typeof p.salePrice === "number" || typeof p.mrp === "number") && (
-                                <div className="text-xs text-slate-700">
+                                <div className="mt-1 text-xs text-slate-700">
                                   ₹{Number(p.salePrice ?? 0)}
                                   <span className="text-slate-400 line-through ml-2">₹{Number(p.mrp ?? 0)}</span>
                                 </div>
