@@ -1,5 +1,5 @@
 import AboutInfoSection from "@/components/website/AboutInfoSection";
-import BrandCarousel from "@/components/website/BrandCraousel";
+// import BrandCarousel from "@/components/website/BrandCraousel";
 import HeroSectionBanner2 from "@/components/website/Branner2";
 import DealsSection from "@/components/website/DealsSection";
 import HeroSection from "@/components/website/HeroSection";
@@ -13,10 +13,7 @@ export default function HomePage() {
     <main>
       {/* 1. Main Hero */}
       <HeroSection />
-
-      {/* 2. Trust Strip */}
       <InfoStrip />
-            {/* 6. Latest / Trending Products */}
       <PriceCategorySection />
       <ProductSliders />
       {/* 3. Deals / Offers */}
