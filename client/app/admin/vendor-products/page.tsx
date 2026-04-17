@@ -4,8 +4,23 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import {
+  adminFetchNotificationCounts,
+  type AdminNotificationCounts,
+} from "@/lib/adminNotificationsApi";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL;
+
+function CountPill({ count }: { count?: number }) {
+  const safeCount = Number(count || 0);
+  if (safeCount <= 0) return null;
+
+  return (
+    <span className="inline-flex min-w-[20px] items-center justify-center rounded-full bg-red-500 px-1.5 py-0.5 text-[11px] font-semibold leading-none text-white">
+      {safeCount > 99 ? "99+" : safeCount}
+    </span>
+  );
+}
 
 const resolveImageUrl = (path?: string) => {
   if (!path) return "";
@@ -89,6 +104,7 @@ export default function AdminVendorProductsPage() {
   const [loading, setLoading] = useState(false);
   const [items, setItems] = useState<ProductRow[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [counts, setCounts] = useState<AdminNotificationCounts | null>(null);
 
   // filters
   const [status, setStatus] = useState<"ALL" | "PENDING" | "APPROVED" | "REJECTED">("ALL");
@@ -138,8 +154,18 @@ export default function AdminVendorProductsPage() {
     }
   };
 
+  const fetchCounts = async () => {
+    try {
+      const data = await adminFetchNotificationCounts();
+      setCounts(data);
+    } catch {
+      setCounts(null);
+    }
+  };
+
   useEffect(() => {
     fetchList();
+    fetchCounts();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [queryString]);
 
@@ -156,7 +182,10 @@ export default function AdminVendorProductsPage() {
           </div>
 
           <button
-            onClick={fetchList}
+            onClick={() => {
+              fetchList();
+              fetchCounts();
+            }}
             className="border border-slate-300 bg-white hover:bg-slate-50 text-slate-800 px-4 py-2 rounded-lg text-sm font-medium"
           >
             Refresh
@@ -179,7 +208,10 @@ export default function AdminVendorProductsPage() {
                       : "bg-white text-slate-800 border-slate-300 hover:bg-slate-50",
                   ].join(" ")}
                 >
-                  {s}
+                  <span className="inline-flex items-center gap-2">
+                    <span>{s}</span>
+                    <CountPill count={counts?.vendorProducts?.[s]} />
+                  </span>
                 </button>
               ))}
             </div>

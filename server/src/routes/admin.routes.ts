@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { adminLogin } from "../controllers/admin/auth.controller.js";
 import { verifyAdmin } from "../middleware/auth.middleware.js";
-import { getAdminStats } from "../controllers/admin/stats.controller.js";
+import { getAdminNotificationCounts, getAdminStats } from "../controllers/admin/stats.controller.js";
 
 import {
   createCategory,
@@ -77,6 +77,7 @@ router.get("/profile", verifyAdmin, (req: any, res) => {
 });
 
 router.get("/stats", verifyAdmin, getAdminStats);
+router.get("/notifications/counts", verifyAdmin, getAdminNotificationCounts);
 
 // ---------- CATEGORY ROUTES ----------
 router.post("/categories", verifyAdmin, uploadCategoryImage, createCategory);

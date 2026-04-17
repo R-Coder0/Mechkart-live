@@ -69,3 +69,101 @@ export const getAdminStats = async (req, res) => {
     res.status(500).json({ message: "Stats failed", error: err.message });
   }
 };
+
+export const getAdminNotificationCounts = async (_req, res) => {
+  try {
+    const [
+      pendingVendorCount,
+      approvedVendorCount,
+      rejectedVendorCount,
+      disabledVendorCount,
+      allVendorCount,
+
+      pendingVendorProductCount,
+      approvedVendorProductCount,
+      rejectedVendorProductCount,
+      allVendorProductCount,
+
+      newOrderCount,
+      confirmedOrderCount,
+      shippedOrderCount,
+      allOrderCount,
+
+      requestedReturnCount,
+    ] = await Promise.all([
+      Vendor.countDocuments({ status: "PENDING" }),
+      Vendor.countDocuments({ status: "APPROVED" }),
+      Vendor.countDocuments({ status: "REJECTED" }),
+      Vendor.countDocuments({ status: "DISABLED" }),
+      Vendor.countDocuments(),
+
+      Product.countDocuments({ ownerType: "VENDOR", approvalStatus: "PENDING" }),
+      Product.countDocuments({ ownerType: "VENDOR", approvalStatus: "APPROVED" }),
+      Product.countDocuments({ ownerType: "VENDOR", approvalStatus: "REJECTED" }),
+      Product.countDocuments({ ownerType: "VENDOR" }),
+
+      Order.countDocuments({ status: "PLACED" }),
+      Order.countDocuments({ status: "CONFIRMED" }),
+      Order.countDocuments({ status: "SHIPPED" }),
+      Order.countDocuments(),
+
+      Order.aggregate([
+        { $unwind: "$subOrders" },
+        {
+          $project: {
+            returns: {
+              $ifNull: ["$subOrders.returns", []],
+            },
+          },
+        },
+        { $unwind: "$returns" },
+        { $match: { "returns.status": "REQUESTED" } },
+        { $count: "total" },
+      ]),
+    ]);
+
+    const returnCount = Array.isArray(requestedReturnCount)
+      ? Number(requestedReturnCount[0]?.total || 0)
+      : 0;
+
+    return res.json({
+      message: "Admin notification counts fetched successfully",
+      data: {
+        sidebar: {
+          vendorsPending: pendingVendorCount,
+          vendorProductsPending: pendingVendorProductCount,
+          newOrders: newOrderCount,
+          returnsRequested: returnCount,
+        },
+        vendors: {
+          ALL: allVendorCount,
+          PENDING: pendingVendorCount,
+          APPROVED: approvedVendorCount,
+          REJECTED: rejectedVendorCount,
+          DISABLED: disabledVendorCount,
+        },
+        vendorProducts: {
+          ALL: allVendorProductCount,
+          PENDING: pendingVendorProductCount,
+          APPROVED: approvedVendorProductCount,
+          REJECTED: rejectedVendorProductCount,
+        },
+        orders: {
+          ALL: allOrderCount,
+          PLACED: newOrderCount,
+          CONFIRMED: confirmedOrderCount,
+          SHIPPED: shippedOrderCount,
+        },
+        returns: {
+          REQUESTED: returnCount,
+        },
+      },
+    });
+  } catch (err) {
+    console.error("Admin notification counts error:", err);
+    return res.status(500).json({
+      message: "Failed to fetch admin notification counts",
+      error: err?.message || "Unknown error",
+    });
+  }
+};

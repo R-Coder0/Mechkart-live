@@ -12,8 +12,23 @@ import {
   adminEnableVendor,
   type VendorStatus,
 } from "@/lib/adminVendorsApi";
+import {
+  adminFetchNotificationCounts,
+  type AdminNotificationCounts,
+} from "@/lib/adminNotificationsApi";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "";
+
+function CountPill({ count }: { count?: number }) {
+  const safeCount = Number(count || 0);
+  if (safeCount <= 0) return null;
+
+  return (
+    <span className="inline-flex min-w-[20px] items-center justify-center rounded-full bg-red-500 px-1.5 py-0.5 text-[11px] font-semibold leading-none text-white">
+      {safeCount > 99 ? "99+" : safeCount}
+    </span>
+  );
+}
 
 function resolveFileUrl(p?: string) {
   if (!p) return "";
@@ -65,6 +80,7 @@ function Field({ label, value }: { label: string; value: any }) {
 }
 
 export default function AdminVendorsPage() {
+  const [counts, setCounts] = useState<AdminNotificationCounts | null>(null);
   const [tab, setTab] = useState<VendorStatus | "ALL">("PENDING");
   const [q, setQ] = useState("");
   const [page, setPage] = useState(1);
@@ -121,14 +137,25 @@ export default function AdminVendorsPage() {
     }
   }
 
+  async function loadCounts() {
+    try {
+      const data = await adminFetchNotificationCounts();
+      setCounts(data);
+    } catch {
+      setCounts(null);
+    }
+  }
+
   useEffect(() => {
     load(page, q, tab);
+    loadCounts();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, page]);
 
   const onSearch = async () => {
     setPage(1);
     await load(1, q, tab);
+    await loadCounts();
   };
 
   const doApprove = async (vendorId: string) => {
@@ -136,6 +163,7 @@ export default function AdminVendorsPage() {
     try {
       await adminApproveVendor(vendorId);
       await load(page, q, tab);
+      await loadCounts();
       if (viewOpen && viewVendor?._id === vendorId) await openView(vendorId);
       alert("Vendor approved");
     } catch (e: any) {
@@ -148,6 +176,7 @@ const doDisable = async (vendorId: string) => {
   try {
     await adminDisableVendor(vendorId, reason);
     await load(page, q, tab);
+    await loadCounts();
     if (viewOpen && viewVendor?._id === vendorId) await openView(vendorId);
     alert("Vendor disabled");
   } catch (e: any) {
@@ -160,6 +189,7 @@ const doEnable = async (vendorId: string) => {
   try {
     await adminEnableVendor(vendorId);
     await load(page, q, tab);
+    await loadCounts();
     if (viewOpen && viewVendor?._id === vendorId) await openView(vendorId);
     alert("Vendor enabled");
   } catch (e: any) {
@@ -173,6 +203,7 @@ const doDelete = async (vendorId: string) => {
   try {
     await adminDeleteVendor(vendorId);
     await load(page, q, tab);
+    await loadCounts();
     if (viewOpen && viewVendor?._id === vendorId) {
       setViewOpen(false);
       setViewVendor(null);
@@ -194,6 +225,7 @@ const doDelete = async (vendorId: string) => {
       await adminRejectVendor(rejectVendorId, rejectReason.trim());
       setRejectOpen(false);
       await load(page, q, tab);
+      await loadCounts();
       alert("Vendor rejected");
     } catch (e: any) {
       alert(e.message || "Reject failed");
@@ -262,7 +294,10 @@ const doDelete = async (vendorId: string) => {
               tab === t ? "bg-black text-white border-black" : "bg-white text-black border-gray-300"
             }`}
           >
-            {t === "ALL" ? "All Vendors" : t}
+            <span className="inline-flex items-center gap-2">
+              <span>{t === "ALL" ? "All Vendors" : t}</span>
+              <CountPill count={counts?.vendors?.[t]} />
+            </span>
           </button>
         ))}
       </div>
