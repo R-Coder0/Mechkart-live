@@ -7,6 +7,7 @@ import { Product } from "../../models/Product.model";
 import {
   shiprocketCreateOrder,
   shiprocketGenerateAwb,
+  shiprocketGenerateLabel,
   shiprocketCheckServiceability,
   shiprocketFormatOrderDate,
   shiprocketCreatePickupLocation,
@@ -40,6 +41,14 @@ const safeKey = (v: any) =>
 const shortId = (v: any, len = 6) => {
   const s = String(v ?? "");
   return s ? s.slice(-len) : "";
+};
+
+const firstNonEmptyString = (...values: any[]) => {
+  for (const value of values) {
+    const text = toStr(value);
+    if (text) return text;
+  }
+  return "";
 };
 
 // ---- pickup alias helpers ----
@@ -353,13 +362,32 @@ export const adminCreateShiprocketShipment = async (req: Request, res: Response)
       // generate awb
       let awbResp: any = null;
       let awb: string | null = null;
+      let labelResp: any = null;
+      let labelUrl: string | null = null;
 
       if (courier_company_id) {
         awbResp = await shiprocketGenerateAwb({
           shipment_id: Number(shipment_id),
           courier_id: Number(courier_company_id),
         });
-        awb = awbResp?.awb_code || awbResp?.awb || null;
+        awb =
+          firstNonEmptyString(
+            awbResp?.awb_code,
+            awbResp?.awb,
+            awbResp?.response?.data?.awb_code,
+            awbResp?.response?.data?.awb,
+            awbResp?.data?.awb_code,
+            awbResp?.data?.awb,
+            awbResp?.response?.awb_code,
+            awbResp?.response?.awb
+          ) || null;
+
+        if (awb) {
+          labelResp = await shiprocketGenerateLabel({
+            shipment_id: [Number(shipment_id)],
+          });
+          labelUrl = toStr(labelResp?.label_url || labelResp?.data?.label_url) || null;
+        }
       }
 
       const updatedShipment = {
@@ -377,12 +405,12 @@ export const adminCreateShiprocketShipment = async (req: Request, res: Response)
           awb: awb ? String(awb) : null,
           courierName: null,
           courierCompanyId: courier_company_id ? Number(courier_company_id) : null,
-          labelUrl: null,
+          labelUrl,
           manifestUrl: null,
           invoiceUrl: null,
           pickupScheduledAt: null,
           tracking: null,
-          raw: { create: srCreateResp, awb: awbResp, payload: srOrderPayload },
+          raw: { create: srCreateResp, awb: awbResp, label: labelResp, payload: srOrderPayload },
         },
       };
 
@@ -404,6 +432,7 @@ export const adminCreateShiprocketShipment = async (req: Request, res: Response)
         pickupPincode,
         shipmentId: Number(shipment_id),
         awb: awb || null,
+        labelUrl,
         dim: finalDim,
       });
     }

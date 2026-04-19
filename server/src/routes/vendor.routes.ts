@@ -18,7 +18,12 @@ import {
   vendorGetMyProductById,
   vendorUpdateMyProduct,
 } from "../controllers/vendor/vendor.product.controller";
-import { vendorFetchOrders, vendorGetOrderById, vendorGetOrderTracking } from "../controllers/vendor/vendor.order.controller";
+import {
+  vendorFetchOrders,
+  vendorGenerateOrderLabel,
+  vendorGetOrderById,
+  vendorGetOrderTracking,
+} from "../controllers/vendor/vendor.order.controller";
 import { vendorGetMyWallet } from "../controllers/vendor/vendor.wallet.controller";
 import { approveReturnByVendor, rejectReturnByVendor } from "../controllers/vendor/vendor.return.controller";
 const router = Router();
@@ -81,5 +86,6 @@ router.put("/products/:id", vendorAuth, uploadProductImages, vendorUpdateMyProdu
 router.get("/orders", vendorAuth, vendorFetchOrders);
 router.get("/orders/:orderId", vendorAuth, vendorGetOrderById);
 router.get("/orders/:orderId/tracking", vendorAuth, vendorGetOrderTracking);
+router.post("/orders/:orderId/shipments/:shipmentId/label", vendorAuth, vendorGenerateOrderLabel);
 router.get("/wallet", vendorAuth, vendorGetMyWallet);
 export default router;

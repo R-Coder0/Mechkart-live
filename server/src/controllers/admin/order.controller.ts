@@ -5,6 +5,13 @@ import { Order } from "../../models/Order.model";
 import { applyWalletEffectsForOrder } from "../../services/vendorWallet.service";
 
 const toStr = (v: any) => String(v ?? "").trim();
+const firstNonEmptyString = (...values: any[]) => {
+  for (const value of values) {
+    const text = toStr(value);
+    if (text) return text;
+  }
+  return "";
+};
 
 const allowedStatuses = ["PLACED", "CONFIRMED", "SHIPPED", "DELIVERED", "CANCELLED"] as const;
 const allowedSubOrderStatuses = ["PLACED", "CONFIRMED", "SHIPPED", "DELIVERED", "CANCELLED"] as const;
@@ -20,6 +27,54 @@ function isValidObjectId(id: any) {
 
 function upper(v: any) {
   return String(v || "").toUpperCase();
+}
+
+function hydrateShiprocketShipment(shipment: any) {
+  if (!shipment?.shiprocket) return shipment;
+
+  const sr = shipment.shiprocket || {};
+  const rawAwb = sr?.raw?.awb || {};
+  const awb = firstNonEmptyString(
+    sr?.awb,
+    rawAwb?.awb_code,
+    rawAwb?.awb,
+    rawAwb?.response?.data?.awb_code,
+    rawAwb?.response?.data?.awb,
+    rawAwb?.data?.awb_code,
+    rawAwb?.data?.awb,
+    rawAwb?.response?.awb_code,
+    rawAwb?.response?.awb
+  );
+
+  const labelUrl = firstNonEmptyString(
+    sr?.labelUrl,
+    sr?.raw?.label?.label_url,
+    sr?.raw?.label?.data?.label_url
+  );
+
+  return {
+    ...shipment,
+    shiprocket: {
+      ...sr,
+      awb: awb || null,
+      labelUrl: labelUrl || null,
+    },
+  };
+}
+
+function hydrateOrderShipmentData(order: any) {
+  return {
+    ...order,
+    subOrders: Array.isArray(order?.subOrders)
+      ? order.subOrders.map((so: any) => ({
+          ...so,
+          shipment: so?.shipment ? hydrateShiprocketShipment(so.shipment) : so?.shipment ?? null,
+        }))
+      : [],
+    shipments: Array.isArray(order?.shipments)
+      ? order.shipments.map((shipment: any) => hydrateShiprocketShipment(shipment))
+      : [],
+  };
 }
 
 // ----------------------------------------------------
@@ -96,7 +151,7 @@ export const adminGetOrders = async (req: Request, res: Response) => {
 
     return res.json({
       message: "Admin orders fetched",
-      data: { items, page, limit, total, totalPages: Math.ceil(total / limit) },
+      data: { items: items.map((item: any) => hydrateOrderShipmentData(item)), page, limit, total, totalPages: Math.ceil(total / limit) },
     });
   } catch (err: any) {
     console.error("adminGetOrders error:", err);

@@ -5,6 +5,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { CheckCheck, Eye, PackagePlus, Truck } from "lucide-react";
 import {
   adminFetchOrders,
   adminUpdateOrderStatus,
@@ -200,7 +201,7 @@ function IconButton({
   tone?: "default" | "primary" | "danger";
 }) {
   const base =
-    "inline-flex h-9 items-center justify-center gap-2 rounded-xl border px-3 text-[12px] font-semibold disabled:opacity-60";
+    "inline-flex h-9 w-9 items-center justify-center rounded-xl border text-[12px] font-semibold disabled:opacity-60";
   const styles =
     tone === "primary"
       ? "bg-gray-900 text-white hover:bg-black border-gray-900"
@@ -208,9 +209,23 @@ function IconButton({
         ? "bg-red-600 text-white hover:bg-red-700 border-red-600"
         : "bg-white text-gray-800 hover:bg-gray-50";
   return (
-    <button type="button" title={title} onClick={onClick} disabled={disabled} className={`${base} ${styles}`}>
-      {children}
-    </button>
+    <div className="group relative inline-flex">
+      <button
+        type="button"
+        title={title}
+        aria-label={title}
+        onClick={onClick}
+        disabled={disabled}
+        className={`${base} ${styles}`}
+      >
+        {children}
+      </button>
+      {title ? (
+        <span className="pointer-events-none absolute -top-10 left-1/2 z-20 hidden -translate-x-1/2 whitespace-nowrap rounded-lg bg-gray-900 px-2.5 py-1 text-[11px] font-semibold text-white shadow-lg group-hover:block">
+          {title}
+        </span>
+      ) : null}
+    </div>
   );
 }
 
@@ -789,11 +804,13 @@ export default function AdminOrdersPage() {
                         {isCodPlaced ? (
                           <button
                             type="button"
+                            title={isBusy ? "Confirming COD" : "Confirm COD"}
+                            aria-label={isBusy ? "Confirming COD" : "Confirm COD"}
                             disabled={isBusy}
                             onClick={() => onConfirmCod(orderId)}
-                            className="mt-3 inline-flex h-9 items-center justify-center rounded-xl bg-emerald-600 px-3 text-[12px] font-semibold text-white hover:bg-emerald-700 disabled:opacity-60"
+                            className="mt-3 inline-flex h-9 w-9 items-center justify-center rounded-xl bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-60"
                           >
-                            {isBusy ? "Confirming…" : "Confirm COD"}
+                            <CheckCheck className="h-4 w-4" />
                           </button>
                         ) : null}
                       </td>
@@ -845,18 +862,23 @@ export default function AdminOrdersPage() {
                       {/* Actions */}
                       <td className="px-5 py-3">
                         <div className="flex justify-end gap-2">
-                          <IconButton onClick={() => openOrder(o, "items")}>View</IconButton>
+                          <IconButton onClick={() => openOrder(o, "items")} title="View order">
+                            <Eye className="h-4 w-4" />
+                          </IconButton>
 
                           {!shipmentExists ? (
                             <IconButton
                               disabled={!canCreateShipment || isBusy}
                               onClick={() => onCreateShipment(orderId)}
                               tone="primary"
+                              title={isBusy ? "Creating shipment" : "Create shipment"}
                             >
-                              {isBusy ? "…" : "Create SR"}
+                              <PackagePlus className="h-4 w-4" />
                             </IconButton>
                           ) : (
-                            <IconButton onClick={() => openOrder(o, "shipments")}>Shipments</IconButton>
+                            <IconButton onClick={() => openOrder(o, "shipments")} title="Shipment details">
+                              <Truck className="h-4 w-4" />
+                            </IconButton>
                           )}
                         </div>
                       </td>
@@ -1106,20 +1128,38 @@ export default function AdminOrdersPage() {
 
                     return (
                       <div className="flex flex-wrap gap-2">
-                        <IconButton onClick={() => setActiveTab("items")}>Items</IconButton>
-                        <IconButton onClick={() => setActiveTab("shipments")}>Shipments</IconButton>
-                        <IconButton onClick={() => setActiveTab("payment")}>Payment</IconButton>
-                        <IconButton onClick={() => setActiveTab("customer")}>Customer</IconButton>
+                        <IconButton onClick={() => setActiveTab("items")} title="Items tab">
+                          <Eye className="h-4 w-4" />
+                        </IconButton>
+                        <IconButton onClick={() => setActiveTab("shipments")} title="Shipments tab">
+                          <Truck className="h-4 w-4" />
+                        </IconButton>
+                        <IconButton onClick={() => setActiveTab("payment")} title="Payment tab">
+                          <CheckCheck className="h-4 w-4" />
+                        </IconButton>
+                        <IconButton onClick={() => setActiveTab("customer")} title="Customer tab">
+                          <Eye className="h-4 w-4" />
+                        </IconButton>
 
                         {isCodPlaced ? (
-                          <IconButton disabled={isBusy} onClick={() => onConfirmCod(orderId)} tone="primary">
-                            {isBusy ? "…" : "Confirm COD"}
+                          <IconButton
+                            disabled={isBusy}
+                            onClick={() => onConfirmCod(orderId)}
+                            tone="primary"
+                            title={isBusy ? "Confirming COD" : "Confirm COD"}
+                          >
+                            <CheckCheck className="h-4 w-4" />
                           </IconButton>
                         ) : null}
 
                         {!shipmentExists ? (
-                          <IconButton disabled={!canCreateShipment || isBusy} onClick={() => onCreateShipment(orderId)} tone="primary">
-                            {isBusy ? "…" : "Create Shipment"}
+                          <IconButton
+                            disabled={!canCreateShipment || isBusy}
+                            onClick={() => onCreateShipment(orderId)}
+                            tone="primary"
+                            title={isBusy ? "Creating shipment" : "Create shipment"}
+                          >
+                            <PackagePlus className="h-4 w-4" />
                           </IconButton>
                         ) : null}
                       </div>

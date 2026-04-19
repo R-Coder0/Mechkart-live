@@ -2,6 +2,7 @@
 import { Request, Response } from "express";
 import { Types } from "mongoose";
 import { Order } from "../../models/Order.model";
+import { shiprocketGenerateLabel } from "../../services/shiprocket.service";
 
 // helpers
 const toStr = (v: any) => String(v ?? "").trim();
@@ -9,6 +10,83 @@ const toNum = (v: any, fb = 0) => {
   const n = Number(v);
   return Number.isFinite(n) ? n : fb;
 };
+const firstNonEmptyString = (...values: any[]) => {
+  for (const value of values) {
+    const text = toStr(value);
+    if (text) return text;
+  }
+  return "";
+};
+
+function hydrateShiprocketShipment(shipment: any) {
+  if (!shipment?.shiprocket) return shipment;
+
+  const sr = shipment.shiprocket || {};
+  const rawAwb = sr?.raw?.awb || {};
+  const awb = firstNonEmptyString(
+    sr?.awb,
+    rawAwb?.awb_code,
+    rawAwb?.awb,
+    rawAwb?.response?.data?.awb_code,
+    rawAwb?.response?.data?.awb,
+    rawAwb?.data?.awb_code,
+    rawAwb?.data?.awb,
+    rawAwb?.response?.awb_code,
+    rawAwb?.response?.awb
+  );
+
+  const labelUrl = firstNonEmptyString(
+    sr?.labelUrl,
+    sr?.raw?.label?.label_url,
+    sr?.raw?.label?.data?.label_url
+  );
+
+  return {
+    ...shipment,
+    shiprocket: {
+      ...sr,
+      awb: awb || null,
+      labelUrl: labelUrl || null,
+    },
+  };
+}
+
+function hydrateOrderShipmentData(order: any) {
+  const subOrders = Array.isArray(order?.subOrders)
+    ? order.subOrders.map((so: any) => ({
+        ...so,
+        shipment: so?.shipment ? hydrateShiprocketShipment(so.shipment) : so?.shipment ?? null,
+      }))
+    : [];
+
+  const shipments = Array.isArray(order?.shipments)
+    ? order.shipments.map((shipment: any) => hydrateShiprocketShipment(shipment))
+    : [];
+
+  return {
+    ...order,
+    subOrders,
+    shipments,
+  };
+}
+
+function sanitizeCustomerContactForVendor(order: any) {
+  return {
+    ...order,
+    contact: order?.contact
+      ? {
+          ...order.contact,
+          phone: null,
+        }
+      : order?.contact ?? null,
+    address: order?.address
+      ? {
+          ...order.address,
+          phone: null,
+        }
+      : order?.address ?? null,
+  };
+}
 
 const getVendorId = (req: Request) =>
   (req as any)?.vendor?._id || (req as any)?.vendorId;
@@ -64,8 +142,9 @@ function buildSearchMatch(qRaw: string) {
 ========================= */
 
 function applyVendorPriceViewToOrder(order: any, vendorObjectId: Types.ObjectId) {
+  const hydratedOrder = sanitizeCustomerContactForVendor(hydrateOrderShipmentData(order));
 
-  const subOrdersAll = Array.isArray(order?.subOrders) ? order.subOrders : [];
+  const subOrdersAll = Array.isArray(hydratedOrder?.subOrders) ? hydratedOrder.subOrders : [];
 
   const vendorSubs = subOrdersAll.filter(
     (so: any) => String(so?.vendorId || "") === String(vendorObjectId)
@@ -135,8 +214,8 @@ function applyVendorPriceViewToOrder(order: any, vendorObjectId: Types.ObjectId)
      FIXED SHIPMENT FILTER
   ========================= */
 
-  const shipmentsAll = Array.isArray(order?.shipments)
-    ? order.shipments
+  const shipmentsAll = Array.isArray(hydratedOrder?.shipments)
+    ? hydratedOrder.shipments
     : [];
 
   const vendorSubIds = patchedSubs.map((x: any) =>
@@ -160,7 +239,7 @@ function applyVendorPriceViewToOrder(order: any, vendorObjectId: Types.ObjectId)
   });
 
   return {
-    ...order,
+    ...hydratedOrder,
     subOrders: patchedSubs,
     shipments: vendorShipments,
   };
@@ -401,7 +480,7 @@ export const vendorGetOrderTracking = async (req: Request, res: Response) => {
         .json({ message: "Invalid order id" });
 
 
-    const order = await Order.findById(orderId).lean();
+    const order = hydrateOrderShipmentData(await Order.findById(orderId).lean());
 
     if (!order)
       return res.status(404).json({ message: "Order not found" });
@@ -471,5 +550,119 @@ export const vendorGetOrderTracking = async (req: Request, res: Response) => {
       .status(500)
       .json({ message: e?.message || "Server error" });
 
+  }
+};
+
+/* =========================
+   GENERATE / GET LABEL
+========================= */
+
+export const vendorGenerateOrderLabel = async (req: Request, res: Response) => {
+  try {
+    const vendorId = getVendorId(req);
+
+    if (!vendorId) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+
+    const vendorObjectId = new Types.ObjectId(String(vendorId));
+    const orderId = toStr(req.params.orderId);
+    const shipmentIdParam = toStr(req.params.shipmentId);
+
+    if (!Types.ObjectId.isValid(orderId)) {
+      return res.status(400).json({ message: "Invalid order id" });
+    }
+
+    const order: any = await Order.findById(orderId).lean();
+    if (!order) {
+      return res.status(404).json({ message: "Order not found" });
+    }
+
+    const subOrdersAll = Array.isArray(order?.subOrders) ? order.subOrders : [];
+    const vendorSubs = subOrdersAll.filter(
+      (so: any) => String(so?.vendorId || "") === String(vendorObjectId)
+    );
+
+    if (!vendorSubs.length) {
+      return res.status(403).json({ message: "Forbidden" });
+    }
+
+    const vendorSubIds = new Set(vendorSubs.map((so: any) => String(so?._id || "")));
+    const shipmentsAll = Array.isArray(order?.shipments) ? order.shipments : [];
+
+    let targetShipment =
+      vendorSubs
+        .map((so: any) => so?.shipment)
+        .find((sh: any) => {
+          const sid = Number(sh?.shiprocket?.shipmentId ?? 0);
+          return sid > 0 && String(sid) === shipmentIdParam;
+        }) || null;
+
+    if (!targetShipment) {
+      targetShipment =
+        shipmentsAll.find((sh: any) => {
+          const sid = Number(sh?.shiprocket?.shipmentId ?? 0);
+          const belongsToVendor =
+            String(sh?.vendorId || "") === String(vendorObjectId) ||
+            vendorSubIds.has(String(sh?.subOrderId || ""));
+
+          return belongsToVendor && sid > 0 && String(sid) === shipmentIdParam;
+        }) || null;
+    }
+
+    if (!targetShipment) {
+      return res.status(404).json({ message: "Shipment not found for this vendor" });
+    }
+
+    const shipmentId = Number(targetShipment?.shiprocket?.shipmentId ?? 0);
+    const awb = toStr(targetShipment?.shiprocket?.awb);
+    const existingLabelUrl = toStr(targetShipment?.shiprocket?.labelUrl);
+
+    if (existingLabelUrl) {
+      return res.json({
+        message: "Label already available",
+        data: {
+          shipmentId,
+          awb: awb || null,
+          labelUrl: existingLabelUrl,
+        },
+      });
+    }
+
+    if (!shipmentId) {
+      return res.status(400).json({ message: "Shipment id missing" });
+    }
+
+    const labelResp = await shiprocketGenerateLabel({ shipment_id: [shipmentId] });
+    const labelUrl = toStr(labelResp?.label_url || labelResp?.data?.label_url);
+
+    if (!labelUrl) {
+      return res.status(502).json({ message: "Shiprocket did not return a label URL" });
+    }
+
+    await Order.updateOne(
+      { _id: new Types.ObjectId(orderId), "subOrders.shipment.shiprocket.shipmentId": shipmentId },
+      {
+        $set: {
+          "subOrders.$.shipment.shiprocket.labelUrl": labelUrl,
+          "subOrders.$.shipment.updatedAt": new Date(),
+        },
+      }
+    );
+
+    return res.json({
+      message: "Label generated",
+      data: {
+        shipmentId,
+        awb: awb || null,
+        labelUrl,
+      },
+    });
+  } catch (e: any) {
+    console.error("vendorGenerateOrderLabel error:", e);
+
+    return res
+      .status(e?.status || 500)
+      .json({ message: e?.message || "Label generation failed", error: e?.payload || null });
   }
 };

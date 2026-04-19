@@ -5,6 +5,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { Eye, Printer, ReceiptText, Truck } from "lucide-react";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL;
 
@@ -152,6 +153,12 @@ function shipmentCreatedForVendor(order: any) {
   return Boolean(pickVendorShipment(order));
 }
 
+function getShipmentLabelUrl(shipment: any) {
+  const raw = String(shipment?.shiprocket?.labelUrl || "").trim();
+  if (!raw) return "";
+  return resolveImageUrl(raw);
+}
+
 /* =========================
  * ✅ RETURN META (DISPLAY ONLY)
  * ========================= */
@@ -243,6 +250,26 @@ async function vendorFetchOrderById(orderId: string) {
   return json?.data ?? json;
 }
 
+async function vendorGenerateShipmentLabel(orderId: string, shipmentId: number | string) {
+  const token = getToken();
+  if (!token) throw new Error("Vendor token missing. Please login again.");
+
+  const res = await fetch(`${API_BASE}/vendors/orders/${orderId}/shipments/${shipmentId}/label`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    cache: "no-store",
+  });
+
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(json?.message || "Failed to generate label");
+  return json?.data ?? json;
+}
+
+function openPrintWindow(url: string) {
+  if (typeof window === "undefined") return;
+  window.open(url, "_blank", "noopener,noreferrer");
+}
+
 /* ---------------- UI components ---------------- */
 
 function Badge({
@@ -280,7 +307,7 @@ function IconButton({
   title?: string;
   tone?: "default" | "primary" | "danger";
 }) {
-  const base = "inline-flex h-9 items-center justify-center gap-2 rounded-xl border px-3 text-[12px] font-semibold disabled:opacity-60";
+  const base = "inline-flex h-9 w-9 items-center justify-center rounded-xl border text-[12px] font-semibold disabled:opacity-60";
   const styles =
     tone === "primary"
       ? "bg-gray-900 text-white hover:bg-black border-gray-900"
@@ -288,9 +315,23 @@ function IconButton({
         ? "bg-red-600 text-white hover:bg-red-700 border-red-600"
         : "bg-white text-gray-800 hover:bg-gray-50";
   return (
-    <button type="button" title={title} onClick={onClick} disabled={disabled} className={`${base} ${styles}`}>
-      {children}
-    </button>
+    <div className="group relative inline-flex">
+      <button
+        type="button"
+        title={title}
+        aria-label={title}
+        onClick={onClick}
+        disabled={disabled}
+        className={`${base} ${styles}`}
+      >
+        {children}
+      </button>
+      {title ? (
+        <span className="pointer-events-none absolute -top-10 left-1/2 z-20 hidden -translate-x-1/2 whitespace-nowrap rounded-lg bg-gray-900 px-2.5 py-1 text-[11px] font-semibold text-white shadow-lg group-hover:block">
+          {title}
+        </span>
+      ) : null}
+    </div>
   );
 }
 
@@ -392,6 +433,7 @@ type DrawerState = {
 export default function VendorOrdersPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [labelBusyKey, setLabelBusyKey] = useState<string | null>(null);
 
   const [q, setQ] = useState("");
   const [status, setStatus] = useState("");
@@ -486,6 +528,55 @@ export default function VendorOrdersPage() {
 
   const closeOrder = () => setDrawer({ open: false, order: null, sub: null, tab: "items" });
 
+  const syncOrderIntoList = (nextOrder: any) => {
+    const nextId = String(nextOrder?._id || "");
+    if (!nextId) return;
+
+    setData((prev: any) => ({
+      ...prev,
+      items: (prev?.items || []).map((item: any) => (String(item?._id || "") === nextId ? nextOrder : item)),
+    }));
+  };
+
+  const handleGenerateLabel = async (order: any) => {
+    const orderId = String(order?._id || "");
+    const shipment = pickVendorShipment(order);
+    const shipmentId = Number(shipment?.shiprocket?.shipmentId ?? 0);
+
+    if (!orderId || !shipmentId) {
+      setError("Shipment id missing for this order");
+      return;
+    }
+
+    const key = `${orderId}:${shipmentId}`;
+
+    try {
+      setLabelBusyKey(key);
+      setError(null);
+
+      const resp = await vendorGenerateShipmentLabel(orderId, shipmentId);
+      const labelUrl = resolveImageUrl(resp?.labelUrl || "");
+      const fresh = await vendorFetchOrderById(orderId);
+
+      syncOrderIntoList(fresh);
+
+      const sub = Array.isArray(fresh?.subOrders) ? fresh.subOrders[0] : null;
+      setDrawer((prev) =>
+        prev.open && String(prev.order?._id || "") === orderId
+          ? { ...prev, order: fresh, sub }
+          : prev
+      );
+
+      if (labelUrl) {
+        window.open(labelUrl, "_blank", "noopener,noreferrer");
+      }
+    } catch (e: any) {
+      setError(e?.message || "Failed to generate label");
+    } finally {
+      setLabelBusyKey(null);
+    }
+  };
+
   return (
     <div className="mx-auto max-w-[1700px] px-4 py-10">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
@@ -511,7 +602,7 @@ export default function VendorOrdersPage() {
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="Search: order code / customer / phone"
+            placeholder="Search: order code / customer"
             className="h-11 rounded-2xl border px-4 text-sm outline-none focus:border-gray-400 sm:col-span-2"
           />
 
@@ -603,7 +694,6 @@ export default function VendorOrdersPage() {
                   const orderCode = o?.orderCode || "—";
 
                   const customerName = o?.contact?.name || o?.address?.fullName || "—";
-                  const phone = o?.contact?.phone || o?.address?.phone || "—";
                   const created = o?.createdAt ? fmtDateTime(o.createdAt) : "—";
 
                   const pm = String(o?.paymentMethod || "COD").toUpperCase();
@@ -620,6 +710,8 @@ export default function VendorOrdersPage() {
                   const shipmentExists = shipmentCreatedForVendor(o);
                   const awb = ship?.shiprocket?.awb || "";
                   const shipmentId = ship?.shiprocket?.shipmentId ?? null;
+                  const labelUrl = getShipmentLabelUrl(ship);
+                  const labelBusy = labelBusyKey === `${orderId}:${shipmentId}`;
 
                   const rm = getReturnMetaVendor(o);
                   const rowAttention = rm.mostCritical === "REQUESTED" || rm.mostCritical === "REFUND_PENDING";
@@ -639,7 +731,6 @@ export default function VendorOrdersPage() {
 
                       <td className="px-5 py-3">
                         <div className="font-semibold text-gray-900">{customerName}</div>
-                        <div className="text-[11px] text-gray-500">{phone}</div>
                       </td>
 
                       <td className="px-5 py-3">
@@ -724,8 +815,30 @@ export default function VendorOrdersPage() {
 
                       <td className="px-5 py-3">
                         <div className="flex justify-end gap-2">
-                          <IconButton onClick={() => openOrder(o, "items")}>View</IconButton>
-                          <IconButton onClick={() => openOrder(o, "shipments")}>Ship</IconButton>
+                          <IconButton onClick={() => openOrder(o, "items")} title="View order">
+                            <Eye className="h-4 w-4" />
+                          </IconButton>
+                          {shipmentExists ? (
+                            labelUrl ? (
+                              <IconButton
+                                onClick={() => window.open(labelUrl, "_blank", "noopener,noreferrer")}
+                                title="Download label"
+                              >
+                                <ReceiptText className="h-4 w-4" />
+                              </IconButton>
+                            ) : (
+                              <IconButton
+                                onClick={() => handleGenerateLabel(o)}
+                                disabled={labelBusy || !shipmentId}
+                                title={labelBusy ? "Generating label" : "Generate label"}
+                              >
+                                <Printer className="h-4 w-4" />
+                              </IconButton>
+                            )
+                          ) : null}
+                          <IconButton onClick={() => openOrder(o, "shipments")} title="Shipment details">
+                            <Truck className="h-4 w-4" />
+                          </IconButton>
                         </div>
                       </td>
                     </tr>
@@ -838,6 +951,9 @@ export default function VendorOrdersPage() {
                     {(() => {
                       const sh = pickVendorShipment(drawer.order);
                       if (!sh) return <div className="text-sm text-gray-600">Shipment not created yet.</div>;
+                      const drawerShipmentId = Number(sh?.shiprocket?.shipmentId ?? 0);
+                      const drawerLabelUrl = getShipmentLabelUrl(sh);
+                      const drawerLabelBusy = labelBusyKey === `${String(drawer.order?._id || "")}:${drawerShipmentId}`;
                       return (
                         <div className="rounded-2xl border p-4">
                           <div className="flex items-center justify-between">
@@ -850,6 +966,43 @@ export default function VendorOrdersPage() {
                             <StatRow k="AWB" v={<span className="font-mono">{sh?.shiprocket?.awb || "—"}</span>} />
                             <StatRow k="SR Order" v={<span className="font-mono">{sh?.shiprocket?.orderId || "—"}</span>} />
                             <StatRow k="Created" v={fmtDateTime(sh?.createdAt)} />
+                          </div>
+
+                          <div className="mt-4 flex flex-wrap gap-2">
+                            {drawerLabelUrl ? (
+                              <>
+                                <a
+                                  href={drawerLabelUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  title="Download label"
+                                  aria-label="Download label"
+                                  className="inline-flex h-10 w-10 items-center justify-center rounded-xl border text-gray-800 hover:bg-gray-50"
+                                >
+                                  <ReceiptText className="h-4 w-4" />
+                                </a>
+                                <button
+                                  type="button"
+                                  onClick={() => openPrintWindow(drawerLabelUrl)}
+                                  title="Print label"
+                                  aria-label="Print label"
+                                  className="inline-flex h-10 w-10 items-center justify-center rounded-xl border text-gray-800 hover:bg-gray-50"
+                                >
+                                  <Printer className="h-4 w-4" />
+                                </button>
+                              </>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => handleGenerateLabel(drawer.order)}
+                                disabled={drawerLabelBusy || !drawerShipmentId}
+                                title={drawerLabelBusy ? "Generating label" : "Generate label"}
+                                aria-label={drawerLabelBusy ? "Generating label" : "Generate label"}
+                                className="inline-flex h-10 w-10 items-center justify-center rounded-xl border text-gray-800 hover:bg-gray-50 disabled:opacity-60"
+                              >
+                                <Printer className="h-4 w-4" />
+                              </button>
+                            )}
                           </div>
                         </div>
                       );
@@ -881,7 +1034,6 @@ export default function VendorOrdersPage() {
                     <div className="mb-3 text-sm font-extrabold text-gray-900">Customer</div>
                     <div className="space-y-2 text-sm">
                       <StatRow k="Name" v={drawer.order?.contact?.name || drawer.order?.address?.fullName || "—"} />
-                      <StatRow k="Phone" v={drawer.order?.contact?.phone || drawer.order?.address?.phone || "—"} />
                       <StatRow k="Email" v={drawer.order?.contact?.email || "—"} />
                       <StatRow k="Address" v={drawer.order?.address?.fullAddress || drawer.order?.address?.address || "—"} />
                     </div>

@@ -37,4 +37,4 @@ export default function PriceCategorySection() {
             </div>
         </section>
     );
-}
+} 

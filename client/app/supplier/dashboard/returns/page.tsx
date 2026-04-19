@@ -476,7 +476,6 @@ const items = (Array.isArray(ret?.items) ? ret.items : []).map((it: any) =>
 );
       const orderCode = String(order?.orderCode || "—");
       const customerName = order?.contact?.name || order?.address?.fullName || "—";
-      const phone = order?.contact?.phone || order?.address?.phone || "—";
       const paymentMethod = String(order?.paymentMethod || "COD").toUpperCase();
 
       out.push({
@@ -488,7 +487,6 @@ const items = (Array.isArray(ret?.items) ? ret.items : []).map((it: any) =>
         returnId: String(ret?._id || ""),
         orderCode,
         customerName,
-        phone,
         paymentMethod,
         retStatus,
         items,
@@ -503,7 +501,7 @@ const items = (Array.isArray(ret?.items) ? ret.items : []).map((it: any) =>
           return (
             String(x.orderCode).toLowerCase().includes(t) ||
             String(x.customerName).toLowerCase().includes(t) ||
-            String(x.phone).toLowerCase().includes(t)
+            false
           );
         })
       : out;
@@ -594,7 +592,7 @@ const items = (Array.isArray(ret?.items) ? ret.items : []).map((it: any) =>
           <input
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="Search: order code / customer / phone"
+            placeholder="Search: order code / customer"
             className="h-11 rounded-2xl border px-4 text-sm outline-none focus:border-gray-400"
           />
 
@@ -659,7 +657,7 @@ const items = (Array.isArray(ret?.items) ? ret.items : []).map((it: any) =>
                     </div>
 
                     <div className="mt-2 text-sm text-gray-700">
-                      {row.customerName} • {row.phone}
+                      {row.customerName}
                     </div>
                     <div className="mt-1 text-xs text-gray-500">
                       Requested: {fmtDateTime(row.requestedAt)}

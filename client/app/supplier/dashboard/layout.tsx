@@ -124,7 +124,7 @@ export default function VendorDashboardLayout({ children }: { children: React.Re
       { label: "Products", href: "/supplier/dashboard/products-add", icon: PackagePlus },
       { label: "Inventory", href: "/supplier/dashboard/products", icon: Boxes },
       { label: "Orders", href: "/supplier/dashboard/orders", icon: ShoppingCart },
-      // { label: "Shipments", href: "/supplier/dashboard/shipments", icon: Truck },
+      // { label: "Shipments", href: "/supplier/dashboard/shipments", icon: Truck },  
       { label: "Returns", href: "/supplier/dashboard/returns", icon: RotateCcw },
       { label: "Payouts", href: "/supplier/dashboard/wallet", icon: Wallet },
       { label: "Settings", href: "/supplier/dashboard/settings", icon: Settings },

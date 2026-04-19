@@ -6,6 +6,39 @@ import { shiprocketTrackByAwb } from "../../services/shiprocket.service";
 
 const getUserId = (req: Request) => (req as any).user?._id;
 const toStr = (v: any) => String(v ?? "").trim();
+const firstNonEmptyString = (...values: any[]) => {
+  for (const value of values) {
+    const text = toStr(value);
+    if (text) return text;
+  }
+  return "";
+};
+
+function hydrateShiprocketShipment(shipment: any) {
+  if (!shipment?.shiprocket) return shipment;
+
+  const sr = shipment.shiprocket || {};
+  const rawAwb = sr?.raw?.awb || {};
+  const awb = firstNonEmptyString(
+    sr?.awb,
+    rawAwb?.awb_code,
+    rawAwb?.awb,
+    rawAwb?.response?.data?.awb_code,
+    rawAwb?.response?.data?.awb,
+    rawAwb?.data?.awb_code,
+    rawAwb?.data?.awb,
+    rawAwb?.response?.awb_code,
+    rawAwb?.response?.awb
+  );
+
+  return {
+    ...shipment,
+    shiprocket: {
+      ...sr,
+      awb: awb || null,
+    },
+  };
+}
 
 /**
  * GET /users/orders/:orderId/tracking
@@ -20,12 +53,21 @@ export const getOrderTracking = async (req: Request, res: Response) => {
     if (!Types.ObjectId.isValid(orderId)) return res.status(400).json({ message: "Invalid orderId" });
 
     const order: any = await Order.findOne({ _id: new Types.ObjectId(orderId), userId: new Types.ObjectId(userId) })
-      .select("orderCode status paymentMethod paymentStatus shipments createdAt updatedAt")
+      .select("orderCode status paymentMethod paymentStatus shipments subOrders createdAt updatedAt")
       .lean();
 
     if (!order) return res.status(404).json({ message: "Order not found" });
 
-    const shipments = Array.isArray(order.shipments) ? order.shipments : [];
+    const shipmentsFromRoot = Array.isArray(order.shipments) ? order.shipments : [];
+    const shipmentsFromSubOrders = Array.isArray(order.subOrders)
+      ? order.subOrders
+          .map((so: any) => so?.shipment)
+          .filter((shipment: any) => shipment && shipment?.shiprocket?.shipmentId)
+      : [];
+
+    const shipments = (shipmentsFromRoot.length ? shipmentsFromRoot : shipmentsFromSubOrders).map((shipment: any) =>
+      hydrateShiprocketShipment(shipment)
+    );
 
     // ✅ OPTIONAL: Live tracking fetch for each shipment that has AWB
     // (Later we can cache, or move to webhook updates)

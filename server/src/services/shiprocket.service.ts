@@ -271,6 +271,34 @@ export async function shiprocketGenerateAwb(params: { shipment_id: number; couri
 }
 
 /**
+ * Generate shipping label
+ */
+export async function shiprocketGenerateLabel(params: { shipment_id: number[] }) {
+  const headers = await shiprocketAuthHeaders();
+  const payload = { shipment_id: params.shipment_id };
+
+  try {
+    return await srFetch("/external/courier/generate/label", {
+      method: "POST",
+      headers,
+      body: JSON.stringify(payload),
+    });
+  } catch (e: any) {
+    if (isBlockedLoginError(e)) throw e;
+
+    if (e?.status === 401) {
+      const token = await shiprocketGetToken(true);
+      return await srFetch("/external/courier/generate/label", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: JSON.stringify(payload),
+      });
+    }
+    throw e;
+  }
+}
+
+/**
  * Courier serviceability
  */
 export async function shiprocketCheckServiceability(params: {
