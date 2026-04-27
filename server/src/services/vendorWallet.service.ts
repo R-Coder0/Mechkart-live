@@ -323,7 +323,7 @@ async function reverseVendorAmountAndAddDeduction(opts: {
   };
 }
 
-// CANCELLED => base reverse + shipping deduction add
+// CANCELLED => base reverse only. Shipping is not charged to vendor because the order was not delivered.
 export async function walletDeductOnCancelled(opts: {
   vendorId: string;
   orderId: string;
@@ -343,7 +343,7 @@ export async function walletDeductOnCancelled(opts: {
     subOrderId: opts.subOrderId,
     orderCode: opts.orderCode,
     amount: opts.amount,
-    deductionAmount: opts.deductionAmount || 0,
+    deductionAmount: 0,
     idempotencyKey: `CANCEL:${vid.toString()}:${soid.toString()}`,
     type: "CANCEL_DEDUCT",
     meta: opts.meta,
@@ -613,11 +613,12 @@ export async function applyWalletEffectsForOrder(order: any) {
         subOrderId,
         orderCode,
         amount: vendorAmt,
-        deductionAmount: shippingAmt,
+        deductionAmount: 0,
         meta: {
           source: "applyWalletEffectsForOrder",
           pricing: "without_shipping_markup",
           shippingAmount: shippingAmt,
+          shippingDeductionAmount: 0,
           payableAmount: round2(amounts.payable),
         },
       });
@@ -626,7 +627,7 @@ export async function applyWalletEffectsForOrder(order: any) {
         subOrderId,
         action: "CANCEL_DEDUCT",
         amount: vendorAmt,
-        deductionAmount: shippingAmt,
+        deductionAmount: 0,
         ...r,
       });
       continue;

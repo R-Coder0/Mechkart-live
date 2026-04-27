@@ -299,6 +299,13 @@ function txnExtraNote(t: any) {
     const vendorReverseAmount = toNum(meta?.vendorReverseAmount, 0);
     const deductionAmount = toNum(meta?.deductionAmount, 0);
 
+    if (type === "CANCEL_DEDUCT") {
+      return {
+        label: "Breakup",
+        text: `Base reverse ${money(vendorReverseAmount)} - No shipping deduction`,
+      };
+    }
+
     return {
       label: "Breakup",
       text: `Base reverse ${money(vendorReverseAmount)} • Shipping deduction ${money(deductionAmount)}`,

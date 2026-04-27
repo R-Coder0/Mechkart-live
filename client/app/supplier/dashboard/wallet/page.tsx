@@ -96,15 +96,22 @@ function txnExtraNote(t: any) {
   const type = String(t?.type || "").toUpperCase();
   const meta = t?.meta || {};
 
-if (type === "RETURN_DEDUCT" || type === "CANCEL_DEDUCT") {
-  const vendorReverseAmount = toNum(meta?.vendorReverseAmount, 0);
-  const deductionAmount = toNum(meta?.deductionAmount, 0);
+  if (type === "RETURN_DEDUCT" || type === "CANCEL_DEDUCT") {
+    const vendorReverseAmount = toNum(meta?.vendorReverseAmount, 0);
+    const deductionAmount = toNum(meta?.deductionAmount, 0);
 
-  return {
-    label: "Breakup",
-    text: `Amount reversed ${money(vendorReverseAmount)} • Penalty deduction ${money(deductionAmount)}`,
-  };
-}
+    if (type === "CANCEL_DEDUCT") {
+      return {
+        label: "Breakup",
+        text: `Amount reversed ${money(vendorReverseAmount)} - No shipping deduction`,
+      };
+    }
+
+    return {
+      label: "Breakup",
+      text: `Amount reversed ${money(vendorReverseAmount)} • Shipping deduction ${money(deductionAmount)}`,
+    };
+  }
   if (type === "PAYOUT_RELEASED") {
     const deductionApplied = toNum(meta?.deductionApplied, 0);
     const grossConsumed = toNum(meta?.grossConsumed, 0);
@@ -538,4 +545,4 @@ export default function VendorWalletPage() {
       ) : null}
     </div>
   );
-}
+  }

@@ -1,0 +1,311 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.adminConfirmCodOrder = exports.adminUpdateOrderStatus = exports.adminGetOrders = void 0;
+const mongoose_1 = require("mongoose");
+const Order_model_1 = require("../../models/Order.model");
+const vendorWallet_service_1 = require("../../services/vendorWallet.service");
+const toStr = (v) => String(v ?? "").trim();
+const firstNonEmptyString = (...values) => {
+    for (const value of values) {
+        const text = toStr(value);
+        if (text)
+            return text;
+    }
+    return "";
+};
+const allowedStatuses = ["PLACED", "CONFIRMED", "SHIPPED", "DELIVERED", "CANCELLED"];
+const allowedSubOrderStatuses = ["PLACED", "CONFIRMED", "SHIPPED", "DELIVERED", "CANCELLED"];
+const allowedPaymentMethods = ["COD", "ONLINE"];
+// ✅ include COD_PENDING_CONFIRMATION (as per Order.model)
+const allowedPaymentStatuses = ["PENDING", "PAID", "FAILED", "COD_PENDING_CONFIRMATION"];
+function isValidObjectId(id) {
+    return mongoose_1.Types.ObjectId.isValid(String(id || ""));
+}
+function upper(v) {
+    return String(v || "").toUpperCase();
+}
+function hydrateShiprocketShipment(shipment) {
+    if (!shipment?.shiprocket)
+        return shipment;
+    const sr = shipment.shiprocket || {};
+    const rawAwb = sr?.raw?.awb || {};
+    const awb = firstNonEmptyString(sr?.awb, rawAwb?.awb_code, rawAwb?.awb, rawAwb?.response?.data?.awb_code, rawAwb?.response?.data?.awb, rawAwb?.data?.awb_code, rawAwb?.data?.awb, rawAwb?.response?.awb_code, rawAwb?.response?.awb);
+    const labelUrl = firstNonEmptyString(sr?.labelUrl, sr?.raw?.label?.label_url, sr?.raw?.label?.data?.label_url);
+    return {
+        ...shipment,
+        shiprocket: {
+            ...sr,
+            awb: awb || null,
+            labelUrl: labelUrl || null,
+        },
+    };
+}
+function hydrateOrderShipmentData(order) {
+    return {
+        ...order,
+        subOrders: Array.isArray(order?.subOrders)
+            ? order.subOrders.map((so) => ({
+                ...so,
+                shipment: so?.shipment ? hydrateShiprocketShipment(so.shipment) : so?.shipment ?? null,
+            }))
+            : [],
+        shipments: Array.isArray(order?.shipments)
+            ? order.shipments.map((shipment) => hydrateShiprocketShipment(shipment))
+            : [],
+    };
+}
+// ----------------------------------------------------
+// GET ADMIN ORDERS (Paginated + Filters)
+// ----------------------------------------------------
+const adminGetOrders = async (req, res) => {
+    try {
+        const q = toStr(req.query.q);
+        const status = toStr(req.query.status);
+        const paymentMethod = toStr(req.query.paymentMethod);
+        const paymentStatus = toStr(req.query.paymentStatus);
+        const page = Math.max(1, Number(req.query.page || 1));
+        const limit = Math.min(100, Math.max(10, Number(req.query.limit || 20)));
+        const skip = (page - 1) * limit;
+        const filter = {};
+        if (status && allowedStatuses.includes(status))
+            filter.status = status;
+        if (paymentMethod && allowedPaymentMethods.includes(paymentMethod)) {
+            filter.paymentMethod = paymentMethod;
+        }
+        if (paymentStatus && allowedPaymentStatuses.includes(paymentStatus)) {
+            filter.paymentStatus = paymentStatus;
+        }
+        if (q) {
+            filter.$or = [
+                { orderCode: { $regex: q, $options: "i" } },
+                { "contact.phone": { $regex: q, $options: "i" } },
+                { "contact.name": { $regex: q, $options: "i" } },
+                { "pg.orderId": { $regex: q, $options: "i" } },
+                { "pg.paymentId": { $regex: q, $options: "i" } },
+                { "subOrders.vendorName": { $regex: q, $options: "i" } },
+                { "subOrders.soldBy": { $regex: q, $options: "i" } },
+            ];
+        }
+        const [items, total] = await Promise.all([
+            Order_model_1.Order.find(filter)
+                .populate({ path: "items.productId", select: "title variants colors galleryImages featureImage ship ownerType vendorId" })
+                .populate({ path: "subOrders.items.productId", select: "title variants colors galleryImages featureImage ship ownerType vendorId" })
+                .select([
+                "orderCode",
+                "userId",
+                "items",
+                "subOrders",
+                "totals",
+                "appliedOffer",
+                "contact",
+                "address",
+                "paymentMethod",
+                "paymentStatus",
+                "status",
+                "pg",
+                "cod",
+                "shipments",
+                "return",
+                "refund",
+                "ship",
+                "createdAt",
+                "updatedAt",
+            ].join(" "))
+                .sort({ createdAt: -1 })
+                .skip(skip)
+                .limit(limit)
+                .lean(),
+            Order_model_1.Order.countDocuments(filter),
+        ]);
+        return res.json({
+            message: "Admin orders fetched",
+            data: { items: items.map((item) => hydrateOrderShipmentData(item)), page, limit, total, totalPages: Math.ceil(total / limit) },
+        });
+    }
+    catch (err) {
+        console.error("adminGetOrders error:", err);
+        return res.status(500).json({
+            message: "Failed to fetch orders",
+            error: err?.message || "Unknown error",
+        });
+    }
+};
+exports.adminGetOrders = adminGetOrders;
+// ----------------------------------------------------
+// UPDATE STATUS (Parent OR SubOrder)
+// ----------------------------------------------------
+const adminUpdateOrderStatus = async (req, res) => {
+    try {
+        const { orderId } = req.params;
+        if (!isValidObjectId(orderId))
+            return res.status(400).json({ message: "Invalid orderId" });
+        const nextStatus = upper(req.body?.status);
+        const subOrderId = toStr(req.body?.subOrderId);
+        if (!allowedStatuses.includes(nextStatus)) {
+            return res.status(400).json({ message: "Invalid status" });
+        }
+        const order = await Order_model_1.Order.findById(orderId);
+        if (!order)
+            return res.status(404).json({ message: "Order not found" });
+        const pm = upper(order.paymentMethod || "COD");
+        const ps = upper(order.paymentStatus || "PENDING");
+        const cur = upper(order.status || "PLACED");
+        // -----------------
+        // Shared guardrails
+        // -----------------
+        // ONLINE must be PAID before SHIPPED/DELIVERED
+        if (pm === "ONLINE" && ps !== "PAID" && ["SHIPPED", "DELIVERED"].includes(nextStatus)) {
+            return res.status(400).json({
+                message: "Cannot mark as SHIPPED/DELIVERED until ONLINE payment is PAID",
+            });
+        }
+        // ✅ FIX (ISSUE #1):
+        // COD must be "confirmed" before SHIPPED/DELIVERED
+        // Do NOT rely on current status === CONFIRMED (because once shipped, status becomes SHIPPED).
+        if (pm === "COD") {
+            const codConfirmed = !!order?.cod?.confirmedAt ||
+                ps === "COD_PENDING_CONFIRMATION" ||
+                ps === "PAID";
+            if (!codConfirmed && ["SHIPPED", "DELIVERED"].includes(nextStatus)) {
+                return res.status(400).json({
+                    message: "Cannot mark SHIPPED/DELIVERED until COD is CONFIRMED",
+                });
+            }
+            // enforce COD confirm via button (only from PLACED)
+            if (nextStatus === "CONFIRMED" && cur === "PLACED") {
+                return res.status(400).json({ message: "Use Confirm COD button to confirm COD orders." });
+            }
+        }
+        // DELIVERED/CANCELLED lock at parent level
+        if (!subOrderId) {
+            if (cur === "DELIVERED" && nextStatus !== "DELIVERED") {
+                return res.status(400).json({ message: "Delivered order status cannot be changed" });
+            }
+            if (cur === "CANCELLED" && nextStatus !== "CANCELLED") {
+                return res.status(400).json({ message: "Cancelled order status cannot be changed" });
+            }
+        }
+        // -----------------
+        // SubOrder update
+        // -----------------
+        if (subOrderId) {
+            if (!isValidObjectId(subOrderId)) {
+                return res.status(400).json({ message: "Invalid subOrderId" });
+            }
+            const subOrders = Array.isArray(order.subOrders) ? order.subOrders : [];
+            const so = subOrders.find((x) => String(x._id) === String(subOrderId));
+            if (!so)
+                return res.status(404).json({ message: "SubOrder not found" });
+            const soCur = upper(so.status || "PLACED");
+            if (soCur === "DELIVERED" && nextStatus !== "DELIVERED") {
+                return res.status(400).json({ message: "Delivered subOrder status cannot be changed" });
+            }
+            if (soCur === "CANCELLED" && nextStatus !== "CANCELLED") {
+                return res.status(400).json({ message: "Cancelled subOrder status cannot be changed" });
+            }
+            so.status = nextStatus;
+            await order.save();
+            await (0, vendorWallet_service_1.applyWalletEffectsForOrder)(order);
+            const fresh = await Order_model_1.Order.findById(orderId).lean();
+            const soArr = Array.isArray(fresh?.subOrders) ? fresh.subOrders : [];
+            const allCancelled = soArr.length > 0 && soArr.every((x) => upper(x.status) === "CANCELLED");
+            const allDelivered = soArr.length > 0 && soArr.every((x) => upper(x.status) === "DELIVERED");
+            const anyShipped = soArr.some((x) => upper(x.status) === "SHIPPED");
+            const anyConfirmed = soArr.some((x) => upper(x.status) === "CONFIRMED");
+            const parentUpdate = {};
+            if (allCancelled)
+                parentUpdate.status = "CANCELLED";
+            else if (allDelivered)
+                parentUpdate.status = "DELIVERED";
+            else if (anyShipped)
+                parentUpdate.status = "SHIPPED";
+            else if (anyConfirmed)
+                parentUpdate.status = "CONFIRMED";
+            else
+                parentUpdate.status = "PLACED";
+            // COD delivered => PAID (only when full order delivered)
+            if (pm === "COD" && parentUpdate.status === "DELIVERED") {
+                parentUpdate.paymentStatus = "PAID";
+            }
+            await Order_model_1.Order.updateOne({ _id: new mongoose_1.Types.ObjectId(orderId) }, { $set: parentUpdate });
+            const updated = await Order_model_1.Order.findById(orderId).lean();
+            return res.json({ message: "SubOrder status updated", data: updated });
+        }
+        // -----------------
+        // Parent update
+        // -----------------
+        order.status = nextStatus;
+        // ✅ Sync subOrders with parent status (skip locked)
+        if (Array.isArray(order.subOrders) && order.subOrders.length) {
+            for (const so of order.subOrders) {
+                const soCur = upper(so.status || "PLACED");
+                if (soCur === "CANCELLED" || soCur === "DELIVERED")
+                    continue;
+                so.status = nextStatus;
+            }
+        }
+        // COD delivered => PAID
+        if (pm === "COD" && nextStatus === "DELIVERED") {
+            order.paymentStatus = "PAID";
+        }
+        await order.save();
+        await (0, vendorWallet_service_1.applyWalletEffectsForOrder)(order);
+        return res.json({ message: "Order status updated", data: order });
+    }
+    catch (err) {
+        console.error("adminUpdateOrderStatus error:", err);
+        return res.status(500).json({
+            message: "Status update failed",
+            error: err?.message || "Unknown error",
+        });
+    }
+};
+exports.adminUpdateOrderStatus = adminUpdateOrderStatus;
+// ----------------------------------------------------
+// CONFIRM COD ORDER (Parent + SubOrders)
+// ----------------------------------------------------
+const adminConfirmCodOrder = async (req, res) => {
+    try {
+        const { orderId } = req.params;
+        if (!isValidObjectId(orderId))
+            return res.status(400).json({ message: "Invalid orderId" });
+        const order = await Order_model_1.Order.findById(orderId);
+        if (!order)
+            return res.status(404).json({ message: "Order not found" });
+        if (upper(order.paymentMethod) !== "COD") {
+            return res.status(400).json({ message: "Only COD orders can be confirmed here" });
+        }
+        const cur = upper(order.status);
+        if (cur !== "PLACED") {
+            return res.status(400).json({
+                message: `COD order can be confirmed only from PLACED (current: ${order.status})`,
+            });
+        }
+        const adminId = req?.admin?._id ? new mongoose_1.Types.ObjectId(String(req.admin._id)) : null;
+        order.status = "CONFIRMED";
+        order.paymentStatus = "COD_PENDING_CONFIRMATION";
+        order.cod = {
+            ...(order.cod || {}),
+            confirmedAt: new Date(),
+            confirmedBy: adminId,
+        };
+        if (Array.isArray(order.subOrders) && order.subOrders.length) {
+            for (const so of order.subOrders) {
+                const soCur = upper(so.status);
+                if (soCur === "CANCELLED" || soCur === "DELIVERED")
+                    continue;
+                so.status = "CONFIRMED";
+            }
+        }
+        await order.save();
+        return res.json({ message: "COD order confirmed", data: order });
+    }
+    catch (err) {
+        console.error("adminConfirmCodOrder error:", err);
+        return res.status(500).json({
+            message: "COD confirm failed",
+            error: err?.message || "Unknown error",
+        });
+    }
+};
+exports.adminConfirmCodOrder = adminConfirmCodOrder;
