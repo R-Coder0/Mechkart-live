@@ -4,13 +4,13 @@ import Link from "next/link";
 
 export default function ContactPage() {
   const phoneDisplay = "+91 62607 04024";
-  const phoneDial = "+919879511957";
+  const phoneDial = "+916260704024";
   const email = "contact@Mechkart.co.in";
   const instagram =
     "https://www.instagram.com/Mechkartofficial_/?igsh=MWxxZmh1cjUxMXN1NA%3D%3D#";
 
   const waText = "Hi Mechkart, I need help with my order.";
-  const waLink = `https://wa.me/919879511957?text=${encodeURIComponent(waText)}`;
+  const waLink = `https://wa.me/916260704024?text=${encodeURIComponent(waText)}`;
 
   return (
     <div className="mx-auto max-w-5xl px-4 py-12">
