@@ -152,6 +152,8 @@ export type AdminOrdersResponse = {
   limit: number;
   total: number;
   totalPages: number;
+  hasNextPage?: boolean;
+  hasPrevPage?: boolean;
 };
 
 export type AdminReturnsResponse = AdminOrdersResponse;
@@ -199,6 +201,49 @@ async function adminFetchJson(url: string, opts: RequestInit = {}) {
   return json?.data ?? json;
 }
 
+function toFiniteNumber(value: any, fallback: number) {
+  const num = Number(value);
+  return Number.isFinite(num) ? num : fallback;
+}
+
+function toPositiveInt(value: any, fallback: number) {
+  return Math.max(1, Math.trunc(toFiniteNumber(value, fallback)));
+}
+
+function normalizeAdminOrdersResponse(payload: any, requestedPage: number, requestedLimit: number): AdminOrdersResponse {
+  const body = payload?.data ?? payload ?? {};
+  const meta = body?.pagination ?? body?.meta ?? payload?.pagination ?? payload?.meta ?? {};
+  const items = Array.isArray(body)
+    ? body
+    : Array.isArray(body?.items)
+      ? body.items
+      : Array.isArray(body?.orders)
+        ? body.orders
+        : [];
+
+  const page = toPositiveInt(body?.page ?? meta?.page, requestedPage);
+  const limit = toPositiveInt(body?.limit ?? meta?.limit, requestedLimit);
+  const serverTotal = toFiniteNumber(body?.total ?? meta?.total ?? meta?.totalItems, NaN);
+  const total = Number.isFinite(serverTotal) ? serverTotal : (page - 1) * limit + items.length;
+
+  const pagesFromServer = toFiniteNumber(body?.totalPages ?? meta?.totalPages ?? meta?.pages, NaN);
+  const pagesFromTotal = total > 0 ? Math.ceil(total / limit) : 1;
+  const hasNextPage =
+    Boolean(body?.hasNextPage ?? meta?.hasNextPage ?? body?.hasMore ?? meta?.hasMore) ||
+    page < Math.max(1, pagesFromServer || pagesFromTotal);
+  const totalPages = Math.max(1, pagesFromServer || pagesFromTotal, hasNextPage ? page + 1 : page);
+
+  return {
+    items,
+    page,
+    limit,
+    total,
+    totalPages,
+    hasPrevPage: Boolean(body?.hasPrevPage ?? meta?.hasPrevPage) || page > 1,
+    hasNextPage,
+  };
+}
+
 /* =========================
  * ORDERS API
  * ========================= */
@@ -219,8 +264,11 @@ paymentStatus?: "PENDING" | "PAID" | "FAILED" | "COD_PENDING_CONFIRMATION";
   if (params?.paymentMethod) sp.set("paymentMethod", params.paymentMethod);
   if (params?.paymentStatus) sp.set("paymentStatus", params.paymentStatus);
 
-  sp.set("page", String(params?.page ?? 1));
-  sp.set("limit", String(params?.limit ?? 20));
+  const requestedPage = params?.page ?? 1;
+  const requestedLimit = params?.limit ?? 20;
+
+  sp.set("page", String(requestedPage));
+  sp.set("limit", String(requestedLimit));
 
   const res = await fetch(`${API_BASE}/admin/orders?${sp.toString()}`, {
     method: "GET",
@@ -232,7 +280,7 @@ paymentStatus?: "PENDING" | "PAID" | "FAILED" | "COD_PENDING_CONFIRMATION";
   const json = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(json?.message || "Failed to fetch admin orders");
 
-  return json?.data || json;
+  return normalizeAdminOrdersResponse(json, requestedPage, requestedLimit);
 }
 
 export async function adminUpdateOrderStatus(

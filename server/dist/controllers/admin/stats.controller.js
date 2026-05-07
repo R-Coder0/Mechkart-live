@@ -5,65 +5,150 @@ const Order_model_js_1 = require("../../models/Order.model.js");
 const Product_model_js_1 = require("../../models/Product.model.js");
 const User_model_js_1 = require("../../models/User.model.js");
 const Vendor_model_js_1 = require("../../models/Vendor.model.js");
+const ORDER_STATUSES = ["PLACED", "CONFIRMED", "SHIPPED", "DELIVERED", "CANCELLED"];
+const PAYMENT_STATUSES = ["PENDING", "PAID", "FAILED", "COD_PENDING_CONFIRMATION"];
+const orderTotalExpr = {
+    $ifNull: [
+        "$totals.grandTotal",
+        {
+            $ifNull: ["$totalAmount", { $ifNull: ["$totals.subtotal", 0] }],
+        },
+    ],
+};
+function startOfToday() {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return d;
+}
+function addDays(date, days) {
+    const d = new Date(date);
+    d.setDate(d.getDate() + days);
+    return d;
+}
+function dateKey(date) {
+    return new Intl.DateTimeFormat("en-CA", {
+        timeZone: "Asia/Kolkata",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+    }).format(date);
+}
+function shortDay(date) {
+    return new Intl.DateTimeFormat("en-IN", {
+        timeZone: "Asia/Kolkata",
+        day: "2-digit",
+        month: "short",
+    }).format(date);
+}
+function countMap(rows, keys) {
+    const base = Object.fromEntries(keys.map((key) => [key, 0]));
+    for (const row of rows || []) {
+        if (row?._id)
+            base[row._id] = Number(row.count || 0);
+    }
+    return base;
+}
 const getAdminStats = async (req, res) => {
     try {
-        // Total Counts
-        const totalUsers = await User_model_js_1.User.countDocuments();
-        const totalVendors = await Vendor_model_js_1.Vendor.countDocuments();
-        const totalProducts = await Product_model_js_1.Product.countDocuments();
-        const totalOrders = await Order_model_js_1.Order.countDocuments();
-        // Total Revenue
-        const revenueAgg = await Order_model_js_1.Order.aggregate([
-            { $match: { paymentStatus: "paid" } },
-            { $group: { _id: null, total: { $sum: "$totalAmount" } } }
+        const today = startOfToday();
+        const sevenDaysAgo = addDays(today, -6);
+        const revenueMatch = { paymentStatus: "PAID", status: { $ne: "CANCELLED" } };
+        const [totalUsers, totalVendors, pendingVendors, totalProducts, activeProducts, pendingVendorProducts, totalOrders, todayOrders, revenueAgg, todayRevenueAgg, weeklyAgg, orderStatusAgg, paymentStatusAgg, lowStock, latestOrders,] = await Promise.all([
+            User_model_js_1.User.countDocuments(),
+            Vendor_model_js_1.Vendor.countDocuments(),
+            Vendor_model_js_1.Vendor.countDocuments({ status: "PENDING" }),
+            Product_model_js_1.Product.countDocuments(),
+            Product_model_js_1.Product.countDocuments({ isActive: true, approvalStatus: "APPROVED" }),
+            Product_model_js_1.Product.countDocuments({ ownerType: "VENDOR", approvalStatus: "PENDING" }),
+            Order_model_js_1.Order.countDocuments(),
+            Order_model_js_1.Order.countDocuments({ createdAt: { $gte: today } }),
+            Order_model_js_1.Order.aggregate([
+                { $match: revenueMatch },
+                { $group: { _id: null, total: { $sum: orderTotalExpr }, orders: { $sum: 1 } } },
+            ]),
+            Order_model_js_1.Order.aggregate([
+                { $match: { ...revenueMatch, createdAt: { $gte: today } } },
+                { $group: { _id: null, total: { $sum: orderTotalExpr }, orders: { $sum: 1 } } },
+            ]),
+            Order_model_js_1.Order.aggregate([
+                {
+                    $match: {
+                        ...revenueMatch,
+                        createdAt: { $gte: sevenDaysAgo },
+                    },
+                },
+                {
+                    $group: {
+                        _id: {
+                            $dateToString: {
+                                format: "%Y-%m-%d",
+                                date: "$createdAt",
+                                timezone: "Asia/Kolkata",
+                            },
+                        },
+                        total: { $sum: orderTotalExpr },
+                        orders: { $sum: 1 },
+                    },
+                },
+                { $sort: { "_id": 1 } }
+            ]),
+            Order_model_js_1.Order.aggregate([{ $group: { _id: "$status", count: { $sum: 1 } } }]),
+            Order_model_js_1.Order.aggregate([{ $group: { _id: "$paymentStatus", count: { $sum: 1 } } }]),
+            Product_model_js_1.Product.find({
+                isActive: true,
+                approvalStatus: "APPROVED",
+                $or: [{ isLowStock: true }, { totalStock: { $lte: 10 } }],
+            })
+                .select("productId title totalStock lowStockThreshold ownerType vendorId")
+                .sort({ totalStock: 1, updatedAt: -1 })
+                .limit(8)
+                .lean(),
+            Order_model_js_1.Order.find()
+                .select("orderCode contact totals paymentMethod paymentStatus status createdAt")
+                .sort({ createdAt: -1, _id: -1 })
+                .limit(8)
+                .lean(),
         ]);
-        const totalRevenue = revenueAgg[0]?.total || 0;
-        // Today Revenue
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        const todayRevenueAgg = await Order_model_js_1.Order.aggregate([
-            { $match: { paymentStatus: "paid", createdAt: { $gte: today } } },
-            { $group: { _id: null, total: { $sum: "$totalAmount" } } }
-        ]);
-        const todayRevenue = todayRevenueAgg[0]?.total || 0;
-        // Weekly Revenue Chart
-        const last7Days = await Order_model_js_1.Order.aggregate([
-            {
-                $match: {
-                    paymentStatus: "paid",
-                    createdAt: {
-                        $gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
-                    }
-                }
-            },
-            {
-                $group: {
-                    _id: { $dayOfWeek: "$createdAt" },
-                    total: { $sum: "$totalAmount" }
-                }
-            },
-            { $sort: { "_id": 1 } }
-        ]);
-        // Low Stock Products
-        const lowStock = await Product_model_js_1.Product.find({ stock: { $lt: 10 } })
-            .select("name stock");
+        const totalRevenue = Number(revenueAgg[0]?.total || 0);
+        const todayRevenue = Number(todayRevenueAgg[0]?.total || 0);
+        const weeklyByDate = Object.fromEntries((weeklyAgg || []).map((row) => [row._id, row]));
+        const weeklyRevenue = Array.from({ length: 7 }).map((_, idx) => {
+            const date = addDays(sevenDaysAgo, idx);
+            const key = dateKey(date);
+            const row = weeklyByDate[key] || {};
+            return {
+                _id: key,
+                day: shortDay(date),
+                total: Number(row.total || 0),
+                orders: Number(row.orders || 0),
+            };
+        });
         res.json({
             message: "Stats fetched successfully",
             data: {
                 totalUsers,
                 totalVendors,
+                pendingVendors,
                 totalProducts,
+                activeProducts,
+                pendingVendorProducts,
                 totalOrders,
+                todayOrders,
                 totalRevenue,
                 todayRevenue,
-                weeklyRevenue: last7Days,
+                paidOrders: Number(revenueAgg[0]?.orders || 0),
+                todayPaidOrders: Number(todayRevenueAgg[0]?.orders || 0),
+                orderStatusCounts: countMap(orderStatusAgg, ORDER_STATUSES),
+                paymentStatusCounts: countMap(paymentStatusAgg, PAYMENT_STATUSES),
+                weeklyRevenue,
                 lowStock,
+                latestOrders,
             },
         });
     }
     catch (err) {
         console.error("Stats Error:", err);
-        res.status(500).json({ message: "Stats failed", error: err.message });
+        res.status(500).json({ message: "Stats failed", error: err?.message || "Unknown error" });
     }
 };
 exports.getAdminStats = getAdminStats;

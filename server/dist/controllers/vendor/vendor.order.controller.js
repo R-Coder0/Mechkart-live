@@ -1,8 +1,9 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.vendorGenerateOrderLabel = exports.vendorGetOrderTracking = exports.vendorGetOrderById = exports.vendorFetchOrders = void 0;
+exports.vendorGenerateOrderLabel = exports.vendorGetOrderTracking = exports.vendorGetOrderById = exports.vendorFetchOrders = exports.vendorDashboardStats = void 0;
 const mongoose_1 = require("mongoose");
 const Order_model_1 = require("../../models/Order.model");
+const Product_model_1 = require("../../models/Product.model");
 const shiprocket_service_1 = require("../../services/shiprocket.service");
 // helpers
 const toStr = (v) => String(v ?? "").trim();
@@ -68,6 +69,31 @@ function sanitizeCustomerContactForVendor(order) {
     };
 }
 const getVendorId = (req) => req?.vendor?._id || req?.vendorId;
+function startOfToday() {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return d;
+}
+function addDays(date, days) {
+    const d = new Date(date);
+    d.setDate(d.getDate() + days);
+    return d;
+}
+function dateKey(date) {
+    return new Intl.DateTimeFormat("en-CA", {
+        timeZone: "Asia/Kolkata",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+    }).format(date);
+}
+function shortDay(date) {
+    return new Intl.DateTimeFormat("en-IN", {
+        timeZone: "Asia/Kolkata",
+        day: "2-digit",
+        month: "short",
+    }).format(date);
+}
 /* =========================
    SHIPPING CALC
 ========================= */
@@ -172,6 +198,148 @@ function applyVendorPriceViewToOrder(order, vendorObjectId) {
         shipments: vendorShipments,
     };
 }
+const vendorDashboardStats = async (req, res) => {
+    try {
+        const vendorId = getVendorId(req);
+        if (!vendorId)
+            return res.status(401).json({ message: "Unauthorized" });
+        const vendorObjectId = new mongoose_1.Types.ObjectId(String(vendorId));
+        const today = startOfToday();
+        const sevenDaysAgo = addDays(today, -6);
+        const vendorOrderMatch = { "subOrders.vendorId": vendorObjectId };
+        const vendorSubMatch = { "subOrders.vendorId": vendorObjectId };
+        const [totalProducts, activeProducts, pendingProducts, rejectedProducts, lowStockProducts, totalOrders, todayOrders, statusAgg, revenueAgg, weeklyAgg, latestOrdersRaw,] = await Promise.all([
+            Product_model_1.Product.countDocuments({ ownerType: "VENDOR", vendorId: vendorObjectId }),
+            Product_model_1.Product.countDocuments({ ownerType: "VENDOR", vendorId: vendorObjectId, approvalStatus: "APPROVED", isActive: true }),
+            Product_model_1.Product.countDocuments({ ownerType: "VENDOR", vendorId: vendorObjectId, approvalStatus: "PENDING" }),
+            Product_model_1.Product.countDocuments({ ownerType: "VENDOR", vendorId: vendorObjectId, approvalStatus: "REJECTED" }),
+            Product_model_1.Product.find({
+                ownerType: "VENDOR",
+                vendorId: vendorObjectId,
+                approvalStatus: "APPROVED",
+                isActive: true,
+                $or: [{ isLowStock: true }, { totalStock: { $lte: 10 } }],
+            })
+                .select("productId title totalStock lowStockThreshold")
+                .sort({ totalStock: 1, updatedAt: -1 })
+                .limit(6)
+                .lean(),
+            Order_model_1.Order.countDocuments(vendorOrderMatch),
+            Order_model_1.Order.countDocuments({ ...vendorOrderMatch, createdAt: { $gte: today } }),
+            Order_model_1.Order.aggregate([
+                { $match: vendorOrderMatch },
+                { $unwind: "$subOrders" },
+                { $match: vendorSubMatch },
+                { $group: { _id: "$subOrders.status", count: { $sum: 1 } } },
+            ]),
+            Order_model_1.Order.aggregate([
+                { $match: vendorOrderMatch },
+                { $unwind: "$subOrders" },
+                { $match: vendorSubMatch },
+                {
+                    $group: {
+                        _id: null,
+                        revenue: {
+                            $sum: {
+                                $cond: [
+                                    { $eq: ["$subOrders.status", "DELIVERED"] },
+                                    { $ifNull: ["$subOrders.total", { $ifNull: ["$subOrders.subtotal", 0] }] },
+                                    0,
+                                ],
+                            },
+                        },
+                        deliveredOrders: {
+                            $sum: { $cond: [{ $eq: ["$subOrders.status", "DELIVERED"] }, 1, 0] },
+                        },
+                    },
+                },
+            ]),
+            Order_model_1.Order.aggregate([
+                { $match: { ...vendorOrderMatch, createdAt: { $gte: sevenDaysAgo } } },
+                { $unwind: "$subOrders" },
+                { $match: { ...vendorSubMatch, "subOrders.status": "DELIVERED" } },
+                {
+                    $group: {
+                        _id: {
+                            $dateToString: {
+                                format: "%Y-%m-%d",
+                                date: "$createdAt",
+                                timezone: "Asia/Kolkata",
+                            },
+                        },
+                        revenue: { $sum: { $ifNull: ["$subOrders.total", { $ifNull: ["$subOrders.subtotal", 0] }] } },
+                        orders: { $sum: 1 },
+                    },
+                },
+                { $sort: { _id: 1 } },
+            ]),
+            Order_model_1.Order.find(vendorOrderMatch)
+                .select("orderCode paymentMethod paymentStatus status subOrders totals createdAt")
+                .sort({ createdAt: -1, _id: -1 })
+                .limit(6)
+                .lean(),
+        ]);
+        const statusCounts = {
+            PLACED: 0,
+            CONFIRMED: 0,
+            SHIPPED: 0,
+            DELIVERED: 0,
+            CANCELLED: 0,
+        };
+        for (const row of statusAgg || []) {
+            if (row?._id)
+                statusCounts[row._id] = Number(row.count || 0);
+        }
+        const weeklyByDate = Object.fromEntries((weeklyAgg || []).map((row) => [row._id, row]));
+        const weeklyRevenue = Array.from({ length: 7 }).map((_, idx) => {
+            const date = addDays(sevenDaysAgo, idx);
+            const key = dateKey(date);
+            const row = weeklyByDate[key] || {};
+            return {
+                _id: key,
+                day: shortDay(date),
+                revenue: Number(row.revenue || 0),
+                orders: Number(row.orders || 0),
+            };
+        });
+        const latestOrders = (latestOrdersRaw || []).map((order) => {
+            const sub = (Array.isArray(order?.subOrders) ? order.subOrders : []).find((so) => String(so?.vendorId || "") === String(vendorObjectId));
+            return {
+                _id: order?._id,
+                orderCode: order?.orderCode,
+                paymentMethod: order?.paymentMethod,
+                paymentStatus: order?.paymentStatus,
+                status: sub?.status || order?.status,
+                total: toNum(sub?.total, toNum(sub?.subtotal, 0)),
+                createdAt: order?.createdAt,
+            };
+        });
+        return res.json({
+            data: {
+                totalProducts,
+                activeProducts,
+                pendingProducts,
+                rejectedProducts,
+                lowStockProducts,
+                totalOrders,
+                todayOrders,
+                pendingOrders: statusCounts.PLACED,
+                confirmedOrders: statusCounts.CONFIRMED,
+                shippedOrders: statusCounts.SHIPPED,
+                deliveredOrders: Number(revenueAgg[0]?.deliveredOrders || 0),
+                revenue: Number(revenueAgg[0]?.revenue || 0),
+                statusCounts,
+                weeklyRevenue,
+                latestOrders,
+            },
+        });
+    }
+    catch (e) {
+        console.error("vendorDashboardStats error:", e);
+        return res.status(500).json({ message: e?.message || "Server error" });
+    }
+};
+exports.vendorDashboardStats = vendorDashboardStats;
 /* =========================
    LIST VENDOR ORDERS
 ========================= */

@@ -19,6 +19,7 @@ import {
   vendorUpdateMyProduct,
 } from "../controllers/vendor/vendor.product.controller";
 import {
+  vendorDashboardStats,
   vendorFetchOrders,
   vendorGenerateOrderLabel,
   vendorGetOrderById,
@@ -47,6 +48,7 @@ router.post("/login", loginVendor);
 router.get("/me", vendorAuth, vendorMe);
 router.patch("/me", vendorAuth, vendorUpdateMe);
 router.patch("/me/password", vendorAuth, vendorChangePassword);
+router.get("/dashboard/stats", vendorAuth, vendorDashboardStats);
 router.post(
   "/orders/:orderId/suborders/:subOrderId/returns/:returnId/approve",
   vendorAuth,

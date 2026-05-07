@@ -388,7 +388,9 @@ export default function AdminOrdersPage() {
   });
 
   const rawItems = data?.items || [];
-  const totalPages = Number(data?.totalPages || 1);
+  const totalPages = Math.max(1, Number(data?.totalPages || 1));
+  const hasPrevPage = Boolean(data?.hasPrevPage ?? page > 1);
+  const hasNextPage = Boolean(data?.hasNextPage ?? page < totalPages);
 
   // Drawer state
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -406,6 +408,8 @@ export default function AdminOrdersPage() {
   };
 
   const load = async (nextPage = 1) => {
+    const targetPage = Math.max(1, nextPage);
+
     try {
       setLoading(true);
       setError(null);
@@ -415,12 +419,12 @@ export default function AdminOrdersPage() {
         status,
         paymentMethod: paymentMethod as "COD" | "ONLINE" | undefined,
         paymentStatus: paymentStatus as "PENDING" | "PAID" | "FAILED" | "COD_PENDING_CONFIRMATION" | undefined,
-        page: nextPage,
+        page: targetPage,
         limit,
       });
 
       setData(resp);
-      setPage(resp.page || nextPage);
+      setPage(resp.page || targetPage);
     } catch (e: any) {
       setError(e?.message || "Failed to load orders");
     } finally {
@@ -902,14 +906,14 @@ export default function AdminOrdersPage() {
 
         <div className="flex gap-2">
           <button
-            disabled={loading || page <= 1}
+            disabled={loading || !hasPrevPage}
             onClick={() => load(page - 1)}
             className="rounded-xl border bg-white px-4 py-2 text-sm font-semibold hover:bg-gray-50 disabled:opacity-50"
           >
             Prev
           </button>
           <button
-            disabled={loading || page >= totalPages}
+            disabled={loading || !hasNextPage}
             onClick={() => load(page + 1)}
             className="rounded-xl border bg-white px-4 py-2 text-sm font-semibold hover:bg-gray-50 disabled:opacity-50"
           >

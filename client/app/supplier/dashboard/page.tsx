@@ -35,8 +35,6 @@ export default function VendorDashboardPage() {
       setLoading(true);
 
       try {
-        // These endpoints are optional. If not available yet,
-        // dashboard will still render with placeholders.
         try {
           const my = await vendorMe();
           setMe(my);
@@ -95,22 +93,22 @@ export default function VendorDashboardPage() {
       <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
         <Card
           title="Total Orders"
-          value={String(stats?.totalOrders ?? "—")}
+          value={String(stats?.totalOrders ?? "-")}
           sub="All time"
         />
         <Card
           title="Pending Orders"
-          value={String(stats?.pendingOrders ?? "—")}
+          value={String(stats?.pendingOrders ?? "-")}
           sub="Need action"
         />
         <Card
           title="Products"
-          value={String(stats?.totalProducts ?? "—")}
-          sub="Active listings"
+          value={String(stats?.totalProducts ?? "-")}
+          sub={`${stats?.activeProducts ?? "-"} active listings`}
         />
         <Card
           title="Revenue"
-          value={stats?.revenue ? `₹${Math.round(stats.revenue)}` : "—"}
+          value={typeof stats?.revenue === "number" ? `₹ ${Math.round(stats.revenue)}` : "-"}
           sub="Delivered orders"
         />
       </div>

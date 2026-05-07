@@ -2,6 +2,7 @@
 import { Request, Response } from "express";
 import { Types } from "mongoose";
 import { Order } from "../../models/Order.model";
+import { Product } from "../../models/Product.model";
 import { shiprocketGenerateLabel } from "../../services/shiprocket.service";
 
 // helpers
@@ -90,6 +91,35 @@ function sanitizeCustomerContactForVendor(order: any) {
 
 const getVendorId = (req: Request) =>
   (req as any)?.vendor?._id || (req as any)?.vendorId;
+
+function startOfToday() {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+function addDays(date: Date, days: number) {
+  const d = new Date(date);
+  d.setDate(d.getDate() + days);
+  return d;
+}
+
+function dateKey(date: Date) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(date);
+}
+
+function shortDay(date: Date) {
+  return new Intl.DateTimeFormat("en-IN", {
+    timeZone: "Asia/Kolkata",
+    day: "2-digit",
+    month: "short",
+  }).format(date);
+}
 
 
 /* =========================
@@ -244,6 +274,166 @@ function applyVendorPriceViewToOrder(order: any, vendorObjectId: Types.ObjectId)
     shipments: vendorShipments,
   };
 }
+
+export const vendorDashboardStats = async (req: Request, res: Response) => {
+  try {
+    const vendorId = getVendorId(req);
+    if (!vendorId) return res.status(401).json({ message: "Unauthorized" });
+
+    const vendorObjectId = new Types.ObjectId(String(vendorId));
+    const today = startOfToday();
+    const sevenDaysAgo = addDays(today, -6);
+
+    const vendorOrderMatch = { "subOrders.vendorId": vendorObjectId };
+    const vendorSubMatch = { "subOrders.vendorId": vendorObjectId };
+
+    const [
+      totalProducts,
+      activeProducts,
+      pendingProducts,
+      rejectedProducts,
+      lowStockProducts,
+      totalOrders,
+      todayOrders,
+      statusAgg,
+      revenueAgg,
+      weeklyAgg,
+      latestOrdersRaw,
+    ] = await Promise.all([
+      Product.countDocuments({ ownerType: "VENDOR", vendorId: vendorObjectId }),
+      Product.countDocuments({ ownerType: "VENDOR", vendorId: vendorObjectId, approvalStatus: "APPROVED", isActive: true }),
+      Product.countDocuments({ ownerType: "VENDOR", vendorId: vendorObjectId, approvalStatus: "PENDING" }),
+      Product.countDocuments({ ownerType: "VENDOR", vendorId: vendorObjectId, approvalStatus: "REJECTED" }),
+      Product.find({
+        ownerType: "VENDOR",
+        vendorId: vendorObjectId,
+        approvalStatus: "APPROVED",
+        isActive: true,
+        $or: [{ isLowStock: true }, { totalStock: { $lte: 10 } }],
+      })
+        .select("productId title totalStock lowStockThreshold")
+        .sort({ totalStock: 1, updatedAt: -1 })
+        .limit(6)
+        .lean(),
+      Order.countDocuments(vendorOrderMatch),
+      Order.countDocuments({ ...vendorOrderMatch, createdAt: { $gte: today } }),
+      Order.aggregate([
+        { $match: vendorOrderMatch },
+        { $unwind: "$subOrders" },
+        { $match: vendorSubMatch },
+        { $group: { _id: "$subOrders.status", count: { $sum: 1 } } },
+      ]),
+      Order.aggregate([
+        { $match: vendorOrderMatch },
+        { $unwind: "$subOrders" },
+        { $match: vendorSubMatch },
+        {
+          $group: {
+            _id: null,
+            revenue: {
+              $sum: {
+                $cond: [
+                  { $eq: ["$subOrders.status", "DELIVERED"] },
+                  { $ifNull: ["$subOrders.total", { $ifNull: ["$subOrders.subtotal", 0] }] },
+                  0,
+                ],
+              },
+            },
+            deliveredOrders: {
+              $sum: { $cond: [{ $eq: ["$subOrders.status", "DELIVERED"] }, 1, 0] },
+            },
+          },
+        },
+      ]),
+      Order.aggregate([
+        { $match: { ...vendorOrderMatch, createdAt: { $gte: sevenDaysAgo } } },
+        { $unwind: "$subOrders" },
+        { $match: { ...vendorSubMatch, "subOrders.status": "DELIVERED" } },
+        {
+          $group: {
+            _id: {
+              $dateToString: {
+                format: "%Y-%m-%d",
+                date: "$createdAt",
+                timezone: "Asia/Kolkata",
+              },
+            },
+            revenue: { $sum: { $ifNull: ["$subOrders.total", { $ifNull: ["$subOrders.subtotal", 0] }] } },
+            orders: { $sum: 1 },
+          },
+        },
+        { $sort: { _id: 1 } },
+      ]),
+      Order.find(vendorOrderMatch)
+        .select("orderCode paymentMethod paymentStatus status subOrders totals createdAt")
+        .sort({ createdAt: -1, _id: -1 })
+        .limit(6)
+        .lean(),
+    ]);
+
+    const statusCounts: Record<string, number> = {
+      PLACED: 0,
+      CONFIRMED: 0,
+      SHIPPED: 0,
+      DELIVERED: 0,
+      CANCELLED: 0,
+    };
+    for (const row of statusAgg || []) {
+      if (row?._id) statusCounts[row._id] = Number(row.count || 0);
+    }
+
+    const weeklyByDate = Object.fromEntries((weeklyAgg || []).map((row: any) => [row._id, row]));
+    const weeklyRevenue = Array.from({ length: 7 }).map((_, idx) => {
+      const date = addDays(sevenDaysAgo, idx);
+      const key = dateKey(date);
+      const row: any = weeklyByDate[key] || {};
+      return {
+        _id: key,
+        day: shortDay(date),
+        revenue: Number(row.revenue || 0),
+        orders: Number(row.orders || 0),
+      };
+    });
+
+    const latestOrders = (latestOrdersRaw || []).map((order: any) => {
+      const sub = (Array.isArray(order?.subOrders) ? order.subOrders : []).find(
+        (so: any) => String(so?.vendorId || "") === String(vendorObjectId)
+      );
+      return {
+        _id: order?._id,
+        orderCode: order?.orderCode,
+        paymentMethod: order?.paymentMethod,
+        paymentStatus: order?.paymentStatus,
+        status: sub?.status || order?.status,
+        total: toNum(sub?.total, toNum(sub?.subtotal, 0)),
+        createdAt: order?.createdAt,
+      };
+    });
+
+    return res.json({
+      data: {
+        totalProducts,
+        activeProducts,
+        pendingProducts,
+        rejectedProducts,
+        lowStockProducts,
+        totalOrders,
+        todayOrders,
+        pendingOrders: statusCounts.PLACED,
+        confirmedOrders: statusCounts.CONFIRMED,
+        shippedOrders: statusCounts.SHIPPED,
+        deliveredOrders: Number(revenueAgg[0]?.deliveredOrders || 0),
+        revenue: Number(revenueAgg[0]?.revenue || 0),
+        statusCounts,
+        weeklyRevenue,
+        latestOrders,
+      },
+    });
+  } catch (e: any) {
+    console.error("vendorDashboardStats error:", e);
+    return res.status(500).json({ message: e?.message || "Server error" });
+  }
+};
 
 
 /* =========================

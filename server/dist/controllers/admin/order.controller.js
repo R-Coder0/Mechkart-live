@@ -24,6 +24,10 @@ function isValidObjectId(id) {
 function upper(v) {
     return String(v || "").toUpperCase();
 }
+function toPositiveInt(v, fallback) {
+    const n = Math.trunc(Number(v));
+    return Number.isFinite(n) && n > 0 ? n : fallback;
+}
 function hydrateShiprocketShipment(shipment) {
     if (!shipment?.shiprocket)
         return shipment;
@@ -63,8 +67,8 @@ const adminGetOrders = async (req, res) => {
         const status = toStr(req.query.status);
         const paymentMethod = toStr(req.query.paymentMethod);
         const paymentStatus = toStr(req.query.paymentStatus);
-        const page = Math.max(1, Number(req.query.page || 1));
-        const limit = Math.min(100, Math.max(10, Number(req.query.limit || 20)));
+        const page = toPositiveInt(req.query.page, 1);
+        const limit = Math.min(100, Math.max(10, toPositiveInt(req.query.limit, 20)));
         const skip = (page - 1) * limit;
         const filter = {};
         if (status && allowedStatuses.includes(status))
@@ -111,15 +115,24 @@ const adminGetOrders = async (req, res) => {
                 "createdAt",
                 "updatedAt",
             ].join(" "))
-                .sort({ createdAt: -1 })
+                .sort({ createdAt: -1, _id: -1 })
                 .skip(skip)
                 .limit(limit)
                 .lean(),
             Order_model_1.Order.countDocuments(filter),
         ]);
+        const totalPages = Math.max(1, Math.ceil(total / limit));
         return res.json({
             message: "Admin orders fetched",
-            data: { items: items.map((item) => hydrateOrderShipmentData(item)), page, limit, total, totalPages: Math.ceil(total / limit) },
+            data: {
+                items: items.map((item) => hydrateOrderShipmentData(item)),
+                page,
+                limit,
+                total,
+                totalPages,
+                hasPrevPage: page > 1,
+                hasNextPage: page < totalPages,
+            },
         });
     }
     catch (err) {
